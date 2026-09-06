@@ -95,6 +95,12 @@ Examples include:
 
 It consumes events published by other services (notably the **Map Service**, **Battle Service**, **Guild Service**, and **Monster Raid Service**) and delivers them to the appropriate clients.
 
+## Architecture Diagram
+
+Requests flow from the client through a load balancer to the API Gateway, which fronts the microservices. Each service owns its own database. Synchronous calls (solid arrows) handle request/response between services, while asynchronous events (dotted arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging.
+
+![Architecture Diagram](docs/architecture.png)
+
 ## Project Management
 
 Tasks are tracked on the [GitHub Project board](https://github.com/users/m33ga/projects/1). Work is defined through issues (use the issue templates) and assigned before development starts.
