@@ -1,0 +1,28 @@
+name: Branch Name
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  branch-name:
+    name: Validate branch name
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          PATTERN='^(feat|fix|docs|chore|refactor|test|ci|perf|build|revert)/[a-z0-9][a-z0-9._-]*$|^release/lab-[0-9]+$|^hotfix/[a-z0-9][a-z0-9._-]*$'
+          if echo "$BRANCH" | grep -Eq "$PATTERN"; then
+            echo "Branch name '$BRANCH' is valid."
+          else
+            echo "::error::Branch name '$BRANCH' does not follow the naming convention."
+            echo ""
+            echo "Expected format: <type>/<short-description>"
+            echo "  types: feat, fix, docs, chore, refactor, test, ci, perf, build, revert"
+            echo "  description: lowercase letters, digits, '.', '_' or '-'"
+            echo ""
+            echo "Examples: feat/battle-service, fix/readme-typo, release/lab-1, hotfix/currency-overflow"
+            exit 1
+          fi
