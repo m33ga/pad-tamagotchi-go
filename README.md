@@ -181,3 +181,55 @@ Lab release process:
 | pre-commit + gitleaks | Local secret scanning, whitespace/YAML hygiene, commit message format | Before every local commit |
 
 **Never** commit `.env` files, API keys or credentials.
+
+
+## Service Ownership
+
+| Service | Owner |
+|---|---|
+| User Management Service | Sanda |
+| Battle Service | Sanda |
+| Tamagotchi Service | Ion |
+| Notification Service | Ion |
+| Map Service | Mihai |
+| Monster Raid Service | Mihai |
+| Guild Service | Cosmin |
+| Package Management Service | Cosmin |
+
+## Technology Stack
+
+### Programming Languages
+
+The system uses two programming languages:
+
+- **C#** — used for services implemented with ASP.NET Core 10.
+- **Go** — used for services where lightweight concurrency and efficient distributed processing are beneficial.
+
+### C# and ASP.NET Core
+
+The C# services use **ASP.NET Core 10** for building HTTP APIs and implementing the backend business logic.
+
+**Entity Framework Core (EF Core)** is used as the Object-Relational Mapper (ORM) for services that work with relational data. It simplifies database access and allows the application to work with PostgreSQL using strongly typed C# models.
+
+### Databases
+
+The system uses three different database technologies depending on the requirements of each service:
+
+- **PostgreSQL** — used for structured relational data that requires consistency, relationships and transactional operations.
+- **MongoDB** — used for flexible document-oriented data where the structure can vary between entities.
+- **Redis** — used for fast-access and temporary data where low latency is important.
+
+The current architecture assigns databases to services as follows:
+
+| Service | Database |
+|---|---|
+| User Management Service | PostgreSQL |
+| Battle Service | Redis |
+| Tamagotchi Service | MongoDB |
+| Notification Service | Redis |
+| Map Service | Redis |
+| Monster Raid Service | Redis |
+| Guild Service | PostgreSQL |
+| Package Management Service | MongoDB |
+
+This database-per-service approach keeps each microservice responsible for its own data and reduces direct coupling between services.
