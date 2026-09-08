@@ -1449,21 +1449,14 @@ All commit messages and PR titles follow [Conventional Commits](https://www.conv
 
 ### Versioning and Releases
 
-Versioning based on labs: `v{lab}.{iteration}.{patch}`
-
-| Version | Meaning | Example |
-|---------|---------|---------|
-| `vX.0.0` | Lab X completed | `v1.0.0`, `v2.0.0` |
-| `vX.Y.0` | Feature iteration within lab X | `v2.1.0`, `v2.2.0` |
-| `vX.0.Z` | Bug fix / patch | `v2.0.1`, `v2.0.2` |
+One version per lab: `v{lab}` (`v0`, `v1`, `v2`, ...).
 
 Lab release process:
 
 1. Create `release/lab-X` from `main` when the lab requirements are complete.
 2. Final testing and submission preparation on the release branch.
-3. Tag the completion: `git tag vX.0.0`.
-4. Submit and apply fixes during evaluation on the release branch.
-5. Merge back to `main` when accepted.
+3. Submit and apply fixes during evaluation on the release branch.
+4. When accepted: tag `vX` and merge back to `main`.
 
 ### CI and Security Checks
 
