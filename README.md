@@ -97,7 +97,7 @@ It consumes events published by other services (notably the **User Management Se
 
 ## Architecture Diagram
 
-Requests flow from the client through a load balancer to the API Gateway, which fronts the microservices. Each service owns its own database. Synchronous calls (solid arrows) handle request/response between services, while asynchronous events (dotted arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging.
+Requests flow from the client through a load balancer to the API Gateway, which fronts the microservices. Each service owns its own database. Synchronous calls (solid arrows) handle request/response between services, while asynchronous events (dotted arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
 
 ![Architecture Diagram](docs/architecture.png)
 
@@ -163,6 +163,8 @@ The following interactions correspond to the arrows in the architecture diagram 
 ### Common Communication Rules
 
 - REST endpoints are versioned under `/api/v1` and use `application/json`.
+- Resource paths use plural, lowercase, kebab-case nouns. The same resource collection keeps the same path across HTTP methods; the method expresses the operation.
+- State-changing decisions use noun subresources such as `/responses` or a `PATCH` to the resource instead of verb segments such as `/accept` or `/cancel`.
 - Event names include a version suffix, for example `guild.invitation.created.v1`.
 - Resource and event identifiers use UUID strings.
 - Timestamps use UTC ISO 8601 strings.
@@ -173,7 +175,7 @@ The following interactions correspond to the arrows in the architecture diagram 
 
 ## Communication Contract
 
-The communication contract defines the data that callers and services exchange. Endpoint and event payloads use JSON. Fields marked as optional may be omitted; all other fields are required. Unknown fields should be ignored by consumers so that compatible fields can be added later.
+The communication contract defines the data that callers and services exchange. Endpoint and event payloads use JSON. Payload schemas below are also represented as JSON: each property value states its type, requirement and meaning. These schema strings document the wire contract and are not literal runtime values. Fields marked as optional may be omitted; all other fields are required. Unknown fields should be ignored by consumers so that compatible fields can be added later.
 
 ### REST Contract Conventions
 
@@ -228,28 +230,32 @@ Every event sent through the queue uses the following envelope:
 }
 ```
 
-| Field | Type | Meaning |
-|---|---|---|
-| `eventId` | UUID string | Unique event identifier used for deduplication |
-| `eventType` | String | Stable event name including the version suffix |
-| `eventVersion` | Integer | Schema version of the event |
-| `occurredAt` | UTC timestamp | Time at which the business event occurred |
-| `producer` | String | Service that published the event |
-| `correlationId` | UUID string | Identifier connecting the event to the originating operation |
-| `data` | Object | Event-specific payload defined in the event catalog |
+```json
+{
+  "eventId": "UUID string. Unique event identifier used for deduplication",
+  "eventType": "String. Stable event name including the version suffix",
+  "eventVersion": "Integer. Schema version of the event",
+  "occurredAt": "UTC timestamp. Time at which the business event occurred",
+  "producer": "String. Service that published the event",
+  "correlationId": "UUID string. Identifier connecting the event to the originating operation",
+  "data": "Object. Event-specific payload defined in the event catalog"
+}
+```
 
 ### Data Ownership and Storage
 
-| Service | Storage from the architecture | Authoritative data | Reason and trade-off |
-|---|---|---|---|
-| User Management Service | PostgreSQL | Accounts, credentials, profiles, friends/enemies, global and local balances | Transactions and constraints protect identity and balances; the relational schema is less flexible for package-specific data. |
-| Map Service | Redis | Latest user coordinates and location timestamps | Fast access and expiration fit temporary locations; location history is deliberately not durable. |
-| Notification Service | Redis | Device tokens, notification preferences, delivery and deduplication state | Fast TTL-based deduplication supports event delivery; it does not provide permanent notification history. |
-| Guild Service | PostgreSQL and MongoDB | Guilds, memberships, roles and permissions in PostgreSQL; Guild Chat messages in MongoDB | Relational constraints protect membership while MongoDB supports flexible chat documents; two databases increase operational complexity. |
-| Monster Raid Service | Redis | Active raid state, participants, damage, timers and recent results | Low-latency atomic updates suit a clicker raid; finished results are retained only for a configured period. |
-| Battle Service | Redis | Active battle state, turns, health and recent results | Low-latency turn updates suit short-lived battles; permanent battle history is outside the current design. |
-| Tamagotchi Service | MongoDB | Tamagotchi identity, owner, combat type, level, sprite references and package-local health statistics | Documents support non-normalized package-specific statistics; ownership invariants must be enforced by the service. |
-| Package Registry Service | MongoDB | Package definitions, user-package registrations, moderators, statistic rules and raid configurations | Flexible documents support different package rules; cross-document consistency is handled in application logic. |
+| Service | Authoritative data | Store |
+|---|---|---|
+| User Management Service | Accounts, sessions, relationships, wallets and ledger | PostgreSQL |
+| Tamagotchi Service | Creatures, roster slots, package-local vitals and ownership transfers | PostgreSQL; flexible vitals are stored in a `jsonb` column |
+| Package Registry Service | Packages, moderators, statistic definitions and rules, boosts, monsters, raid schedules and global configuration | PostgreSQL |
+| Map Service | Latest location per user, map settings and encounters | Redis with TTL for current locations; PostgreSQL for durable encounters and settings |
+| Battle Service | Battle requests, battles, sides, turns and results | PostgreSQL |
+| Guild Service | Guilds, memberships, membership requests and chat messages | PostgreSQL |
+| Monster Raid Service | Raids, participants, attack batches and rewards | PostgreSQL; current monster HP is kept in Redis |
+| Notification Service | Devices, preferences, notification history and templates | PostgreSQL |
+
+MongoDB is not part of the selected architecture. An S3-compatible object store keeps blobs, images and large JSON documents. Services store only the corresponding object key or URL in their own database; Package Registry Service owns shared package and monster assets, while Tamagotchi Service stores references to creature assets.
 
 Cross-service references use resource identifiers rather than direct database access. APIs and events may include the data snapshot required to complete an operation. Package Registry Service is the authority for package definitions and registrations; User Management Service keeps only the package references needed in a user profile. Tamagotchi Service remains the authority for Tamagotchi ownership, including transfers after battles.
 
@@ -265,7 +271,7 @@ User Management Service owns user identity, authentication, social relationships
 |---|---|---|---|---|
 | `POST /api/v1/users` | Client | `CreateUserRequest` | `201 UserResponse` | `400`, `409 USERNAME_OR_EMAIL_TAKEN`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
 | `POST /api/v1/auth/sessions` | Client | `LoginRequest` | `200 AuthSessionResponse` | `400`, `401 INVALID_CREDENTIALS` |
-| `POST /api/v1/auth/sessions/refresh` | Client | `RefreshSessionRequest` | `200 AuthSessionResponse` | `401 INVALID_REFRESH_TOKEN` |
+| `POST /api/v1/auth/session-refreshes` | Client | `RefreshSessionRequest` | `200 AuthSessionResponse` | `401 INVALID_REFRESH_TOKEN` |
 | `DELETE /api/v1/auth/sessions/current` | Client | None | `204` | `401 INVALID_TOKEN` |
 | `GET /api/v1/users/{userId}` | Client or internal service | None | `200 UserResponse` | `401`, `403`, `404 USER_NOT_FOUND` |
 | `PATCH /api/v1/users/{userId}` | Account owner | `UpdateUserRequest` | `200 UserResponse` | `400`, `401`, `403`, `404`, `409 EMAIL_TAKEN` |
@@ -275,67 +281,101 @@ User Management Service owns user identity, authentication, social relationships
 | `PUT /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404`, `409 RELATIONSHIP_CONFLICT` |
 | `DELETE /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404` |
 | `GET /api/v1/users/{userId}/balances` | Account owner, Battle, or Monster Raid Service | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
-| `POST /api/v1/users/{userId}/balance-transactions` | Battle or Monster Raid Service | `BalanceTransactionRequest` | `200 BalanceTransactionResponse` | `400`, `403`, `404`, `422 INSUFFICIENT_BALANCE` |
+| `POST /api/v1/users/{userId}/balances` | Battle or Monster Raid Service | `BalanceTransactionRequest` | `200 BalanceTransactionResponse` | `400`, `403`, `404`, `422 INSUFFICIENT_BALANCE` |
 | `GET /api/v1/users/{userId}/packages` | Account owner or internal service | None | `200 PackageReference[]` | `403`, `404 USER_NOT_FOUND` |
-| `POST /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
 
 ##### Payload Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreateUserRequest` | `username` | String, 3-32 characters | Yes | Public username |
-| `CreateUserRequest` | `email` | Email string | Yes | Unique account email |
-| `CreateUserRequest` | `password` | String, 8-72 characters | Yes | Plain password transported only over HTTPS |
-| `CreateUserRequest` | `initialPackageId` | UUID string | Yes | Package selected during registration |
-| `UpdateUserRequest` | `username` | String, 3-32 characters | No | New public username |
-| `UpdateUserRequest` | `email` | Email string | No | New unique email address |
-| `LoginRequest` | `email` | Email string | Yes | Account email |
-| `LoginRequest` | `password` | String | Yes | Account password |
-| `RefreshSessionRequest` | `refreshToken` | String | Yes | Previously issued refresh token |
-| `AuthSessionResponse` | `accessToken` | String | Yes | Bearer JWT used for authenticated requests |
-| `AuthSessionResponse` | `refreshToken` | String | Yes | Token used to renew the session |
-| `AuthSessionResponse` | `expiresAt` | UTC timestamp | Yes | Access-token expiration time |
-| `UserResponse` | `userId` | UUID string | Yes | Global user identifier |
-| `UserResponse` | `username` | String | Yes | Public username |
-| `UserResponse` | `email` | Email string | Yes | Account email, visible only to the owner or authorized services |
-| `UserResponse` | `packageIds` | Array of UUID strings | Yes | References to registered packages |
-| `UserResponse` | `createdAt` | UTC timestamp | Yes | Account creation time |
-| `RelationshipResponse` | `userId` | UUID string | Yes | First user in the relationship query |
-| `RelationshipResponse` | `otherUserId` | UUID string | Yes | Second user in the relationship query |
-| `RelationshipResponse` | `relationship` | `FRIEND`, `ENEMY`, or `NONE` | Yes | Current relationship classification |
-| `CreateFriendRequest` | `targetUserId` | UUID string | Yes | User who should receive the request |
-| `RespondToFriendRequest` | `decision` | `ACCEPT` or `REJECT` | Yes | Recipient's decision |
-| `FriendRequestResponse` | `requestId` | UUID string | Yes | Friend-request identifier |
-| `FriendRequestResponse` | `senderUserId` | UUID string | Yes | User who sent the request |
-| `FriendRequestResponse` | `recipientUserId` | UUID string | Yes | User who receives the request |
-| `FriendRequestResponse` | `status` | `PENDING`, `ACCEPTED`, or `REJECTED` | Yes | Current request state |
-| `FriendRequestResponse` | `createdAt` | UTC timestamp | Yes | Request creation time |
-| `BalanceResponse` | `userId` | UUID string | Yes | Balance owner |
-| `BalanceResponse` | `globalBalance` | Integer | Yes | Global currency in its smallest unit |
-| `BalanceResponse` | `localBalances` | Array of `LocalBalance` | Yes | One local balance per registered package |
-| `LocalBalance` | `packageId` | UUID string | Yes | Package defining the local currency |
-| `LocalBalance` | `balance` | Integer | Yes | Local currency in its smallest unit |
-| `BalanceTransactionRequest` | `currency` | `GLOBAL` or `LOCAL` | Yes | Balance that should be changed |
-| `BalanceTransactionRequest` | `packageId` | UUID string | Conditional | Required when `currency` is `LOCAL` |
-| `BalanceTransactionRequest` | `amount` | Non-zero integer | Yes | Positive for credit and negative for debit |
-| `BalanceTransactionRequest` | `reason` | `BATTLE_REWARD`, `BATTLE_LOSS`, `RAID_REWARD`, or `ADMIN_ADJUSTMENT` | Yes | Business reason for the balance change |
-| `BalanceTransactionRequest` | `referenceId` | UUID string | Yes | Battle, raid, or administrative operation identifier |
-| `BalanceTransactionResponse` | `transactionId` | UUID string | Yes | Recorded transaction identifier |
-| `BalanceTransactionResponse` | `resultingBalance` | Integer | Yes | Balance after applying the transaction |
-| `BalanceTransactionResponse` | `processedAt` | UTC timestamp | Yes | Processing time |
-| `PackageReference` | `packageId` | UUID string | Yes | Registered package identifier |
-| `PackageReference` | `registeredAt` | UTC timestamp | Yes | Time at which the user registered with the package |
+```json
+{
+  "CreateUserRequest": {
+    "username": "String, 3-32 characters; required. Public username",
+    "email": "Email string; required. Unique account email",
+    "password": "String, 8-72 characters; required. Plain password transported only over HTTPS",
+    "initialPackageId": "UUID string; required. Package selected during registration"
+  },
+  "UpdateUserRequest": {
+    "username": "String, 3-32 characters; optional. New public username",
+    "email": "Email string; optional. New unique email address"
+  },
+  "LoginRequest": {
+    "email": "Email string; required. Account email",
+    "password": "String; required. Account password"
+  },
+  "RefreshSessionRequest": {
+    "refreshToken": "String; required. Previously issued refresh token"
+  },
+  "AuthSessionResponse": {
+    "accessToken": "String; required. Bearer JWT used for authenticated requests",
+    "refreshToken": "String; required. Token used to renew the session",
+    "expiresAt": "UTC timestamp; required. Access-token expiration time"
+  },
+  "UserResponse": {
+    "userId": "UUID string; required. Global user identifier",
+    "username": "String; required. Public username",
+    "email": "Email string; required. Account email, visible only to the owner or authorized services",
+    "packageIds": "Array of UUID strings; required. References to registered packages",
+    "createdAt": "UTC timestamp; required. Account creation time"
+  },
+  "RelationshipResponse": {
+    "userId": "UUID string; required. First user in the relationship query",
+    "otherUserId": "UUID string; required. Second user in the relationship query",
+    "relationship": "FRIEND, ENEMY, or NONE; required. Current relationship classification"
+  },
+  "CreateFriendRequest": {
+    "targetUserId": "UUID string; required. User who should receive the request"
+  },
+  "RespondToFriendRequest": {
+    "decision": "ACCEPT or REJECT; required. Recipient's decision"
+  },
+  "FriendRequestResponse": {
+    "requestId": "UUID string; required. Friend-request identifier",
+    "senderUserId": "UUID string; required. User who sent the request",
+    "recipientUserId": "UUID string; required. User who receives the request",
+    "status": "PENDING, ACCEPTED, or REJECTED; required. Current request state",
+    "createdAt": "UTC timestamp; required. Request creation time"
+  },
+  "BalanceResponse": {
+    "userId": "UUID string; required. Balance owner",
+    "globalBalance": "Integer; required. Global currency in its smallest unit",
+    "localBalances": "Array of LocalBalance; required. One local balance per registered package"
+  },
+  "LocalBalance": {
+    "packageId": "UUID string; required. Package defining the local currency",
+    "balance": "Integer; required. Local currency in its smallest unit"
+  },
+  "BalanceTransactionRequest": {
+    "currency": "GLOBAL or LOCAL; required. Balance that should be changed",
+    "packageId": "UUID string; conditional. Required when currency is LOCAL",
+    "amount": "Non-zero integer; required. Positive for credit and negative for debit",
+    "reason": "BATTLE_REWARD, BATTLE_LOSS, RAID_REWARD, or ADMIN_ADJUSTMENT; required. Business reason for the balance change",
+    "referenceId": "UUID string; required. Battle, raid, or administrative operation identifier"
+  },
+  "BalanceTransactionResponse": {
+    "transactionId": "UUID string; required. Recorded transaction identifier",
+    "resultingBalance": "Integer; required. Balance after applying the transaction",
+    "processedAt": "UTC timestamp; required. Processing time"
+  },
+  "PackageReference": {
+    "packageId": "UUID string; required. Registered package identifier",
+    "registeredAt": "UTC timestamp; required. Time at which the user registered with the package"
+  }
+}
+```
 
 ##### Published Queue Event
 
 `user.friend-request.created.v1` is published after a friend request is stored successfully. Notification Service consumes it to notify the recipient.
 
-| `data` field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `requestId` | UUID string | Yes | Friend-request identifier |
-| `senderUserId` | UUID string | Yes | User who sent the request |
-| `recipientUserId` | UUID string | Yes | User who should be notified |
-| `createdAt` | UTC timestamp | Yes | Request creation time |
+```json
+{
+  "requestId": "UUID string; required. Friend-request identifier",
+  "senderUserId": "UUID string; required. User who sent the request",
+  "recipientUserId": "UUID string; required. User who should be notified",
+  "createdAt": "UTC timestamp; required. Request creation time"
+}
+```
 
 ##### Outbound Dependencies
 
@@ -360,7 +400,7 @@ Package Registry Service owns package metadata, package membership, package-spec
 | `DELETE /api/v1/packages/{packageId}/moderators/{userId}` | Package developer or admin | None | `204` | `403`, `404 MODERATOR_NOT_FOUND` |
 | `POST /api/v1/packages/{packageId}/registrations` | User Management Service | `RegisterUserPackageRequest` | `201 PackageRegistrationResponse` | `400`, `403`, `404`, `409 PACKAGE_ALREADY_REGISTERED` |
 | `GET /api/v1/packages/{packageId}/registrations/{userId}` | User Management or Guild Service | None | `200 PackageRegistrationResponse` | `403`, `404 REGISTRATION_NOT_FOUND` |
-| `GET /api/v1/package-registrations?userId={userId}` | User Management Service | Query parameter | `200 PackageRegistrationResponse[]` | `400`, `403` |
+| `GET /api/v1/users/{userId}/package-registrations` | User Management Service | None | `200 PackageRegistrationResponse[]` | `403` |
 | `PUT /api/v1/packages/{packageId}/stat-definitions` | Package moderator | `ReplaceStatDefinitionsRequest` | `200 StatDefinitionResponse[]` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `422 INVALID_STAT_RULE` |
 | `GET /api/v1/packages/{packageId}/stat-definitions` | Tamagotchi, Battle, or Monster Raid Service | None | `200 StatDefinitionResponse[]` | `403`, `404 PACKAGE_NOT_FOUND` |
 | `PUT /api/v1/packages/{packageId}/battle-boosts` | Package moderator | `ReplaceBattleBoostsRequest` | `200 BattleBoostResponse[]` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `422 INVALID_BOOST` |
@@ -370,112 +410,168 @@ Package Registry Service owns package metadata, package membership, package-spec
 | `POST /api/v1/raid-configurations` | Admin | `CreateRaidConfigurationRequest` | `201 RaidConfigurationResponse` | `400`, `403`, `422 INVALID_RAID_CONFIGURATION` |
 | `GET /api/v1/raid-configurations/{raidConfigurationId}` | Client or Monster Raid Service | None | `200 RaidConfigurationResponse` | `404 RAID_CONFIGURATION_NOT_FOUND` |
 | `PATCH /api/v1/raid-configurations/{raidConfigurationId}` | Admin | `UpdateRaidConfigurationRequest` | `200 RaidConfigurationResponse` | `400`, `403`, `404`, `409 ACTIVE_CONFIGURATION_LOCKED` |
-| `POST /api/v1/raid-configurations/{raidConfigurationId}/schedules` | Admin | `CreateRaidScheduleRequest` | `201 RaidScheduleResponse` | `400`, `403`, `404`, `409 SCHEDULE_CONFLICT` |
+| `POST /api/v1/raid-schedules` | Admin | `CreateRaidScheduleRequest` | `201 RaidScheduleResponse` | `400`, `403`, `404`, `409 SCHEDULE_CONFLICT` |
 | `GET /api/v1/raid-schedules?status={status}&at={timestamp}` | Monster Raid Service or admin | Query parameters | `200 RaidScheduleResponse[]` | `400 INVALID_QUERY`, `403` |
 | `GET /api/v1/raid-schedules/{scheduleId}` | Monster Raid Service or admin | None | `200 RaidScheduleResponse` | `403`, `404 RAID_SCHEDULE_NOT_FOUND` |
-| `POST /api/v1/raid-schedules/{scheduleId}/activate` | Admin | None | `200 RaidScheduleResponse` | `403`, `404`, `409 INVALID_SCHEDULE_STATE` |
-| `POST /api/v1/raid-schedules/{scheduleId}/deactivate` | Admin | None | `200 RaidScheduleResponse` | `403`, `404`, `409 INVALID_SCHEDULE_STATE` |
-| `POST /api/v1/raid-schedules/{scheduleId}/cancel` | Admin | None | `200 RaidScheduleResponse` | `403`, `404`, `409 INVALID_SCHEDULE_STATE` |
+| `PATCH /api/v1/raid-schedules/{scheduleId}` | Admin | `UpdateRaidScheduleRequest` | `200 RaidScheduleResponse` | `400`, `403`, `404`, `409 INVALID_SCHEDULE_STATE` |
 
 ##### Package and Registration Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreatePackageRequest` | `name` | String, 1-100 characters | Yes | Unique package name |
-| `CreatePackageRequest` | `version` | Semantic-version string | Yes | Initial package version |
-| `CreatePackageRequest` | `description` | String, maximum 2,000 characters | Yes | Package description |
-| `CreatePackageRequest` | `developerIds` | Array of UUID strings | Yes | Users responsible for developing the package |
-| `UpdatePackageRequest` | `version` | Semantic-version string | No | New package version |
-| `UpdatePackageRequest` | `description` | String, maximum 2,000 characters | No | Updated description |
-| `UpdatePackageRequest` | `status` | `DRAFT`, `ACTIVE`, or `INACTIVE` | No | Package availability |
-| `PackageResponse` | `packageId` | UUID string | Yes | Package identifier |
-| `PackageResponse` | `name` | String | Yes | Package name |
-| `PackageResponse` | `version` | Semantic-version string | Yes | Current version |
-| `PackageResponse` | `description` | String | Yes | Package description |
-| `PackageResponse` | `status` | `DRAFT`, `ACTIVE`, or `INACTIVE` | Yes | Current package state |
-| `PackageResponse` | `developerIds` | Array of UUID strings | Yes | Associated developers |
-| `PackageResponse` | `moderatorIds` | Array of UUID strings | Yes | Associated moderators |
-| `PackageResponse` | `createdAt` | UTC timestamp | Yes | Creation time |
-| `PackageResponse` | `updatedAt` | UTC timestamp | Yes | Last update time |
-| `PackagePageResponse` | `items` | Array of `PackageResponse` | Yes | Packages in the current page |
-| `PackagePageResponse` | `nextCursor` | String or `null` | Yes | Cursor for the next page |
-| `AddModeratorRequest` | `userId` | UUID string | Yes | User who receives moderator privileges |
-| `ModeratorResponse` | `packageId` | UUID string | Yes | Associated package |
-| `ModeratorResponse` | `userId` | UUID string | Yes | Moderator user identifier |
-| `ModeratorResponse` | `assignedAt` | UTC timestamp | Yes | Assignment time |
-| `RegisterUserPackageRequest` | `userId` | UUID string | Yes | User being registered |
-| `PackageRegistrationResponse` | `packageId` | UUID string | Yes | Registered package |
-| `PackageRegistrationResponse` | `userId` | UUID string | Yes | Registered user |
-| `PackageRegistrationResponse` | `registeredAt` | UTC timestamp | Yes | Registration time |
+```json
+{
+  "CreatePackageRequest": {
+    "name": "String, 1-100 characters; required. Unique package name",
+    "version": "Semantic-version string; required. Initial package version",
+    "description": "String, maximum 2,000 characters; required. Package description",
+    "developerIds": "Array of UUID strings; required. Users responsible for developing the package"
+  },
+  "UpdatePackageRequest": {
+    "version": "Semantic-version string; optional. New package version",
+    "description": "String, maximum 2,000 characters; optional. Updated description",
+    "status": "DRAFT, ACTIVE, or INACTIVE; optional. Package availability"
+  },
+  "PackageResponse": {
+    "packageId": "UUID string; required. Package identifier",
+    "name": "String; required. Package name",
+    "version": "Semantic-version string; required. Current version",
+    "description": "String; required. Package description",
+    "status": "DRAFT, ACTIVE, or INACTIVE; required. Current package state",
+    "developerIds": "Array of UUID strings; required. Associated developers",
+    "moderatorIds": "Array of UUID strings; required. Associated moderators",
+    "createdAt": "UTC timestamp; required. Creation time",
+    "updatedAt": "UTC timestamp; required. Last update time"
+  },
+  "PackagePageResponse": {
+    "items": "Array of PackageResponse; required. Packages in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page"
+  },
+  "AddModeratorRequest": {
+    "userId": "UUID string; required. User who receives moderator privileges"
+  },
+  "ModeratorResponse": {
+    "packageId": "UUID string; required. Associated package",
+    "userId": "UUID string; required. Moderator user identifier",
+    "assignedAt": "UTC timestamp; required. Assignment time"
+  },
+  "RegisterUserPackageRequest": {
+    "userId": "UUID string; required. User being registered"
+  },
+  "PackageRegistrationResponse": {
+    "packageId": "UUID string; required. Registered package",
+    "userId": "UUID string; required. Registered user",
+    "registeredAt": "UTC timestamp; required. Registration time"
+  }
+}
+```
 
 ##### Statistic Definition Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `ReplaceStatDefinitionsRequest` | `definitions` | Array of `StatDefinition` | Yes | Complete replacement for the package's statistic definitions |
-| `StatDefinition` | `key` | Lowercase string | Yes | Stable machine-readable statistic name, such as `hunger` |
-| `StatDefinition` | `displayName` | String | Yes | Human-readable statistic name |
-| `StatDefinition` | `valueType` | `INTEGER`, `DECIMAL`, or `BOOLEAN` | Yes | Data type accepted for the statistic |
-| `StatDefinition` | `minimumValue` | Number | Conditional | Minimum for numeric statistics |
-| `StatDefinition` | `maximumValue` | Number | Conditional | Maximum for numeric statistics |
-| `StatDefinition` | `combatBonusRules` | Array of `CombatBonusRule` | Yes | Rules for translating local statistics into combat bonuses |
-| `CombatBonusRule` | `operator` | `LT`, `LTE`, `GT`, `GTE`, or `BETWEEN` | Yes | Comparison applied to the statistic |
-| `CombatBonusRule` | `threshold` | Number or two-number array | Yes | Value or range used by the comparison |
-| `CombatBonusRule` | `bonusType` | `ATTACK`, `DEFENSE`, or `HEALTH` | Yes | Combat property affected by the rule |
-| `CombatBonusRule` | `modifier` | Decimal number | Yes | Bonus added when the condition matches |
-| `StatDefinitionResponse` | `packageId` | UUID string | Yes | Package owning the definition |
-| `StatDefinitionResponse` | `definition` | `StatDefinition` | Yes | Stored statistic definition |
-| `StatDefinitionResponse` | `updatedAt` | UTC timestamp | Yes | Last definition update time |
+```json
+{
+  "ReplaceStatDefinitionsRequest": {
+    "definitions": "Array of StatDefinition; required. Complete replacement for the package's statistic definitions"
+  },
+  "StatDefinition": {
+    "key": "Lowercase string; required. Stable machine-readable statistic name, such as hunger",
+    "displayName": "String; required. Human-readable statistic name",
+    "valueType": "INTEGER, DECIMAL, or BOOLEAN; required. Data type accepted for the statistic",
+    "minimumValue": "Number; conditional. Minimum for numeric statistics",
+    "maximumValue": "Number; conditional. Maximum for numeric statistics",
+    "combatBonusRules": "Array of CombatBonusRule; required. Rules for translating local statistics into combat bonuses"
+  },
+  "CombatBonusRule": {
+    "operator": "LT, LTE, GT, GTE, or BETWEEN; required. Comparison applied to the statistic",
+    "threshold": "Number or two-number array; required. Value or range used by the comparison",
+    "bonusType": "ATTACK, DEFENSE, or HEALTH; required. Combat property affected by the rule",
+    "modifier": "Decimal number; required. Bonus added when the condition matches"
+  },
+  "StatDefinitionResponse": {
+    "packageId": "UUID string; required. Package owning the definition",
+    "definition": "StatDefinition; required. Stored statistic definition",
+    "updatedAt": "UTC timestamp; required. Last definition update time"
+  }
+}
+```
 
 ##### Battle Boost Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `ReplaceBattleBoostsRequest` | `boosts` | Array of `BattleBoostDefinition` | Yes | Complete replacement for the package's battle boosts |
-| `BattleBoostDefinition` | `key` | Lowercase string | Yes | Stable boost identifier within the package |
-| `BattleBoostDefinition` | `displayName` | String | Yes | Human-readable boost name |
-| `BattleBoostDefinition` | `affectedStat` | `ATTACK`, `DEFENSE`, or `HEALTH` | Yes | Combat property modified by the boost |
-| `BattleBoostDefinition` | `modifier` | Decimal number | Yes | Value added while the boost is active |
-| `BattleBoostDefinition` | `maxUsesPerBattle` | Positive integer | Yes | Maximum number of uses in one battle |
-| `BattleBoostResponse` | `packageId` | UUID string | Yes | Package owning the boost |
-| `BattleBoostResponse` | `definition` | `BattleBoostDefinition` | Yes | Stored boost definition |
-| `BattleBoostResponse` | `updatedAt` | UTC timestamp | Yes | Last update time |
+```json
+{
+  "ReplaceBattleBoostsRequest": {
+    "boosts": "Array of BattleBoostDefinition; required. Complete replacement for the package's battle boosts"
+  },
+  "BattleBoostDefinition": {
+    "key": "Lowercase string; required. Stable boost identifier within the package",
+    "displayName": "String; required. Human-readable boost name",
+    "affectedStat": "ATTACK, DEFENSE, or HEALTH; required. Combat property modified by the boost",
+    "modifier": "Decimal number; required. Value added while the boost is active",
+    "maxUsesPerBattle": "Positive integer; required. Maximum number of uses in one battle"
+  },
+  "BattleBoostResponse": {
+    "packageId": "UUID string; required. Package owning the boost",
+    "definition": "BattleBoostDefinition; required. Stored boost definition",
+    "updatedAt": "UTC timestamp; required. Last update time"
+  }
+}
+```
 
 ##### Raid Configuration and Schedule Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreateRaidConfigurationRequest` | `name` | String | Yes | Monster name |
-| `CreateRaidConfigurationRequest` | `description` | String | Yes | Monster and raid description |
-| `CreateRaidConfigurationRequest` | `spriteUrl` | URL string | Yes | Monster sprite location |
-| `CreateRaidConfigurationRequest` | `maximumHp` | Positive integer | Yes | Starting monster health |
-| `CreateRaidConfigurationRequest` | `combatStats` | `RaidCombatStats` | Yes | Attack and defense properties |
-| `CreateRaidConfigurationRequest` | `weaknesses` | Array of combat-type strings | Yes | Types that deal increased damage |
-| `CreateRaidConfigurationRequest` | `resistances` | Array of combat-type strings | Yes | Types that deal reduced damage |
-| `CreateRaidConfigurationRequest` | `specialProperties` | JSON object | Yes | Extensible special raid behavior |
-| `CreateRaidConfigurationRequest` | `durationSeconds` | Positive integer | Yes | Maximum raid duration |
-| `CreateRaidConfigurationRequest` | `participantLimit` | Positive integer | Yes | Maximum number of participants |
-| `CreateRaidConfigurationRequest` | `rewards` | `RaidRewardConfiguration` | Yes | Reward rules for a successful raid |
-| `UpdateRaidConfigurationRequest` | Any create field | Same as create field | No | Field to update before activation |
-| `RaidCombatStats` | `attack` | Non-negative integer | Yes | Monster attack value |
-| `RaidCombatStats` | `defense` | Non-negative integer | Yes | Monster defense value |
-| `RaidRewardConfiguration` | `globalCurrency` | Non-negative integer | Yes | Global currency awarded per eligible participant |
-| `RaidRewardConfiguration` | `xp` | Non-negative integer | Yes | XP awarded per eligible participant |
-| `RaidRewardConfiguration` | `otherRewards` | Array of JSON objects | Yes | Optional globally managed rewards |
-| `RaidConfigurationResponse` | `raidConfigurationId` | UUID string | Yes | Raid configuration identifier |
-| `RaidConfigurationResponse` | All create fields | Corresponding types | Yes | Stored configuration values |
-| `RaidConfigurationResponse` | `createdAt` | UTC timestamp | Yes | Creation time |
-| `RaidConfigurationResponse` | `updatedAt` | UTC timestamp | Yes | Last update time |
-| `RaidConfigurationPageResponse` | `items` | Array of `RaidConfigurationResponse` | Yes | Configurations in the current page |
-| `RaidConfigurationPageResponse` | `nextCursor` | String or `null` | Yes | Cursor for the next page |
-| `CreateRaidScheduleRequest` | `startsAt` | Future UTC timestamp | Yes | Scheduled activation time |
-| `CreateRaidScheduleRequest` | `endsAt` | UTC timestamp | Yes | Scheduled end time |
-| `RaidScheduleResponse` | `scheduleId` | UUID string | Yes | Schedule identifier |
-| `RaidScheduleResponse` | `raidConfigurationId` | UUID string | Yes | Configuration used by the scheduled raid |
-| `RaidScheduleResponse` | `startsAt` | UTC timestamp | Yes | Scheduled start time |
-| `RaidScheduleResponse` | `endsAt` | UTC timestamp | Yes | Scheduled end time |
-| `RaidScheduleResponse` | `status` | `SCHEDULED`, `ACTIVE`, `INACTIVE`, `CANCELLED`, or `COMPLETED` | Yes | Current schedule state |
-| `RaidScheduleResponse` | `createdByAdminId` | UUID string | Yes | Admin who created the schedule |
+```json
+{
+  "CreateRaidConfigurationRequest": {
+    "name": "String; required. Monster name",
+    "description": "String; required. Monster and raid description",
+    "spriteUrl": "URL string; required. Monster sprite location",
+    "maximumHp": "Positive integer; required. Starting monster health",
+    "combatStats": "RaidCombatStats; required. Attack and defense properties",
+    "weaknesses": "Array of combat-type strings; required. Types that deal increased damage",
+    "resistances": "Array of combat-type strings; required. Types that deal reduced damage",
+    "specialProperties": "JSON object; required. Extensible special raid behavior",
+    "durationSeconds": "Positive integer; required. Maximum raid duration",
+    "participantLimit": "Positive integer; required. Maximum number of participants",
+    "rewards": "RaidRewardConfiguration; required. Reward rules for a successful raid"
+  },
+  "UpdateRaidConfigurationRequest": {
+    "Any create field": "Same as create field; optional. Field to update before activation"
+  },
+  "RaidCombatStats": {
+    "attack": "Non-negative integer; required. Monster attack value",
+    "defense": "Non-negative integer; required. Monster defense value"
+  },
+  "RaidRewardConfiguration": {
+    "globalCurrency": "Non-negative integer; required. Global currency awarded per eligible participant",
+    "xp": "Non-negative integer; required. XP awarded per eligible participant",
+    "otherRewards": "Array of JSON objects; required. Optional globally managed rewards"
+  },
+  "RaidConfigurationResponse": {
+    "raidConfigurationId": "UUID string; required. Raid configuration identifier",
+    "All create fields": "Corresponding types; required. Stored configuration values",
+    "createdAt": "UTC timestamp; required. Creation time",
+    "updatedAt": "UTC timestamp; required. Last update time"
+  },
+  "RaidConfigurationPageResponse": {
+    "items": "Array of RaidConfigurationResponse; required. Configurations in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page"
+  },
+  "CreateRaidScheduleRequest": {
+    "raidConfigurationId": "UUID string; required. Raid configuration to schedule",
+    "startsAt": "Future UTC timestamp; required. Scheduled activation time",
+    "endsAt": "UTC timestamp; required. Scheduled end time"
+  },
+  "UpdateRaidScheduleRequest": {
+    "status": "ACTIVE, INACTIVE, or CANCELLED; required. Requested schedule state"
+  },
+  "RaidScheduleResponse": {
+    "scheduleId": "UUID string; required. Schedule identifier",
+    "raidConfigurationId": "UUID string; required. Configuration used by the scheduled raid",
+    "startsAt": "UTC timestamp; required. Scheduled start time",
+    "endsAt": "UTC timestamp; required. Scheduled end time",
+    "status": "SCHEDULED, ACTIVE, INACTIVE, CANCELLED, or COMPLETED; required. Current schedule state",
+    "createdByAdminId": "UUID string; required. Admin who created the schedule"
+  }
+}
+```
 
 ##### Outbound and Inbound Dependencies
 
@@ -489,7 +585,7 @@ Package Registry Service owns package metadata, package membership, package-spec
 
 #### Guild Service
 
-Guild Service owns guild identity, membership, roles, permissions, and Guild Chat. Relational guild data is stored in PostgreSQL, while chat messages are stored in MongoDB. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package.
+Guild Service owns guild identity, membership, roles, permissions, and Guild Chat. Guilds, memberships, membership requests and chat messages are stored in PostgreSQL. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package.
 
 ##### Endpoint Catalog
 
@@ -509,63 +605,95 @@ Guild Service owns guild identity, membership, roles, permissions, and Guild Cha
 | `POST /api/v1/guilds/{guildId}/invitations` | Guild owner or officer | `CreateGuildInvitationRequest` | `201 GuildInvitationResponse` | `400`, `403`, `404`, `409 INVITATION_OR_MEMBERSHIP_EXISTS`, `422 MEMBERSHIP_RULE_NOT_SATISFIED` |
 | `GET /api/v1/guilds/{guildId}/invitations?status={status}` | Guild owner or officer | Query parameter | `200 GuildInvitationResponse[]` | `400`, `403`, `404 GUILD_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/guild-invitations?status={status}` | Invitation recipient | Query parameter | `200 GuildInvitationResponse[]` | `400`, `403`, `404 USER_NOT_FOUND` |
-| `POST /api/v1/guilds/{guildId}/invitations/{invitationId}/accept` | Invitation recipient | None | `200 GuildMemberResponse` | `403`, `404`, `409 INVITATION_ALREADY_RESOLVED`, `422 MEMBERSHIP_RULE_NOT_SATISFIED` |
-| `POST /api/v1/guilds/{guildId}/invitations/{invitationId}/reject` | Invitation recipient | None | `200 GuildInvitationResponse` | `403`, `404`, `409 INVITATION_ALREADY_RESOLVED` |
+| `POST /api/v1/guilds/{guildId}/invitations/{invitationId}/responses` | Invitation recipient | `RespondToGuildInvitationRequest` | `200 GuildInvitationResponse` | `400`, `403`, `404`, `409 INVITATION_ALREADY_RESOLVED`, `422 MEMBERSHIP_RULE_NOT_SATISFIED` |
 | `GET /api/v1/guilds/{guildId}/messages?before={messageId}&limit={limit}` | Guild member | Query parameters | `200 GuildMessagePageResponse` | `400`, `403`, `404 GUILD_NOT_FOUND` |
 
 ##### Guild and Membership Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreateGuildRequest` | `name` | String, 3-80 characters | Yes | Unique guild name |
-| `CreateGuildRequest` | `description` | String, maximum 1,000 characters | Yes | Public guild description |
-| `CreateGuildRequest` | `requiredPackageId` | UUID string | No | Package required for membership, if the guild is restricted |
-| `UpdateGuildRequest` | `name` | String, 3-80 characters | No | Updated guild name |
-| `UpdateGuildRequest` | `description` | String, maximum 1,000 characters | No | Updated description |
-| `UpdateGuildRequest` | `requiredPackageId` | UUID string or `null` | No | Add, replace, or remove the package restriction |
-| `GuildResponse` | `guildId` | UUID string | Yes | Guild identifier |
-| `GuildResponse` | `name` | String | Yes | Guild name |
-| `GuildResponse` | `description` | String | Yes | Guild description |
-| `GuildResponse` | `ownerId` | UUID string | Yes | Current guild owner |
-| `GuildResponse` | `requiredPackageId` | UUID string or `null` | Yes | Required package, if configured |
-| `GuildResponse` | `memberCount` | Non-negative integer | Yes | Current number of members |
-| `GuildResponse` | `createdAt` | UTC timestamp | Yes | Guild creation time |
-| `GuildResponse` | `updatedAt` | UTC timestamp | Yes | Last guild update time |
-| `GuildPageResponse` | `items` | Array of `GuildResponse` | Yes | Guilds in the current page |
-| `GuildPageResponse` | `nextCursor` | String or `null` | Yes | Cursor for the next page |
-| `GuildMemberResponse` | `guildId` | UUID string | Yes | Guild containing the member |
-| `GuildMemberResponse` | `userId` | UUID string | Yes | Member's user identifier |
-| `GuildMemberResponse` | `role` | `OWNER`, `OFFICER`, or `MEMBER` | Yes | Member's guild role |
-| `GuildMemberResponse` | `joinedAt` | UTC timestamp | Yes | Membership creation time |
-| `GuildMemberPageResponse` | `items` | Array of `GuildMemberResponse` | Yes | Members in the current page |
-| `GuildMemberPageResponse` | `nextCursor` | String or `null` | Yes | Cursor for the next page |
-| `UpdateGuildMemberRequest` | `role` | `OFFICER` or `MEMBER` | Yes | New role; ownership uses the separate transfer endpoint |
-| `TransferGuildOwnershipRequest` | `newOwnerId` | UUID string | Yes | Existing member who becomes the owner |
+```json
+{
+  "CreateGuildRequest": {
+    "name": "String, 3-80 characters; required. Unique guild name",
+    "description": "String, maximum 1,000 characters; required. Public guild description",
+    "requiredPackageId": "UUID string; optional. Package required for membership, if the guild is restricted"
+  },
+  "UpdateGuildRequest": {
+    "name": "String, 3-80 characters; optional. Updated guild name",
+    "description": "String, maximum 1,000 characters; optional. Updated description",
+    "requiredPackageId": "UUID string or null; optional. Add, replace, or remove the package restriction"
+  },
+  "GuildResponse": {
+    "guildId": "UUID string; required. Guild identifier",
+    "name": "String; required. Guild name",
+    "description": "String; required. Guild description",
+    "ownerId": "UUID string; required. Current guild owner",
+    "requiredPackageId": "UUID string or null; required. Required package, if configured",
+    "memberCount": "Non-negative integer; required. Current number of members",
+    "createdAt": "UTC timestamp; required. Guild creation time",
+    "updatedAt": "UTC timestamp; required. Last guild update time"
+  },
+  "GuildPageResponse": {
+    "items": "Array of GuildResponse; required. Guilds in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page"
+  },
+  "GuildMemberResponse": {
+    "guildId": "UUID string; required. Guild containing the member",
+    "userId": "UUID string; required. Member's user identifier",
+    "role": "OWNER, OFFICER, or MEMBER; required. Member's guild role",
+    "joinedAt": "UTC timestamp; required. Membership creation time"
+  },
+  "GuildMemberPageResponse": {
+    "items": "Array of GuildMemberResponse; required. Members in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page"
+  },
+  "UpdateGuildMemberRequest": {
+    "role": "OFFICER or MEMBER; required. New role; ownership uses the separate transfer endpoint"
+  },
+  "TransferGuildOwnershipRequest": {
+    "newOwnerId": "UUID string; required. Existing member who becomes the owner"
+  }
+}
+```
 
 ##### Invitation Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreateGuildInvitationRequest` | `inviteeUserId` | UUID string | Yes | User invited to the guild |
-| `GuildInvitationResponse` | `invitationId` | UUID string | Yes | Invitation identifier |
-| `GuildInvitationResponse` | `guildId` | UUID string | Yes | Target guild |
-| `GuildInvitationResponse` | `inviterUserId` | UUID string | Yes | Owner or officer who sent the invitation |
-| `GuildInvitationResponse` | `inviteeUserId` | UUID string | Yes | User receiving the invitation |
-| `GuildInvitationResponse` | `status` | `PENDING`, `ACCEPTED`, `REJECTED`, `EXPIRED`, or `CANCELLED` | Yes | Current invitation state |
-| `GuildInvitationResponse` | `createdAt` | UTC timestamp | Yes | Invitation creation time |
-| `GuildInvitationResponse` | `expiresAt` | UTC timestamp | Yes | Time after which it can no longer be accepted |
+```json
+{
+  "CreateGuildInvitationRequest": {
+    "inviteeUserId": "UUID string; required. User invited to the guild"
+  },
+  "RespondToGuildInvitationRequest": {
+    "decision": "ACCEPT or REJECT; required. Invitation recipient's decision"
+  },
+  "GuildInvitationResponse": {
+    "invitationId": "UUID string; required. Invitation identifier",
+    "guildId": "UUID string; required. Target guild",
+    "inviterUserId": "UUID string; required. Owner or officer who sent the invitation",
+    "inviteeUserId": "UUID string; required. User receiving the invitation",
+    "status": "PENDING, ACCEPTED, REJECTED, EXPIRED, or CANCELLED; required. Current invitation state",
+    "createdAt": "UTC timestamp; required. Invitation creation time",
+    "expiresAt": "UTC timestamp; required. Time after which it can no longer be accepted"
+  }
+}
+```
 
 ##### Guild Chat REST Schema
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `GuildMessageResponse` | `messageId` | UUID string | Yes | Stored message identifier |
-| `GuildMessageResponse` | `guildId` | UUID string | Yes | Guild chat containing the message |
-| `GuildMessageResponse` | `authorUserId` | UUID string | Yes | Message author |
-| `GuildMessageResponse` | `content` | String, 1-2,000 characters | Yes | Message text |
-| `GuildMessageResponse` | `sentAt` | UTC timestamp | Yes | Message creation time |
-| `GuildMessagePageResponse` | `items` | Array of `GuildMessageResponse` | Yes | Messages ordered from newest to oldest |
-| `GuildMessagePageResponse` | `nextCursor` | String or `null` | Yes | Cursor for older messages |
+```json
+{
+  "GuildMessageResponse": {
+    "messageId": "UUID string; required. Stored message identifier",
+    "guildId": "UUID string; required. Guild chat containing the message",
+    "authorUserId": "UUID string; required. Message author",
+    "content": "String, 1-2,000 characters; required. Message text",
+    "sentAt": "UTC timestamp; required. Message creation time"
+  },
+  "GuildMessagePageResponse": {
+    "items": "Array of GuildMessageResponse; required. Messages ordered from newest to oldest",
+    "nextCursor": "String or null; required. Cursor for older messages"
+  }
+}
+```
 
 ##### Guild Chat WebSocket Contract
 
@@ -601,14 +729,16 @@ If a message cannot be processed, the sender receives `guild.chat.error.v1` with
 
 `guild.invitation.created.v1` is published after an invitation is stored successfully. Notification Service consumes it to notify the invited user.
 
-| `data` field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `invitationId` | UUID string | Yes | Invitation identifier |
-| `guildId` | UUID string | Yes | Guild sending the invitation |
-| `guildName` | String | Yes | Name displayed in the notification |
-| `inviterUserId` | UUID string | Yes | User who sent the invitation |
-| `inviteeUserId` | UUID string | Yes | User who should be notified |
-| `expiresAt` | UTC timestamp | Yes | Invitation expiration time |
+```json
+{
+  "invitationId": "UUID string; required. Invitation identifier",
+  "guildId": "UUID string; required. Guild sending the invitation",
+  "guildName": "String; required. Name displayed in the notification",
+  "inviterUserId": "UUID string; required. User who sent the invitation",
+  "inviteeUserId": "UUID string; required. User who should be notified",
+  "expiresAt": "UTC timestamp; required. Invitation expiration time"
+}
+```
 
 ##### Service Dependencies
 
@@ -641,71 +771,99 @@ Tamagotchi Service owns every Tamagotchi and its current owner, role, combat typ
 
 ##### Tamagotchi Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreateTamagotchiRequest` | `ownerUserId` | UUID string | Yes | Initial owner |
-| `CreateTamagotchiRequest` | `packageId` | UUID string | Yes | Package that defines the Tamagotchi's local statistics |
-| `CreateTamagotchiRequest` | `name` | String, 1-80 characters | Yes | Tamagotchi display name |
-| `CreateTamagotchiRequest` | `combatType` | `FLAME`, `NATURE`, `EARTH`, `ELECTRIC`, `WATER`, or `SHADOW` | Yes | Predefined combat type |
-| `CreateTamagotchiRequest` | `spriteUrl` | URL string | Yes | Sprite reference |
-| `CreateTamagotchiRequest` | `healthStats` | JSON object | Yes | Package-local statistics validated against Package Registry definitions |
-| `UpdateTamagotchiRequest` | `name` | String, 1-80 characters | No | Updated display name |
-| `UpdateTamagotchiRequest` | `spriteUrl` | URL string | No | Updated sprite reference |
-| `TamagotchiResponse` | `tamagotchiId` | UUID string | Yes | Global Tamagotchi identifier |
-| `TamagotchiResponse` | `ownerUserId` | UUID string | Yes | Current owner |
-| `TamagotchiResponse` | `packageId` | UUID string | Yes | Originating package |
-| `TamagotchiResponse` | `name` | String | Yes | Display name |
-| `TamagotchiResponse` | `ownershipRole` | `PRIMARY` or `SECONDARY` | Yes | Role for the current owner |
-| `TamagotchiResponse` | `combatType` | Combat-type string | Yes | Current combat type |
-| `TamagotchiResponse` | `level` | Positive integer | Yes | Current level |
-| `TamagotchiResponse` | `xp` | Non-negative integer | Yes | Total accumulated XP |
-| `TamagotchiResponse` | `spriteUrl` | URL string | Yes | Sprite reference |
-| `TamagotchiResponse` | `healthStats` | JSON object | Yes | Non-normalized package-local statistics |
-| `TamagotchiResponse` | `createdAt` | UTC timestamp | Yes | Creation time |
-| `TamagotchiResponse` | `updatedAt` | UTC timestamp | Yes | Last update time |
-| `SetPrimaryTamagotchiRequest` | `tamagotchiId` | UUID string | Yes | Owned Tamagotchi that becomes primary |
-| `UpdateHealthStatsRequest` | `stats` | JSON object | Yes | Statistic keys and new values |
+```json
+{
+  "CreateTamagotchiRequest": {
+    "ownerUserId": "UUID string; required. Initial owner",
+    "packageId": "UUID string; required. Package that defines the Tamagotchi's local statistics",
+    "name": "String, 1-80 characters; required. Tamagotchi display name",
+    "combatType": "FLAME, NATURE, EARTH, ELECTRIC, WATER, or SHADOW; required. Predefined combat type",
+    "spriteUrl": "URL string; required. Sprite reference",
+    "healthStats": "JSON object; required. Package-local statistics validated against Package Registry definitions"
+  },
+  "UpdateTamagotchiRequest": {
+    "name": "String, 1-80 characters; optional. Updated display name",
+    "spriteUrl": "URL string; optional. Updated sprite reference"
+  },
+  "TamagotchiResponse": {
+    "tamagotchiId": "UUID string; required. Global Tamagotchi identifier",
+    "ownerUserId": "UUID string; required. Current owner",
+    "packageId": "UUID string; required. Originating package",
+    "name": "String; required. Display name",
+    "ownershipRole": "PRIMARY or SECONDARY; required. Role for the current owner",
+    "combatType": "Combat-type string; required. Current combat type",
+    "level": "Positive integer; required. Current level",
+    "xp": "Non-negative integer; required. Total accumulated XP",
+    "spriteUrl": "URL string; required. Sprite reference",
+    "healthStats": "JSON object; required. Non-normalized package-local statistics",
+    "createdAt": "UTC timestamp; required. Creation time",
+    "updatedAt": "UTC timestamp; required. Last update time"
+  },
+  "SetPrimaryTamagotchiRequest": {
+    "tamagotchiId": "UUID string; required. Owned Tamagotchi that becomes primary"
+  },
+  "UpdateHealthStatsRequest": {
+    "stats": "JSON object; required. Statistic keys and new values"
+  }
+}
+```
 
 Package-local `healthStats` values may be integer, decimal, or Boolean values according to the definitions returned by Package Registry Service. Tamagotchi Service rejects unknown keys and values outside their configured ranges.
 
 ##### Combat and Progression Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CombatTypeResponse` | `type` | Combat-type string | Yes | One of the six predefined types |
-| `CombatTypeResponse` | `strongAgainst` | Combat-type string | Yes | Type against which it has an advantage |
-| `CombatProfileResponse` | `tamagotchiId` | UUID string | Yes | Tamagotchi identifier |
-| `CombatProfileResponse` | `ownerUserId` | UUID string | Yes | Current owner |
-| `CombatProfileResponse` | `packageId` | UUID string | Yes | Package used to interpret local statistics |
-| `CombatProfileResponse` | `combatType` | Combat-type string | Yes | Type used for advantage calculations |
-| `CombatProfileResponse` | `level` | Positive integer | Yes | Level used for combat calculations |
-| `CombatProfileResponse` | `healthStats` | JSON object | Yes | Current package-local statistics |
-| `GrantXpRequest` | `amount` | Positive integer | Yes | XP to grant |
-| `GrantXpRequest` | `source` | `BATTLE` or `RAID` | Yes | Activity producing the XP |
-| `GrantXpRequest` | `referenceId` | UUID string | Yes | Battle or raid identifier used for deduplication |
-| `GrantXpResponse` | `tamagotchiId` | UUID string | Yes | Updated Tamagotchi |
-| `GrantXpResponse` | `previousLevel` | Positive integer | Yes | Level before the grant |
-| `GrantXpResponse` | `newLevel` | Positive integer | Yes | Level after the grant |
-| `GrantXpResponse` | `totalXp` | Non-negative integer | Yes | Total XP after the grant |
-| `GrantXpResponse` | `processedAt` | UTC timestamp | Yes | Grant processing time |
+```json
+{
+  "CombatTypeResponse": {
+    "type": "Combat-type string; required. One of the six predefined types",
+    "strongAgainst": "Combat-type string; required. Type against which it has an advantage"
+  },
+  "CombatProfileResponse": {
+    "tamagotchiId": "UUID string; required. Tamagotchi identifier",
+    "ownerUserId": "UUID string; required. Current owner",
+    "packageId": "UUID string; required. Package used to interpret local statistics",
+    "combatType": "Combat-type string; required. Type used for advantage calculations",
+    "level": "Positive integer; required. Level used for combat calculations",
+    "healthStats": "JSON object; required. Current package-local statistics"
+  },
+  "GrantXpRequest": {
+    "amount": "Positive integer; required. XP to grant",
+    "source": "BATTLE or RAID; required. Activity producing the XP",
+    "referenceId": "UUID string; required. Battle or raid identifier used for deduplication"
+  },
+  "GrantXpResponse": {
+    "tamagotchiId": "UUID string; required. Updated Tamagotchi",
+    "previousLevel": "Positive integer; required. Level before the grant",
+    "newLevel": "Positive integer; required. Level after the grant",
+    "totalXp": "Non-negative integer; required. Total XP after the grant",
+    "processedAt": "UTC timestamp; required. Grant processing time"
+  }
+}
+```
 
 The type-advantage cycle is `FLAME > NATURE > EARTH > ELECTRIC > WATER > SHADOW > FLAME`.
 
 ##### Ownership Transfer Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `TransferTamagotchiRequest` | `tamagotchiId` | UUID string | Yes | Existing Tamagotchi to transfer |
-| `TransferTamagotchiRequest` | `fromUserId` | UUID string | Yes | Current owner |
-| `TransferTamagotchiRequest` | `toUserId` | UUID string | Yes | New owner |
-| `TransferTamagotchiRequest` | `reason` | `BATTLE_REWARD` | Yes | Business reason for the transfer |
-| `TransferTamagotchiRequest` | `referenceId` | UUID string | Yes | Completed battle identifier used for deduplication |
-| `OwnershipTransferResponse` | `transferId` | UUID string | Yes | Ownership-transfer identifier |
-| `OwnershipTransferResponse` | `tamagotchiId` | UUID string | Yes | Transferred Tamagotchi |
-| `OwnershipTransferResponse` | `fromUserId` | UUID string | Yes | Previous owner |
-| `OwnershipTransferResponse` | `toUserId` | UUID string | Yes | New owner |
-| `OwnershipTransferResponse` | `newOwnershipRole` | `SECONDARY` | Yes | Role assigned to the captured Tamagotchi |
-| `OwnershipTransferResponse` | `transferredAt` | UTC timestamp | Yes | Transfer completion time |
+```json
+{
+  "TransferTamagotchiRequest": {
+    "tamagotchiId": "UUID string; required. Existing Tamagotchi to transfer",
+    "fromUserId": "UUID string; required. Current owner",
+    "toUserId": "UUID string; required. New owner",
+    "reason": "BATTLE_REWARD; required. Business reason for the transfer",
+    "referenceId": "UUID string; required. Completed battle identifier used for deduplication"
+  },
+  "OwnershipTransferResponse": {
+    "transferId": "UUID string; required. Ownership-transfer identifier",
+    "tamagotchiId": "UUID string; required. Transferred Tamagotchi",
+    "fromUserId": "UUID string; required. Previous owner",
+    "toUserId": "UUID string; required. New owner",
+    "newOwnershipRole": "SECONDARY; required. Role assigned to the captured Tamagotchi",
+    "transferredAt": "UTC timestamp; required. Transfer completion time"
+  }
+}
+```
 
 The transfer updates the existing Tamagotchi instead of creating a new entry. The winner receives it as a secondary Tamagotchi. Selection of a new primary for the previous owner is a separate user action.
 
@@ -719,7 +877,7 @@ The transfer updates the existing Tamagotchi instead of creating a new entry. Th
 
 #### Battle Service
 
-Battle Service owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores only battle-specific state in Redis.
+Battle Service owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns and results in PostgreSQL.
 
 ##### Endpoint Catalog
 
@@ -728,86 +886,122 @@ Battle Service owns battle requests, active turn-based battles, actions, and fin
 | `POST /api/v1/battle-requests` | Challenger | `CreateBattleRequest` | `201 BattleRequestResponse` | `400`, `403`, `404`, `409 BATTLE_REQUEST_EXISTS`, `422 INVALID_SELECTION` |
 | `GET /api/v1/battle-requests/{battleRequestId}` | Challenger or opponent | None | `200 BattleRequestResponse` | `403`, `404 BATTLE_REQUEST_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/battle-requests?direction={direction}&status={status}` | Account owner | Query parameters | `200 BattleRequestResponse[]` | `400`, `403` |
-| `POST /api/v1/battle-requests/{battleRequestId}/accept` | Opponent | `AcceptBattleRequest` | `201 BattleResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED`, `422 INVALID_SELECTION` |
-| `POST /api/v1/battle-requests/{battleRequestId}/reject` | Opponent | None | `200 BattleRequestResponse` | `403`, `404`, `409 REQUEST_ALREADY_RESOLVED` |
+| `POST /api/v1/battle-requests/{battleRequestId}/responses` | Opponent | `RespondToBattleRequest` | `200 BattleRequestDecisionResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED`, `422 INVALID_SELECTION` |
 | `GET /api/v1/battles/{battleId}` | Participant | None | `200 BattleResponse` | `403`, `404 BATTLE_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/battles?status={status}&cursor={cursor}&limit={limit}` | Account owner | Query parameters | `200 BattlePageResponse` | `400`, `403` |
 | `POST /api/v1/battles/{battleId}/actions` | Current-turn participant | `CreateBattleActionRequest` | `200 BattleActionResponse` | `400`, `403`, `404`, `409 NOT_CURRENT_TURN`, `422 INVALID_ACTION` |
-| `POST /api/v1/battles/{battleId}/forfeit` | Participant | None | `200 BattleResponse` | `403`, `404`, `409 BATTLE_NOT_ACTIVE` |
+| `POST /api/v1/battles/{battleId}/forfeitures` | Participant | None | `200 BattleResponse` | `403`, `404`, `409 BATTLE_NOT_ACTIVE` |
 
 ##### Battle Request Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreateBattleRequest` | `opponentUserId` | UUID string | Yes | User being challenged |
-| `CreateBattleRequest` | `primaryTamagotchiId` | UUID string | Yes | Challenger's primary Tamagotchi |
-| `CreateBattleRequest` | `secondaryTamagotchiId` | UUID string | Yes | Challenger's selected secondary Tamagotchi |
-| `CreateBattleRequest` | `equippedBoosts` | Array of `BattleBoostSelection` | Yes | Package-defined boosts selected by the challenger |
-| `AcceptBattleRequest` | `primaryTamagotchiId` | UUID string | Yes | Opponent's primary Tamagotchi |
-| `AcceptBattleRequest` | `secondaryTamagotchiId` | UUID string | Yes | Opponent's selected secondary Tamagotchi |
-| `AcceptBattleRequest` | `equippedBoosts` | Array of `BattleBoostSelection` | Yes | Package-defined boosts selected by the opponent |
-| `BattleRequestResponse` | `battleRequestId` | UUID string | Yes | Challenge identifier |
-| `BattleRequestResponse` | `challengerUserId` | UUID string | Yes | User who created the challenge |
-| `BattleRequestResponse` | `opponentUserId` | UUID string | Yes | Challenged user |
-| `BattleRequestResponse` | `challengerSelection` | `BattleSelection` | Yes | Challenger's Tamagotchis and boosts |
-| `BattleRequestResponse` | `status` | `PENDING`, `ACCEPTED`, `REJECTED`, or `EXPIRED` | Yes | Current request state |
-| `BattleRequestResponse` | `createdAt` | UTC timestamp | Yes | Challenge creation time |
-| `BattleRequestResponse` | `expiresAt` | UTC timestamp | Yes | Time after which the challenge expires |
-| `BattleSelection` | `primaryTamagotchiId` | UUID string | Yes | Selected primary Tamagotchi |
-| `BattleSelection` | `secondaryTamagotchiId` | UUID string | Yes | Selected secondary Tamagotchi |
-| `BattleSelection` | `equippedBoosts` | Array of `BattleBoostSelection` | Yes | Selected package-defined boosts |
-| `BattleBoostSelection` | `packageId` | UUID string | Yes | Package defining the boost |
-| `BattleBoostSelection` | `boostKey` | String | Yes | Boost key unique within the package |
+```json
+{
+  "CreateBattleRequest": {
+    "opponentUserId": "UUID string; required. User being challenged",
+    "primaryTamagotchiId": "UUID string; required. Challenger's primary Tamagotchi",
+    "secondaryTamagotchiId": "UUID string; required. Challenger's selected secondary Tamagotchi",
+    "equippedBoosts": "Array of BattleBoostSelection; required. Package-defined boosts selected by the challenger"
+  },
+  "RespondToBattleRequest": {
+    "decision": "ACCEPT or REJECT; required. Opponent's decision",
+    "primaryTamagotchiId": "UUID string; conditional. Required when accepting",
+    "secondaryTamagotchiId": "UUID string; conditional. Required when accepting",
+    "equippedBoosts": "Array of BattleBoostSelection; conditional. Required when accepting"
+  },
+  "BattleRequestDecisionResponse": {
+    "battleRequest": "BattleRequestResponse; required. Resolved challenge",
+    "battle": "BattleResponse or null; required. Created battle for ACCEPT, otherwise null"
+  },
+  "BattleRequestResponse": {
+    "battleRequestId": "UUID string; required. Challenge identifier",
+    "challengerUserId": "UUID string; required. User who created the challenge",
+    "opponentUserId": "UUID string; required. Challenged user",
+    "challengerSelection": "BattleSelection; required. Challenger's Tamagotchis and boosts",
+    "status": "PENDING, ACCEPTED, REJECTED, or EXPIRED; required. Current request state",
+    "createdAt": "UTC timestamp; required. Challenge creation time",
+    "expiresAt": "UTC timestamp; required. Time after which the challenge expires"
+  },
+  "BattleSelection": {
+    "primaryTamagotchiId": "UUID string; required. Selected primary Tamagotchi",
+    "secondaryTamagotchiId": "UUID string; required. Selected secondary Tamagotchi",
+    "equippedBoosts": "Array of BattleBoostSelection; required. Selected package-defined boosts"
+  },
+  "BattleBoostSelection": {
+    "packageId": "UUID string; required. Package defining the boost",
+    "boostKey": "String; required. Boost key unique within the package"
+  }
+}
+```
 
 ##### Battle State and Action Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `BattleResponse` | `battleId` | UUID string | Yes | Battle identifier |
-| `BattleResponse` | `battleRequestId` | UUID string | Yes | Request that created the battle |
-| `BattleResponse` | `status` | `ACTIVE`, `SETTLING`, `COMPLETED`, or `FORFEITED` | Yes | Battle lifecycle state |
-| `BattleResponse` | `participants` | Array of two `BattleParticipant` objects | Yes | Current state for both players |
-| `BattleResponse` | `currentTurnUserId` | UUID string or `null` | Yes | User allowed to act, or `null` after the battle ends |
-| `BattleResponse` | `turnNumber` | Positive integer | Yes | Current turn number |
-| `BattleResponse` | `winnerUserId` | UUID string or `null` | Yes | Winner after completion |
-| `BattleResponse` | `loserUserId` | UUID string or `null` | Yes | Loser after completion |
-| `BattleResponse` | `result` | `BattleResult` or `null` | Yes | Settlement result after completion |
-| `BattleResponse` | `createdAt` | UTC timestamp | Yes | Battle creation time |
-| `BattleResponse` | `updatedAt` | UTC timestamp | Yes | Last state-change time |
-| `BattlePageResponse` | `items` | Array of `BattleResponse` | Yes | Battles in the current page |
-| `BattlePageResponse` | `nextCursor` | String or `null` | Yes | Cursor for the next page |
-| `BattleParticipant` | `userId` | UUID string | Yes | Participant identifier |
-| `BattleParticipant` | `combatants` | Array of two `BattleCombatant` objects | Yes | Primary and secondary battle state |
-| `BattleParticipant` | `equippedBoosts` | Array of `BattleBoostSelection` | Yes | Boosts available during the battle |
-| `BattleCombatant` | `tamagotchiId` | UUID string | Yes | Participating Tamagotchi |
-| `BattleCombatant` | `role` | `PRIMARY` or `SECONDARY` | Yes | Selection role |
-| `BattleCombatant` | `currentHealth` | Non-negative integer | Yes | Current battle health |
-| `BattleCombatant` | `defeated` | Boolean | Yes | Whether the Tamagotchi can continue fighting |
-| `CreateBattleActionRequest` | `actionId` | UUID string | Yes | Client-generated identifier used for deduplication |
-| `CreateBattleActionRequest` | `type` | `ATTACK`, `SWITCH_ACTIVE`, or `USE_BOOST` | Yes | Requested turn action |
-| `CreateBattleActionRequest` | `actorTamagotchiId` | UUID string | Yes | Tamagotchi performing the action |
-| `CreateBattleActionRequest` | `targetTamagotchiId` | UUID string | Conditional | Required for an attack |
-| `CreateBattleActionRequest` | `boostPackageId` | UUID string | Conditional | Required when using a boost |
-| `CreateBattleActionRequest` | `boostKey` | String | Conditional | Required when using a boost |
-| `BattleActionResponse` | `actionId` | UUID string | Yes | Processed action identifier |
-| `BattleActionResponse` | `type` | Battle-action string | Yes | Processed action type |
-| `BattleActionResponse` | `damage` | Non-negative integer | Yes | Damage produced by the action; zero for non-damage actions |
-| `BattleActionResponse` | `battle` | `BattleResponse` | Yes | Battle state after applying the action |
+```json
+{
+  "BattleResponse": {
+    "battleId": "UUID string; required. Battle identifier",
+    "battleRequestId": "UUID string; required. Request that created the battle",
+    "status": "ACTIVE, SETTLING, COMPLETED, or FORFEITED; required. Battle lifecycle state",
+    "participants": "Array of two BattleParticipant objects; required. Current state for both players",
+    "currentTurnUserId": "UUID string or null; required. User allowed to act, or null after the battle ends",
+    "turnNumber": "Positive integer; required. Current turn number",
+    "winnerUserId": "UUID string or null; required. Winner after completion",
+    "loserUserId": "UUID string or null; required. Loser after completion",
+    "result": "BattleResult or null; required. Settlement result after completion",
+    "createdAt": "UTC timestamp; required. Battle creation time",
+    "updatedAt": "UTC timestamp; required. Last state-change time"
+  },
+  "BattlePageResponse": {
+    "items": "Array of BattleResponse; required. Battles in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page"
+  },
+  "BattleParticipant": {
+    "userId": "UUID string; required. Participant identifier",
+    "combatants": "Array of two BattleCombatant objects; required. Primary and secondary battle state",
+    "equippedBoosts": "Array of BattleBoostSelection; required. Boosts available during the battle"
+  },
+  "BattleCombatant": {
+    "tamagotchiId": "UUID string; required. Participating Tamagotchi",
+    "role": "PRIMARY or SECONDARY; required. Selection role",
+    "currentHealth": "Non-negative integer; required. Current battle health",
+    "defeated": "Boolean; required. Whether the Tamagotchi can continue fighting"
+  },
+  "CreateBattleActionRequest": {
+    "actionId": "UUID string; required. Client-generated identifier used for deduplication",
+    "type": "ATTACK, SWITCH_ACTIVE, or USE_BOOST; required. Requested turn action",
+    "actorTamagotchiId": "UUID string; required. Tamagotchi performing the action",
+    "targetTamagotchiId": "UUID string; conditional. Required for an attack",
+    "boostPackageId": "UUID string; conditional. Required when using a boost",
+    "boostKey": "String; conditional. Required when using a boost"
+  },
+  "BattleActionResponse": {
+    "actionId": "UUID string; required. Processed action identifier",
+    "type": "Battle-action string; required. Processed action type",
+    "damage": "Non-negative integer; required. Damage produced by the action; zero for non-damage actions",
+    "battle": "BattleResponse; required. Battle state after applying the action"
+  }
+}
+```
 
 ##### Battle Result Schema
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `BattleResult` | `winnerUserId` | UUID string | Yes | Winning player |
-| `BattleResult` | `loserUserId` | UUID string | Yes | Losing player |
-| `BattleResult` | `winnerGlobalCurrency` | Non-negative integer | Yes | Currency credited to the winner |
-| `BattleResult` | `loserGlobalCurrencyLoss` | Non-negative integer | Yes | Currency debited from the loser |
-| `BattleResult` | `xpAwards` | Array of `BattleXpAward` | Yes | XP distributed to all selected Tamagotchis |
-| `BattleResult` | `transferredTamagotchiId` | UUID string | Yes | Loser's former primary Tamagotchi transferred to the winner |
-| `BattleResult` | `settledAt` | UTC timestamp | Yes | Time at which all rewards and transfers completed |
-| `BattleXpAward` | `userId` | UUID string | Yes | Owner at the time XP is awarded |
-| `BattleXpAward` | `tamagotchiId` | UUID string | Yes | Tamagotchi receiving XP |
-| `BattleXpAward` | `amount` | Non-negative integer | Yes | XP amount |
+```json
+{
+  "BattleResult": {
+    "winnerUserId": "UUID string; required. Winning player",
+    "loserUserId": "UUID string; required. Losing player",
+    "winnerGlobalCurrency": "Non-negative integer; required. Currency credited to the winner",
+    "loserGlobalCurrencyLoss": "Non-negative integer; required. Currency debited from the loser",
+    "xpAwards": "Array of BattleXpAward; required. XP distributed to all selected Tamagotchis",
+    "transferredTamagotchiId": "UUID string; required. Loser's former primary Tamagotchi transferred to the winner",
+    "settledAt": "UTC timestamp; required. Time at which all rewards and transfers completed"
+  },
+  "BattleXpAward": {
+    "userId": "UUID string; required. Owner at the time XP is awarded",
+    "tamagotchiId": "UUID string; required. Tamagotchi receiving XP",
+    "amount": "Non-negative integer; required. XP amount"
+  }
+}
+```
 
 By default, each participant's total battle XP is split 60 percent to the primary Tamagotchi and 40 percent to the secondary Tamagotchi. The winner receives the larger total award and the loser receives a smaller total award.
 
@@ -826,24 +1020,28 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 `battle.request.created.v1` is published after a challenge is stored. Notification Service consumes it to notify the opponent.
 
-| `data` field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `battleRequestId` | UUID string | Yes | Challenge identifier |
-| `challengerUserId` | UUID string | Yes | User who created the challenge |
-| `opponentUserId` | UUID string | Yes | User who should be notified |
-| `expiresAt` | UTC timestamp | Yes | Challenge expiration time |
+```json
+{
+  "battleRequestId": "UUID string; required. Challenge identifier",
+  "challengerUserId": "UUID string; required. User who created the challenge",
+  "opponentUserId": "UUID string; required. User who should be notified",
+  "expiresAt": "UTC timestamp; required. Challenge expiration time"
+}
+```
 
 `battle.completed.v1` is published after currency, XP, and ownership settlement finishes. Notification Service consumes it to notify both players.
 
-| `data` field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `battleId` | UUID string | Yes | Completed battle |
-| `winnerUserId` | UUID string | Yes | Winning player |
-| `loserUserId` | UUID string | Yes | Losing player |
-| `winnerGlobalCurrency` | Non-negative integer | Yes | Winner's currency reward |
-| `loserGlobalCurrencyLoss` | Non-negative integer | Yes | Loser's currency loss |
-| `transferredTamagotchiId` | UUID string | Yes | Tamagotchi transferred to the winner |
-| `settledAt` | UTC timestamp | Yes | Settlement completion time |
+```json
+{
+  "battleId": "UUID string; required. Completed battle",
+  "winnerUserId": "UUID string; required. Winning player",
+  "loserUserId": "UUID string; required. Losing player",
+  "winnerGlobalCurrency": "Non-negative integer; required. Winner's currency reward",
+  "loserGlobalCurrencyLoss": "Non-negative integer; required. Loser's currency loss",
+  "transferredTamagotchiId": "UUID string; required. Tamagotchi transferred to the winner",
+  "settledAt": "UTC timestamp; required. Settlement completion time"
+}
+```
 
 ##### Service Dependencies
 
@@ -856,7 +1054,7 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 #### Map Service
 
-Map Service owns temporary location state and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest update for each user in Redis and does not store location history.
+Map Service owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user in Redis with a TTL and stores durable settings and encounters in PostgreSQL.
 
 ##### Endpoint Catalog
 
@@ -868,33 +1066,45 @@ Map Service owns temporary location state and map visibility calculations. Clien
 
 ##### Location Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `UpdateLocationRequest` | `latitude` | Decimal from -90 to 90 | Yes | Latest latitude reported by the client |
-| `UpdateLocationRequest` | `longitude` | Decimal from -180 to 180 | Yes | Latest longitude reported by the client |
-| `UpdateLocationRequest` | `accuracyMeters` | Non-negative decimal | No | Accuracy reported by the device |
-| `UpdateLocationRequest` | `recordedAt` | UTC timestamp | Yes | Time at which the device obtained the location |
-| `UpdateLocationRequest` | `sequenceNumber` | Non-negative integer | Yes | Monotonically increasing client value used to reject out-of-order updates |
-| `LocationResponse` | `userId` | UUID string | Yes | User associated with the location |
-| `LocationResponse` | `latitude` | Decimal from -90 to 90 | Yes | Stored latitude |
-| `LocationResponse` | `longitude` | Decimal from -180 to 180 | Yes | Stored longitude |
-| `LocationResponse` | `accuracyMeters` | Non-negative decimal or `null` | Yes | Device accuracy when supplied |
-| `LocationResponse` | `recordedAt` | UTC timestamp | Yes | Time at which the device obtained the location |
-| `LocationResponse` | `expiresAt` | UTC timestamp | Yes | Time after which the location is no longer visible |
+```json
+{
+  "UpdateLocationRequest": {
+    "latitude": "Decimal from -90 to 90; required. Latest latitude reported by the client",
+    "longitude": "Decimal from -180 to 180; required. Latest longitude reported by the client",
+    "accuracyMeters": "Non-negative decimal; optional. Accuracy reported by the device",
+    "recordedAt": "UTC timestamp; required. Time at which the device obtained the location",
+    "sequenceNumber": "Non-negative integer; required. Monotonically increasing client value used to reject out-of-order updates"
+  },
+  "LocationResponse": {
+    "userId": "UUID string; required. User associated with the location",
+    "latitude": "Decimal from -90 to 90; required. Stored latitude",
+    "longitude": "Decimal from -180 to 180; required. Stored longitude",
+    "accuracyMeters": "Non-negative decimal or null; required. Device accuracy when supplied",
+    "recordedAt": "UTC timestamp; required. Time at which the device obtained the location",
+    "expiresAt": "UTC timestamp; required. Time after which the location is no longer visible"
+  }
+}
+```
 
 ##### Map View Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `MapViewResponse` | `userId` | UUID string | Yes | User requesting the map |
-| `MapViewResponse` | `generatedAt` | UTC timestamp | Yes | Time at which visibility was calculated |
-| `MapViewResponse` | `players` | Array of `VisiblePlayer` | Yes | Users visible according to the relationship and proximity rules |
-| `VisiblePlayer` | `userId` | UUID string | Yes | Visible user identifier |
-| `VisiblePlayer` | `relationship` | `FRIEND`, `ENEMY`, or `NONE` | Yes | Relationship returned by User Management Service |
-| `VisiblePlayer` | `latitude` | Decimal from -90 to 90 | Yes | Latest unexpired latitude |
-| `VisiblePlayer` | `longitude` | Decimal from -180 to 180 | Yes | Latest unexpired longitude |
-| `VisiblePlayer` | `distanceMeters` | Non-negative decimal | Yes | Calculated distance from the requesting user |
-| `VisiblePlayer` | `recordedAt` | UTC timestamp | Yes | Time at which the visible location was obtained |
+```json
+{
+  "MapViewResponse": {
+    "userId": "UUID string; required. User requesting the map",
+    "generatedAt": "UTC timestamp; required. Time at which visibility was calculated",
+    "players": "Array of VisiblePlayer; required. Users visible according to the relationship and proximity rules"
+  },
+  "VisiblePlayer": {
+    "userId": "UUID string; required. Visible user identifier",
+    "relationship": "FRIEND, ENEMY, or NONE; required. Relationship returned by User Management Service",
+    "latitude": "Decimal from -90 to 90; required. Latest unexpired latitude",
+    "longitude": "Decimal from -180 to 180; required. Latest unexpired longitude",
+    "distanceMeters": "Non-negative decimal; required. Calculated distance from the requesting user",
+    "recordedAt": "UTC timestamp; required. Time at which the visible location was obtained"
+  }
+}
+```
 
 Friends and enemies are included whenever both users have unexpired locations. A user with relationship `NONE` is included only when the calculated distance is at most 6 meters. Expired locations are omitted from map results.
 
@@ -902,12 +1112,14 @@ Friends and enemies are included whenever both users have unexpired locations. A
 
 `map.proximity.detected.v1` is published when two unrelated users move from outside to inside the 6-meter threshold. Notification Service consumes it to notify the affected users.
 
-| `data` field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `firstUserId` | UUID string | Yes | First nearby user |
-| `secondUserId` | UUID string | Yes | Second nearby user |
-| `distanceMeters` | Non-negative decimal | Yes | Distance calculated when the threshold was crossed |
-| `detectedAt` | UTC timestamp | Yes | Detection time |
+```json
+{
+  "firstUserId": "UUID string; required. First nearby user",
+  "secondUserId": "UUID string; required. Second nearby user",
+  "distanceMeters": "Non-negative decimal; required. Distance calculated when the threshold was crossed",
+  "detectedAt": "UTC timestamp; required. Detection time"
+}
+```
 
 Map Service records a short-lived proximity marker for the unordered user pair so that continuous location updates do not produce duplicate notifications. A new event may be published only after the pair leaves the threshold and later enters it again.
 
@@ -920,13 +1132,13 @@ Map Service records a short-lived proximity marker for the unordered user pair s
 
 #### Monster Raid Service
 
-Monster Raid Service owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress. Active and recently finished raid state is stored in Redis.
+Monster Raid Service owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress. Raids, participants, attack batches and rewards are stored in PostgreSQL; only the current monster HP is kept in Redis for fast atomic updates.
 
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
-| `GET /api/v1/raids?guildId={guildId}&status={status}&cursor={cursor}&limit={limit}` | Guild member | Query parameters | `200 RaidPageResponse` | `400`, `403`, `404 GUILD_NOT_FOUND` |
+| `GET /api/v1/guilds/{guildId}/raids?status={status}&cursor={cursor}&limit={limit}` | Guild member | Query parameters | `200 RaidPageResponse` | `400`, `403`, `404 GUILD_NOT_FOUND` |
 | `POST /api/v1/guilds/{guildId}/raids` | Guild member | `CreateRaidRequest` | `201 RaidResponse` | `400`, `403`, `404 SCHEDULE_OR_GUILD_NOT_FOUND`, `409 ACTIVE_GUILD_RAID_EXISTS`, `422 SCHEDULE_NOT_ACTIVE` |
 | `GET /api/v1/raids/{raidId}` | Guild member | None | `200 RaidResponse` | `403`, `404 RAID_NOT_FOUND` |
 | `POST /api/v1/raids/{raidId}/participants` | Guild member | `JoinRaidRequest` | `201 RaidParticipantResponse` | `400`, `403`, `404`, `409 PARTICIPANT_EXISTS`, `422 RAID_NOT_ACTIVE`, `422 PARTICIPANT_LIMIT_REACHED` |
@@ -938,64 +1150,92 @@ Creating a raid is idempotent for the combination of `guildId` and `scheduleId`:
 
 ##### Raid State Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `CreateRaidRequest` | `scheduleId` | UUID string | Yes | Active Package Registry schedule used to initialize the raid |
-| `RaidResponse` | `raidId` | UUID string | Yes | Guild raid identifier |
-| `RaidResponse` | `guildId` | UUID string | Yes | Guild participating in the raid |
-| `RaidResponse` | `scheduleId` | UUID string | Yes | Schedule from which the raid was created |
-| `RaidResponse` | `raidConfigurationId` | UUID string | Yes | Configuration snapshot source |
-| `RaidResponse` | `status` | `ACTIVE`, `SETTLING`, `COMPLETED`, or `FAILED` | Yes | Current raid lifecycle state |
-| `RaidResponse` | `monster` | `RaidMonsterState` | Yes | Current monster state |
-| `RaidResponse` | `participantCount` | Non-negative integer | Yes | Number of joined participants |
-| `RaidResponse` | `startsAt` | UTC timestamp | Yes | Raid activation time |
-| `RaidResponse` | `endsAt` | UTC timestamp | Yes | Deadline copied from the active schedule |
-| `RaidResponse` | `finishedAt` | UTC timestamp or `null` | Yes | Completion or failure time |
-| `RaidPageResponse` | `items` | Array of `RaidResponse` | Yes | Raids in the current page |
-| `RaidPageResponse` | `nextCursor` | String or `null` | Yes | Cursor for the next page |
-| `RaidMonsterState` | `name` | String | Yes | Monster name copied from the configuration |
-| `RaidMonsterState` | `spriteUrl` | URL string | Yes | Monster sprite reference |
-| `RaidMonsterState` | `maximumHp` | Positive integer | Yes | Monster health at raid start |
-| `RaidMonsterState` | `currentHp` | Non-negative integer | Yes | Remaining monster health |
-| `RaidMonsterState` | `weaknesses` | Array of combat-type strings | Yes | Types that deal increased damage |
-| `RaidMonsterState` | `resistances` | Array of combat-type strings | Yes | Types that deal reduced damage |
+```json
+{
+  "CreateRaidRequest": {
+    "scheduleId": "UUID string; required. Active Package Registry schedule used to initialize the raid"
+  },
+  "RaidResponse": {
+    "raidId": "UUID string; required. Guild raid identifier",
+    "guildId": "UUID string; required. Guild participating in the raid",
+    "scheduleId": "UUID string; required. Schedule from which the raid was created",
+    "raidConfigurationId": "UUID string; required. Configuration snapshot source",
+    "status": "ACTIVE, SETTLING, COMPLETED, or FAILED; required. Current raid lifecycle state",
+    "monster": "RaidMonsterState; required. Current monster state",
+    "participantCount": "Non-negative integer; required. Number of joined participants",
+    "startsAt": "UTC timestamp; required. Raid activation time",
+    "endsAt": "UTC timestamp; required. Deadline copied from the active schedule",
+    "finishedAt": "UTC timestamp or null; required. Completion or failure time"
+  },
+  "RaidPageResponse": {
+    "items": "Array of RaidResponse; required. Raids in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page"
+  },
+  "RaidMonsterState": {
+    "name": "String; required. Monster name copied from the configuration",
+    "spriteUrl": "URL string; required. Monster sprite reference",
+    "maximumHp": "Positive integer; required. Monster health at raid start",
+    "currentHp": "Non-negative integer; required. Remaining monster health",
+    "weaknesses": "Array of combat-type strings; required. Types that deal increased damage",
+    "resistances": "Array of combat-type strings; required. Types that deal reduced damage"
+  }
+}
+```
 
 ##### Participant and Attack Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `JoinRaidRequest` | `primaryTamagotchiId` | UUID string | Yes | Participant's current primary Tamagotchi |
-| `RaidParticipantResponse` | `raidId` | UUID string | Yes | Joined raid |
-| `RaidParticipantResponse` | `userId` | UUID string | Yes | Participating guild member |
-| `RaidParticipantResponse` | `tamagotchiId` | UUID string | Yes | Tamagotchi contributing damage |
-| `RaidParticipantResponse` | `damageDealt` | Non-negative integer | Yes | Participant's accumulated damage |
-| `RaidParticipantResponse` | `joinedAt` | UTC timestamp | Yes | Join time |
-| `RaidParticipantPageResponse` | `items` | Array of `RaidParticipantResponse` | Yes | Participants in the current page |
-| `RaidParticipantPageResponse` | `nextCursor` | String or `null` | Yes | Cursor for the next page |
-| `CreateRaidAttackRequest` | `actionId` | UUID string | Yes | Client-generated identifier used for deduplication |
-| `CreateRaidAttackRequest` | `tamagotchiId` | UUID string | Yes | Joined Tamagotchi performing the attack |
-| `CreateRaidAttackRequest` | `performedAt` | UTC timestamp | Yes | Client-observed attack time used for validation |
-| `RaidAttackResponse` | `actionId` | UUID string | Yes | Processed action identifier |
-| `RaidAttackResponse` | `damage` | Non-negative integer | Yes | Damage applied by this attack |
-| `RaidAttackResponse` | `monsterCurrentHp` | Non-negative integer | Yes | Remaining health after the attack |
-| `RaidAttackResponse` | `raidStatus` | `ACTIVE` or `SETTLING` | Yes | State after applying the attack |
-| `RaidAttackResponse` | `processedAt` | UTC timestamp | Yes | Server processing time |
+```json
+{
+  "JoinRaidRequest": {
+    "primaryTamagotchiId": "UUID string; required. Participant's current primary Tamagotchi"
+  },
+  "RaidParticipantResponse": {
+    "raidId": "UUID string; required. Joined raid",
+    "userId": "UUID string; required. Participating guild member",
+    "tamagotchiId": "UUID string; required. Tamagotchi contributing damage",
+    "damageDealt": "Non-negative integer; required. Participant's accumulated damage",
+    "joinedAt": "UTC timestamp; required. Join time"
+  },
+  "RaidParticipantPageResponse": {
+    "items": "Array of RaidParticipantResponse; required. Participants in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page"
+  },
+  "CreateRaidAttackRequest": {
+    "actionId": "UUID string; required. Client-generated identifier used for deduplication",
+    "tamagotchiId": "UUID string; required. Joined Tamagotchi performing the attack",
+    "performedAt": "UTC timestamp; required. Client-observed attack time used for validation"
+  },
+  "RaidAttackResponse": {
+    "actionId": "UUID string; required. Processed action identifier",
+    "damage": "Non-negative integer; required. Damage applied by this attack",
+    "monsterCurrentHp": "Non-negative integer; required. Remaining health after the attack",
+    "raidStatus": "ACTIVE or SETTLING; required. State after applying the attack",
+    "processedAt": "UTC timestamp; required. Server processing time"
+  }
+}
+```
 
 Joining requires an active Guild Service membership and ownership of the submitted primary Tamagotchi. Damage is calculated from the Tamagotchi combat profile, the raid configuration snapshot, and the relevant package statistic definitions. The server rate-limits attacks and never trusts client-provided damage values.
 
 ##### Result and Reward Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `RaidResultResponse` | `raidId` | UUID string | Yes | Finished raid |
-| `RaidResultResponse` | `status` | `COMPLETED` or `FAILED` | Yes | Whether the monster was defeated before the deadline |
-| `RaidResultResponse` | `totalDamage` | Non-negative integer | Yes | Damage contributed by all participants |
-| `RaidResultResponse` | `rewards` | Array of `RaidParticipantReward` | Yes | Per-participant rewards; empty for a failed raid |
-| `RaidResultResponse` | `finishedAt` | UTC timestamp | Yes | Time at which the terminal state was reached |
-| `RaidParticipantReward` | `userId` | UUID string | Yes | Rewarded participant |
-| `RaidParticipantReward` | `tamagotchiId` | UUID string | Yes | Tamagotchi receiving XP |
-| `RaidParticipantReward` | `globalCurrency` | Non-negative integer | Yes | Currency credited through User Management Service |
-| `RaidParticipantReward` | `xp` | Non-negative integer | Yes | XP granted through Tamagotchi Service |
+```json
+{
+  "RaidResultResponse": {
+    "raidId": "UUID string; required. Finished raid",
+    "status": "COMPLETED or FAILED; required. Whether the monster was defeated before the deadline",
+    "totalDamage": "Non-negative integer; required. Damage contributed by all participants",
+    "rewards": "Array of RaidParticipantReward; required. Per-participant rewards; empty for a failed raid",
+    "finishedAt": "UTC timestamp; required. Time at which the terminal state was reached"
+  },
+  "RaidParticipantReward": {
+    "userId": "UUID string; required. Rewarded participant",
+    "tamagotchiId": "UUID string; required. Tamagotchi receiving XP",
+    "globalCurrency": "Non-negative integer; required. Currency credited through User Management Service",
+    "xp": "Non-negative integer; required. XP granted through Tamagotchi Service"
+  }
+}
+```
 
 ##### Completion and Failure Rules
 
@@ -1005,30 +1245,34 @@ When monster HP reaches zero, the raid enters `SETTLING` and performs idempotent
 2. Grant XP to each participating Tamagotchi through Tamagotchi Service.
 3. Mark the raid `COMPLETED` only after all required reward commands succeed.
 
-If a dependency is unavailable, the raid remains `SETTLING` and retries cannot apply a reward twice. If the deadline arrives while monster HP is above zero, the raid becomes `FAILED` and no rewards are distributed. Recently finished results remain available in Redis for a configured retention period; permanent raid history is outside the current architecture.
+If a dependency is unavailable, the raid remains `SETTLING` and retries cannot apply a reward twice. If the deadline arrives while monster HP is above zero, the raid becomes `FAILED` and no rewards are distributed. Finished results and rewards are persisted in PostgreSQL; the corresponding current-HP entry is removed from Redis after the raid reaches a terminal state.
 
 ##### Published Queue Events
 
 `raid.started.v1` is published after a guild raid is created. Notification Service consumes it to notify guild members.
 
-| `data` field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `raidId` | UUID string | Yes | Created guild raid |
-| `guildId` | UUID string | Yes | Participating guild |
-| `monsterName` | String | Yes | Name displayed in the notification |
-| `recipientUserIds` | Array of UUID strings | Yes | Eligible guild members to notify |
-| `startsAt` | UTC timestamp | Yes | Raid start time |
-| `endsAt` | UTC timestamp | Yes | Raid deadline |
+```json
+{
+  "raidId": "UUID string; required. Created guild raid",
+  "guildId": "UUID string; required. Participating guild",
+  "monsterName": "String; required. Name displayed in the notification",
+  "recipientUserIds": "Array of UUID strings; required. Eligible guild members to notify",
+  "startsAt": "UTC timestamp; required. Raid start time",
+  "endsAt": "UTC timestamp; required. Raid deadline"
+}
+```
 
 `raid.completed.v1` and `raid.failed.v1` share the following payload and are published only after the corresponding terminal state is stored:
 
-| `data` field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `raidId` | UUID string | Yes | Finished raid |
-| `guildId` | UUID string | Yes | Participating guild |
-| `status` | `COMPLETED` or `FAILED` | Yes | Final raid outcome |
-| `participantUserIds` | Array of UUID strings | Yes | Users who participated |
-| `finishedAt` | UTC timestamp | Yes | Time at which the terminal state was stored |
+```json
+{
+  "raidId": "UUID string; required. Finished raid",
+  "guildId": "UUID string; required. Participating guild",
+  "status": "COMPLETED or FAILED; required. Final raid outcome",
+  "participantUserIds": "Array of UUID strings; required. Users who participated",
+  "finishedAt": "UTC timestamp; required. Time at which the terminal state was stored"
+}
+```
 
 ##### Service Dependencies
 
@@ -1058,23 +1302,33 @@ Device registration uses `PUT` because the same application installation may saf
 
 ##### Device and Preference Schemas
 
-| Schema | Field | Type | Required | Meaning |
-|---|---|---|:---:|---|
-| `RegisterNotificationDeviceRequest` | `fcmRegistrationToken` | String | Yes | Firebase token for the application installation |
-| `RegisterNotificationDeviceRequest` | `platform` | `ANDROID`, `IOS`, or `WEB` | Yes | Device platform |
-| `RegisterNotificationDeviceRequest` | `packageId` | UUID string | Yes | Tamagotchi application package registering the token |
-| `RegisterNotificationDeviceRequest` | `appVersion` | String | No | Client version used for delivery diagnostics |
-| `NotificationDeviceResponse` | `deviceId` | UUID string | Yes | Client-generated stable installation identifier |
-| `NotificationDeviceResponse` | `userId` | UUID string | Yes | Owner of the registration |
-| `NotificationDeviceResponse` | `packageId` | UUID string | Yes | Registered application package |
-| `NotificationDeviceResponse` | `platform` | `ANDROID`, `IOS`, or `WEB` | Yes | Device platform |
-| `NotificationDeviceResponse` | `enabled` | Boolean | Yes | Whether pushes may be sent to this registration |
-| `NotificationDeviceResponse` | `registeredAt` | UTC timestamp | Yes | Initial registration time |
-| `NotificationDeviceResponse` | `updatedAt` | UTC timestamp | Yes | Last token or metadata update |
-| `UpdateNotificationPreferencesRequest` | `categories` | Object mapping category to Boolean | Yes | Complete enabled/disabled category selection |
-| `NotificationPreferencesResponse` | `userId` | UUID string | Yes | Preference owner |
-| `NotificationPreferencesResponse` | `categories` | Object mapping category to Boolean | Yes | Effective category settings |
-| `NotificationPreferencesResponse` | `updatedAt` | UTC timestamp | Yes | Last preference update |
+```json
+{
+  "RegisterNotificationDeviceRequest": {
+    "fcmRegistrationToken": "String; required. Firebase token for the application installation",
+    "platform": "ANDROID, IOS, or WEB; required. Device platform",
+    "packageId": "UUID string; required. Tamagotchi application package registering the token",
+    "appVersion": "String; optional. Client version used for delivery diagnostics"
+  },
+  "NotificationDeviceResponse": {
+    "deviceId": "UUID string; required. Client-generated stable installation identifier",
+    "userId": "UUID string; required. Owner of the registration",
+    "packageId": "UUID string; required. Registered application package",
+    "platform": "ANDROID, IOS, or WEB; required. Device platform",
+    "enabled": "Boolean; required. Whether pushes may be sent to this registration",
+    "registeredAt": "UTC timestamp; required. Initial registration time",
+    "updatedAt": "UTC timestamp; required. Last token or metadata update"
+  },
+  "UpdateNotificationPreferencesRequest": {
+    "categories": "Object mapping category to Boolean; required. Complete enabled/disabled category selection"
+  },
+  "NotificationPreferencesResponse": {
+    "userId": "UUID string; required. Preference owner",
+    "categories": "Object mapping category to Boolean; required. Effective category settings",
+    "updatedAt": "UTC timestamp; required. Last preference update"
+  }
+}
+```
 
 Supported categories are `FRIEND_REQUEST`, `PROXIMITY`, `BATTLE_REQUEST`, `BATTLE_RESULT`, `GUILD_INVITATION`, and `RAID_LIFECYCLE`. A missing preference record means that all categories are enabled by default. Firebase registration tokens are confidential: they are stored only by Notification Service, never returned in responses, and never written to logs.
 
@@ -1099,16 +1353,22 @@ Unknown event types or unsupported event versions are not converted into notific
 
 For each enabled recipient device, Notification Service sends an HTTPS request to Firebase Cloud Messaging containing:
 
-| Field | Type | Required | Meaning |
-|---|---|:---:|---|
-| `token` | String | Yes | Confidential Firebase registration token |
-| `notification.title` | String | Yes | Localizable short title |
-| `notification.body` | String | Yes | Localizable human-readable message |
-| `data.notificationId` | UUID string | Yes | Notification identifier used by the client |
-| `data.category` | Notification-category string | Yes | Client routing category |
-| `data.eventType` | Versioned event-type string | Yes | Domain event that produced the push |
-| `data.resourceId` | UUID string | Yes | Primary resource to open, such as an invitation, battle, or raid |
-| `data.correlationId` | UUID string | Yes | End-to-end tracing identifier |
+```json
+{
+  "token": "firebase-registration-token",
+  "notification": {
+    "title": "Battle request",
+    "body": "A player challenged you to a battle."
+  },
+  "data": {
+    "notificationId": "c07a7592-20f2-45b7-82e4-98495082f114",
+    "category": "BATTLE_REQUEST",
+    "eventType": "battle.request.created.v1",
+    "resourceId": "0d208725-8705-456f-82c0-69748d0e1739",
+    "correlationId": "b991f2c1-44db-4c41-bc00-24b72fe93e93"
+  }
+}
+```
 
 All Firebase `data` values are encoded as strings. Provider-specific message identifiers and delivery attempts are stored internally but are not exposed to producing services.
 
@@ -1122,7 +1382,7 @@ Queue delivery is at least once. Before contacting Firebase, Notification Servic
 - A permanently invalid Firebase token disables that device registration.
 - A malformed event, unsupported version, or exhausted retry sequence is moved to a dead-letter flow with its `correlationId`.
 
-Redis stores device registrations, preferences, deduplication keys, and recent delivery state. Deduplication and delivery records expire after a configured retention period; Notification Service is not a permanent notification-history service.
+PostgreSQL stores device registrations, preferences, notification history, templates and delivery-attempt state. Event identifiers are protected by a unique constraint so that redelivery cannot create duplicate notifications.
 
 ##### Service Dependencies
 
