@@ -97,7 +97,7 @@ It consumes events published by other services (notably the **User Management Se
 
 ## Architecture Diagram
 
-Requests flow from the client through a load balancer to the API Gateway, which fronts the microservices. Each service owns its own database. Synchronous calls (solid arrows) handle request/response between services, while asynchronous events (dotted arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
+Requests flow from the client through the API Gateway, which fronts the microservices. Each service owns its own database. Synchronous calls (solid arrows) handle request/response between services, while asynchronous events (dotted arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
 
 ![Architecture Diagram](docs/architecture.png)
 
@@ -107,7 +107,7 @@ The architecture uses different communication patterns according to whether a ca
 
 ### Client-to-Service Communication
 
-Clients send HTTPS requests through the load balancer and API Gateway. The gateway routes each request to the service that owns the requested functionality. Public APIs use versioned REST endpoints and JSON payloads because REST is supported consistently by both C# and Go and is easy to inspect and test. The trade-off is additional HTTP and JSON overhead compared with a binary protocol.
+Clients send HTTPS requests through the API Gateway. The gateway routes each request to the service that owns the requested functionality. Public APIs use versioned REST endpoints and JSON payloads because REST is supported consistently by both C# and Go and is easy to inspect and test. The trade-off is additional HTTP and JSON overhead compared with a binary protocol.
 
 ### Synchronous Service-to-Service Communication
 
@@ -139,7 +139,7 @@ The following interactions correspond to the arrows in the architecture diagram 
 
 | Caller / Producer | Receiver / Consumer | Pattern | Purpose |
 |---|---|---|---|
-| Client | Load Balancer and API Gateway | Synchronous HTTPS | Enter the system and route API requests to the responsible service |
+| Client | API Gateway | Synchronous HTTPS | Enter the system and route API requests to the responsible service |
 | Client | Guild Service | WebSocket | Send and receive Guild Chat messages in real time |
 | Map Service | User Management Service | Synchronous REST | Resolve user identity and friend/enemy relationships for proximity results |
 | Map Service | Notification Service | Asynchronous queue event | Report that nearby players were detected |
@@ -1549,6 +1549,10 @@ PostgreSQL is used when data has a strong relational structure and requires tran
 ### Redis
 
 Redis is used for high-speed, frequently changing or temporary state. It is appropriate for Battle, Map, Monster Raid and Notification workloads where low-latency access is important.
+
+### Object Storage
+
+An S3-compatible object store (e.g. [RustFS](https://github.com/rustfs/rustfs)) holds blobs such as sprite images. Assets must be viewable across packages, so they live in one shared store as immutable objects; service databases keep only object keys or URLs and clients fetch assets directly by URL.
 
 ### Database-per-Service
 
