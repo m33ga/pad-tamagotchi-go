@@ -16,3 +16,9 @@
 [submodule "pad-monster-raid-service"]
 	path = pad-monster-raid-service
 	url = https://github.com/m33ga/pad-tamagotchi-go-monster-raid-service.git
+[submodule "user-management-service"]
+	path = user-management-service
+	url = https://github.com/crudualexandra/user-management-service.git
+[submodule "battle-service"]
+	path = battle-service
+	url = https://github.com/crudualexandra/battle-service.git
