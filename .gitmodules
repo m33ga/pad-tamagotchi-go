@@ -10,3 +10,9 @@
 [submodule "pad-package-registry-service"]
 	path = pad-package-registry-service
 	url = https://github.com/CosmaK-47/pad-tamagotchi-go-package-registry-service.git
+[submodule "pad-map-service"]
+	path = pad-map-service
+	url = https://github.com/m33ga/pad-tamagotchi-go-map-service.git
+[submodule "pad-monster-raid-service"]
+	path = pad-monster-raid-service
+	url = https://github.com/m33ga/pad-tamagotchi-go-monster-raid-service.git
