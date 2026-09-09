@@ -1,0 +1,1426 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Guild Service API",
+    "version": "1.0.0",
+    "description": "Owns guild identity, membership, roles, permissions, and Guild Chat. Guilds, memberships, membership requests and chat messages are stored in PostgreSQL. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package. The real-time Guild Chat WebSocket contract at `/ws/v1/guilds/{guildId}/chat` cannot be expressed in OpenAPI and is documented in the repository README.\n\nThe service publishes the `guild.invitation.created.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Guilds",
+      "description": "Guild lifecycle and ownership"
+    },
+    {
+      "name": "Members",
+      "description": "Guild memberships and roles"
+    },
+    {
+      "name": "Invitations",
+      "description": "Guild invitations and their resolution"
+    },
+    {
+      "name": "Messages",
+      "description": "Guild Chat message history over REST"
+    }
+  ],
+  "paths": {
+    "/guilds": {
+      "get": {
+        "operationId": "listGuilds",
+        "summary": "List guilds",
+        "description": "Callable by clients.",
+        "tags": ["Guilds"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Guild page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createGuild",
+        "summary": "Create a new guild",
+        "description": "Callable by clients. The creator becomes the guild owner.",
+        "tags": ["Guilds"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGuildRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "New guild created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: GUILD_NAME_TAKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}": {
+      "get": {
+        "operationId": "getGuild",
+        "summary": "Retrieve a guild",
+        "description": "Callable by clients and Monster Raid Service.",
+        "tags": ["Guilds"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Guild returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found: GUILD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateGuild",
+        "summary": "Update a guild",
+        "description": "Callable only by the guild owner.",
+        "tags": ["Guilds"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGuildRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Guild updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: GUILD_NAME_TAKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteGuild",
+        "summary": "Delete a guild",
+        "description": "Callable only by the guild owner.",
+        "tags": ["Guilds"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Guild deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: ACTIVE_RAID_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/guilds": {
+      "get": {
+        "operationId": "getUserGuilds",
+        "summary": "List the guilds a user belongs to",
+        "description": "Callable by the account owner or internal services.",
+        "tags": ["Guilds"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Guilds returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GuildResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}/members": {
+      "get": {
+        "operationId": "listGuildMembers",
+        "summary": "List guild members",
+        "description": "Callable by guild members and Monster Raid Service.",
+        "tags": ["Members"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Member page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildMemberPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: GUILD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}/members/{userId}": {
+      "get": {
+        "operationId": "getGuildMember",
+        "summary": "Retrieve a guild membership",
+        "description": "Callable by guild members and Monster Raid Service.",
+        "tags": ["Members"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Membership returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildMemberResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: MEMBERSHIP_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateGuildMember",
+        "summary": "Change a member's role",
+        "description": "Callable only by the guild owner. Ownership changes use the separate transfer endpoint.",
+        "tags": ["Members"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGuildMemberRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Membership updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildMemberResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: INVALID_ROLE_CHANGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeGuildMember",
+        "summary": "Remove a member or leave the guild",
+        "description": "Callable by the member themselves, an officer, or the guild owner.",
+        "tags": ["Members"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Membership removed"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: OWNER_CANNOT_LEAVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}/ownership-transfers": {
+      "post": {
+        "operationId": "transferGuildOwnership",
+        "summary": "Transfer guild ownership",
+        "description": "Callable only by the guild owner. The new owner must be an existing member.",
+        "tags": ["Guilds"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferGuildOwnershipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ownership transferred",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: INVALID_NEW_OWNER",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}/invitations": {
+      "post": {
+        "operationId": "createGuildInvitation",
+        "summary": "Invite a user to the guild",
+        "description": "Callable only by the guild owner or an officer. Publishes `guild.invitation.created.v1` after the invitation is stored successfully.",
+        "tags": ["Invitations"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGuildInvitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invitation created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildInvitationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: INVITATION_OR_MEMBERSHIP_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: MEMBERSHIP_RULE_NOT_SATISFIED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listGuildInvitations",
+        "summary": "List a guild's invitations",
+        "description": "Callable only by the guild owner or an officer.",
+        "tags": ["Invitations"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/InvitationStatus"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invitations returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GuildInvitationResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: GUILD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/guild-invitations": {
+      "get": {
+        "operationId": "listUserGuildInvitations",
+        "summary": "List a user's guild invitations",
+        "description": "Callable only by the invitation recipient.",
+        "tags": ["Invitations"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/InvitationStatus"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invitations returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GuildInvitationResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}/invitations/{invitationId}/responses": {
+      "post": {
+        "operationId": "respondToGuildInvitation",
+        "summary": "Accept or reject a guild invitation",
+        "description": "Callable only by the invitation recipient.",
+        "tags": ["Invitations"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "name": "invitationId",
+            "in": "path",
+            "required": true,
+            "description": "Invitation identifier",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondToGuildInvitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invitation resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildInvitationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: INVITATION_ALREADY_RESOLVED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: MEMBERSHIP_RULE_NOT_SATISFIED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}/messages": {
+      "get": {
+        "operationId": "listGuildMessages",
+        "summary": "List guild chat messages",
+        "description": "Callable only by guild members. Messages are ordered from newest to oldest.",
+        "tags": ["Messages"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "Return messages older than this message identifier",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Message page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuildMessagePageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: GUILD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Deduplicates retriable commands that create side effects",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "GuildId": {
+        "name": "guildId",
+        "in": "path",
+        "required": true,
+        "description": "Guild identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Global user identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque cursor returned by the previous page",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum number of items in the page",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "InvitationStatus": {
+        "name": "status",
+        "in": "query",
+        "required": false,
+        "description": "Filter invitations by their current state",
+        "schema": {
+          "type": "string",
+          "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED"]
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid authentication",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "correlationId"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": ["RESOURCE_NOT_FOUND"]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CreateGuildRequest": {
+        "type": "object",
+        "required": ["name", "description"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 80,
+            "description": "Unique guild name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Public guild description"
+          },
+          "requiredPackageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package required for membership, if the guild is restricted"
+          }
+        }
+      },
+      "UpdateGuildRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 80,
+            "description": "Updated guild name"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Updated description"
+          },
+          "requiredPackageId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Add, replace, or remove the package restriction"
+          }
+        }
+      },
+      "GuildResponse": {
+        "type": "object",
+        "required": ["guildId", "name", "description", "ownerId", "requiredPackageId", "memberCount", "createdAt", "updatedAt"],
+        "properties": {
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guild identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Guild name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Guild description"
+          },
+          "ownerId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Current guild owner"
+          },
+          "requiredPackageId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Required package, if configured"
+          },
+          "memberCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Current number of members"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Guild creation time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last guild update time"
+          }
+        }
+      },
+      "GuildPageResponse": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Guilds in the current page",
+            "items": {
+              "$ref": "#/components/schemas/GuildResponse"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Cursor for the next page"
+          }
+        }
+      },
+      "GuildMemberResponse": {
+        "type": "object",
+        "required": ["guildId", "userId", "role", "joinedAt"],
+        "properties": {
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guild containing the member"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Member's user identifier"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["OWNER", "OFFICER", "MEMBER"],
+            "description": "Member's guild role"
+          },
+          "joinedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Membership creation time"
+          }
+        }
+      },
+      "GuildMemberPageResponse": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Members in the current page",
+            "items": {
+              "$ref": "#/components/schemas/GuildMemberResponse"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Cursor for the next page"
+          }
+        }
+      },
+      "UpdateGuildMemberRequest": {
+        "type": "object",
+        "required": ["role"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["OFFICER", "MEMBER"],
+            "description": "New role; ownership uses the separate transfer endpoint"
+          }
+        }
+      },
+      "TransferGuildOwnershipRequest": {
+        "type": "object",
+        "required": ["newOwnerId"],
+        "properties": {
+          "newOwnerId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Existing member who becomes the owner"
+          }
+        }
+      },
+      "CreateGuildInvitationRequest": {
+        "type": "object",
+        "required": ["inviteeUserId"],
+        "properties": {
+          "inviteeUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User invited to the guild"
+          }
+        }
+      },
+      "RespondToGuildInvitationRequest": {
+        "type": "object",
+        "required": ["decision"],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": ["ACCEPT", "REJECT"],
+            "description": "Invitation recipient's decision"
+          }
+        }
+      },
+      "GuildInvitationResponse": {
+        "type": "object",
+        "required": ["invitationId", "guildId", "inviterUserId", "inviteeUserId", "status", "createdAt", "expiresAt"],
+        "properties": {
+          "invitationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Invitation identifier"
+          },
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Target guild"
+          },
+          "inviterUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Owner or officer who sent the invitation"
+          },
+          "inviteeUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User receiving the invitation"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED"],
+            "description": "Current invitation state"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Invitation creation time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time after which it can no longer be accepted"
+          }
+        }
+      },
+      "GuildMessageResponse": {
+        "type": "object",
+        "required": ["messageId", "guildId", "authorUserId", "content", "sentAt"],
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stored message identifier"
+          },
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guild chat containing the message"
+          },
+          "authorUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Message author"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Message text"
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Message creation time"
+          }
+        }
+      },
+      "GuildMessagePageResponse": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Messages ordered from newest to oldest",
+            "items": {
+              "$ref": "#/components/schemas/GuildMessageResponse"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Cursor for older messages"
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "description": "Common envelope for every event sent through the message queue. Not delivered over HTTP.",
+        "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "correlationId", "data"],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique event identifier used for deduplication"
+          },
+          "eventType": {
+            "type": "string",
+            "description": "Stable event name including the version suffix",
+            "examples": ["guild.invitation.created.v1"]
+          },
+          "eventVersion": {
+            "type": "integer",
+            "description": "Schema version of the event"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the business event occurred"
+          },
+          "producer": {
+            "type": "string",
+            "description": "Service that published the event",
+            "examples": ["guild-service"]
+          },
+          "correlationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifier connecting the event to the originating operation"
+          },
+          "data": {
+            "$ref": "#/components/schemas/GuildInvitationCreatedEventV1"
+          }
+        }
+      },
+      "GuildInvitationCreatedEventV1": {
+        "type": "object",
+        "description": "Payload of `guild.invitation.created.v1`, published after an invitation is stored successfully. Notification Service consumes it to notify the invited user.",
+        "required": ["invitationId", "guildId", "guildName", "inviterUserId", "inviteeUserId", "expiresAt"],
+        "properties": {
+          "invitationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Invitation identifier"
+          },
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guild sending the invitation"
+          },
+          "guildName": {
+            "type": "string",
+            "description": "Name displayed in the notification"
+          },
+          "inviterUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who sent the invitation"
+          },
+          "inviteeUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who should be notified"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Invitation expiration time"
+          }
+        }
+      }
+    }
+  }
+}

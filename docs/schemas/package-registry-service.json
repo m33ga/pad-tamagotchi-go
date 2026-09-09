@@ -1,0 +1,2222 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Package Registry Service API",
+    "version": "1.0.0",
+    "description": "Owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. Package moderators manage their own package configuration, while globally privileged admins manage raid configuration and scheduling.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Packages",
+      "description": "Package metadata and lifecycle"
+    },
+    {
+      "name": "Moderators",
+      "description": "Package moderator assignments"
+    },
+    {
+      "name": "Registrations",
+      "description": "User package registrations"
+    },
+    {
+      "name": "Stat Definitions",
+      "description": "Package-specific Tamagotchi statistic definitions"
+    },
+    {
+      "name": "Battle Boosts",
+      "description": "Package-specific battle boost definitions"
+    },
+    {
+      "name": "Raid Configurations",
+      "description": "Monster Raid configurations"
+    },
+    {
+      "name": "Raid Schedules",
+      "description": "Monster Raid schedules"
+    }
+  ],
+  "paths": {
+    "/packages": {
+      "get": {
+        "operationId": "listPackages",
+        "summary": "List packages",
+        "description": "Callable by clients and internal services. Returns a cursor-based page of packages.",
+        "tags": [
+          "Packages"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Filter by package status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "DRAFT",
+                "ACTIVE",
+                "INACTIVE"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor returned by a previous page",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of packages per page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Package page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackagePageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPackage",
+        "summary": "Create a new package",
+        "description": "Callable by developers and admins.",
+        "tags": [
+          "Packages"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePackageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Package created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "Conflict: PACKAGE_NAME_TAKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/packages/{packageId}": {
+      "get": {
+        "operationId": "getPackage",
+        "summary": "Retrieve a package",
+        "description": "Callable by clients and internal services.",
+        "tags": [
+          "Packages"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Package returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found: PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updatePackage",
+        "summary": "Update a package",
+        "description": "Callable by package moderators and admins.",
+        "tags": [
+          "Packages"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePackageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Package updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: VERSION_CONFLICT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/packages/{packageId}/moderators": {
+      "post": {
+        "operationId": "addModerator",
+        "summary": "Assign a package moderator",
+        "description": "Callable by package developers and admins.",
+        "tags": [
+          "Moderators"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddModeratorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Moderator assigned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModeratorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: MODERATOR_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/packages/{packageId}/moderators/{userId}": {
+      "delete": {
+        "operationId": "removeModerator",
+        "summary": "Remove a package moderator",
+        "description": "Callable by package developers and admins.",
+        "tags": [
+          "Moderators"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Moderator removed"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: MODERATOR_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/packages/{packageId}/registrations": {
+      "post": {
+        "operationId": "createPackageRegistration",
+        "summary": "Register a user with a package",
+        "description": "Callable only by User Management Service. Idempotent for a given Idempotency-Key.",
+        "tags": [
+          "Registrations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterUserPackageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registration created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageRegistrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: PACKAGE_ALREADY_REGISTERED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/packages/{packageId}/registrations/{userId}": {
+      "get": {
+        "operationId": "getPackageRegistration",
+        "summary": "Retrieve a user's package registration",
+        "description": "Callable by User Management Service and Guild Service.",
+        "tags": [
+          "Registrations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registration returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageRegistrationResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: REGISTRATION_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/package-registrations": {
+      "get": {
+        "operationId": "getUserPackageRegistrations",
+        "summary": "List a user's package registrations",
+        "description": "Callable only by User Management Service.",
+        "tags": [
+          "Registrations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registrations returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PackageRegistrationResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/packages/{packageId}/stat-definitions": {
+      "put": {
+        "operationId": "replaceStatDefinitions",
+        "summary": "Replace the package's statistic definitions",
+        "description": "Callable only by package moderators. Replaces the complete set of statistic definitions.",
+        "tags": [
+          "Stat Definitions"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceStatDefinitionsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Statistic definitions replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StatDefinitionResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_STAT_RULE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getStatDefinitions",
+        "summary": "List the package's statistic definitions",
+        "description": "Callable by Tamagotchi Service, Battle Service, and Monster Raid Service.",
+        "tags": [
+          "Stat Definitions"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistic definitions returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StatDefinitionResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/packages/{packageId}/battle-boosts": {
+      "put": {
+        "operationId": "replaceBattleBoosts",
+        "summary": "Replace the package's battle boosts",
+        "description": "Callable only by package moderators. Replaces the complete set of battle boosts.",
+        "tags": [
+          "Battle Boosts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceBattleBoostsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Battle boosts replaced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BattleBoostResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_BOOST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getBattleBoosts",
+        "summary": "List the package's battle boosts",
+        "description": "Callable by clients and Battle Service.",
+        "tags": [
+          "Battle Boosts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle boosts returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BattleBoostResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/packages/{packageId}/battle-boosts/{boostKey}": {
+      "get": {
+        "operationId": "getBattleBoost",
+        "summary": "Retrieve one battle boost",
+        "description": "Callable by Battle Service.",
+        "tags": [
+          "Battle Boosts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PackageId"
+          },
+          {
+            "name": "boostKey",
+            "in": "path",
+            "required": true,
+            "description": "Stable boost identifier within the package",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle boost returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleBoostResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: BOOST_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raid-configurations": {
+      "get": {
+        "operationId": "listRaidConfigurations",
+        "summary": "List raid configurations",
+        "description": "Callable by clients, admins, and Monster Raid Service. Returns a cursor-based page of raid configurations.",
+        "tags": [
+          "Raid Configurations"
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor returned by a previous page",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of configurations per page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raid configuration page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidConfigurationPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRaidConfiguration",
+        "summary": "Create a raid configuration",
+        "description": "Callable only by admins.",
+        "tags": [
+          "Raid Configurations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRaidConfigurationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Raid configuration created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidConfigurationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_RAID_CONFIGURATION",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raid-configurations/{raidConfigurationId}": {
+      "get": {
+        "operationId": "getRaidConfiguration",
+        "summary": "Retrieve a raid configuration",
+        "description": "Callable by clients and Monster Raid Service.",
+        "tags": [
+          "Raid Configurations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RaidConfigurationId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raid configuration returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidConfigurationResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found: RAID_CONFIGURATION_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateRaidConfiguration",
+        "summary": "Update a raid configuration",
+        "description": "Callable only by admins. Allowed only before the configuration is used by an active schedule.",
+        "tags": [
+          "Raid Configurations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RaidConfigurationId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRaidConfigurationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Raid configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidConfigurationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: ACTIVE_CONFIGURATION_LOCKED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raid-schedules": {
+      "post": {
+        "operationId": "createRaidSchedule",
+        "summary": "Schedule a raid",
+        "description": "Callable only by admins.",
+        "tags": [
+          "Raid Schedules"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRaidScheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Raid schedule created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidScheduleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: SCHEDULE_CONFLICT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listRaidSchedules",
+        "summary": "List raid schedules",
+        "description": "Callable by Monster Raid Service and admins.",
+        "tags": [
+          "Raid Schedules"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Filter by schedule status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "SCHEDULED",
+                "ACTIVE",
+                "INACTIVE",
+                "CANCELLED",
+                "COMPLETED"
+              ]
+            }
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "required": false,
+            "description": "Return schedules whose window contains this time",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raid schedules returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RaidScheduleResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/raid-schedules/{scheduleId}": {
+      "get": {
+        "operationId": "getRaidSchedule",
+        "summary": "Retrieve a raid schedule",
+        "description": "Callable by Monster Raid Service and admins.",
+        "tags": [
+          "Raid Schedules"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raid schedule returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidScheduleResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: RAID_SCHEDULE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateRaidSchedule",
+        "summary": "Change a raid schedule's state",
+        "description": "Callable only by admins.",
+        "tags": [
+          "Raid Schedules"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRaidScheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Raid schedule updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidScheduleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: INVALID_SCHEDULE_STATE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Deduplicates retriable commands that create side effects",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "PackageId": {
+        "name": "packageId",
+        "in": "path",
+        "required": true,
+        "description": "Package identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Global user identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "RaidConfigurationId": {
+        "name": "raidConfigurationId",
+        "in": "path",
+        "required": true,
+        "description": "Raid configuration identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "ScheduleId": {
+        "name": "scheduleId",
+        "in": "path",
+        "required": true,
+        "description": "Raid schedule identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "correlationId"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": [
+                  "RESOURCE_NOT_FOUND"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CreatePackageRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "description",
+          "developerIds"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Unique package name"
+          },
+          "version": {
+            "type": "string",
+            "description": "Initial package version as a semantic-version string"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Package description"
+          },
+          "developerIds": {
+            "type": "array",
+            "description": "Users responsible for developing the package",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "UpdatePackageRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "New package version as a semantic-version string"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Updated description"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "description": "Package availability"
+          }
+        }
+      },
+      "PackageResponse": {
+        "type": "object",
+        "required": [
+          "packageId",
+          "name",
+          "version",
+          "description",
+          "status",
+          "developerIds",
+          "moderatorIds",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Package name"
+          },
+          "version": {
+            "type": "string",
+            "description": "Current version as a semantic-version string"
+          },
+          "description": {
+            "type": "string",
+            "description": "Package description"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "description": "Current package state"
+          },
+          "developerIds": {
+            "type": "array",
+            "description": "Associated developers",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "moderatorIds": {
+            "type": "array",
+            "description": "Associated moderators",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update time"
+          }
+        }
+      },
+      "PackagePageResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Packages in the current page",
+            "items": {
+              "$ref": "#/components/schemas/PackageResponse"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page, or null when there is no further page"
+          }
+        }
+      },
+      "AddModeratorRequest": {
+        "type": "object",
+        "required": [
+          "userId"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who receives moderator privileges"
+          }
+        }
+      },
+      "ModeratorResponse": {
+        "type": "object",
+        "required": [
+          "packageId",
+          "userId",
+          "assignedAt"
+        ],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Associated package"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Moderator user identifier"
+          },
+          "assignedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Assignment time"
+          }
+        }
+      },
+      "RegisterUserPackageRequest": {
+        "type": "object",
+        "required": [
+          "userId"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User being registered"
+          }
+        }
+      },
+      "PackageRegistrationResponse": {
+        "type": "object",
+        "required": [
+          "packageId",
+          "userId",
+          "registeredAt"
+        ],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Registered package"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Registered user"
+          },
+          "registeredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Registration time"
+          }
+        }
+      },
+      "ReplaceStatDefinitionsRequest": {
+        "type": "object",
+        "required": [
+          "definitions"
+        ],
+        "properties": {
+          "definitions": {
+            "type": "array",
+            "description": "Complete replacement for the package's statistic definitions",
+            "items": {
+              "$ref": "#/components/schemas/StatDefinition"
+            }
+          }
+        }
+      },
+      "StatDefinition": {
+        "type": "object",
+        "required": [
+          "key",
+          "displayName",
+          "valueType",
+          "combatBonusRules"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Stable lowercase machine-readable statistic name, such as hunger"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Human-readable statistic name"
+          },
+          "valueType": {
+            "type": "string",
+            "enum": [
+              "INTEGER",
+              "DECIMAL",
+              "BOOLEAN"
+            ],
+            "description": "Data type accepted for the statistic"
+          },
+          "minimumValue": {
+            "type": "number",
+            "description": "Minimum for numeric statistics"
+          },
+          "maximumValue": {
+            "type": "number",
+            "description": "Maximum for numeric statistics"
+          },
+          "combatBonusRules": {
+            "type": "array",
+            "description": "Rules for translating local statistics into combat bonuses",
+            "items": {
+              "$ref": "#/components/schemas/CombatBonusRule"
+            }
+          }
+        }
+      },
+      "CombatBonusRule": {
+        "type": "object",
+        "required": [
+          "operator",
+          "threshold",
+          "bonusType",
+          "modifier"
+        ],
+        "properties": {
+          "operator": {
+            "type": "string",
+            "enum": [
+              "LT",
+              "LTE",
+              "GT",
+              "GTE",
+              "BETWEEN"
+            ],
+            "description": "Comparison applied to the statistic"
+          },
+          "threshold": {
+            "description": "Value or two-number range used by the comparison",
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            ]
+          },
+          "bonusType": {
+            "type": "string",
+            "enum": [
+              "ATTACK",
+              "DEFENSE",
+              "HEALTH"
+            ],
+            "description": "Combat property affected by the rule"
+          },
+          "modifier": {
+            "type": "number",
+            "description": "Bonus added when the condition matches"
+          }
+        }
+      },
+      "StatDefinitionResponse": {
+        "type": "object",
+        "required": [
+          "packageId",
+          "definition",
+          "updatedAt"
+        ],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package owning the definition"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/StatDefinition"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last definition update time"
+          }
+        }
+      },
+      "ReplaceBattleBoostsRequest": {
+        "type": "object",
+        "required": [
+          "boosts"
+        ],
+        "properties": {
+          "boosts": {
+            "type": "array",
+            "description": "Complete replacement for the package's battle boosts",
+            "items": {
+              "$ref": "#/components/schemas/BattleBoostDefinition"
+            }
+          }
+        }
+      },
+      "BattleBoostDefinition": {
+        "type": "object",
+        "required": [
+          "key",
+          "displayName",
+          "affectedStat",
+          "modifier",
+          "maxUsesPerBattle"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Stable lowercase boost identifier within the package"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Human-readable boost name"
+          },
+          "affectedStat": {
+            "type": "string",
+            "enum": [
+              "ATTACK",
+              "DEFENSE",
+              "HEALTH"
+            ],
+            "description": "Combat property modified by the boost"
+          },
+          "modifier": {
+            "type": "number",
+            "description": "Value added while the boost is active"
+          },
+          "maxUsesPerBattle": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum number of uses in one battle"
+          }
+        }
+      },
+      "BattleBoostResponse": {
+        "type": "object",
+        "required": [
+          "packageId",
+          "definition",
+          "updatedAt"
+        ],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package owning the boost"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/BattleBoostDefinition"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update time"
+          }
+        }
+      },
+      "CreateRaidConfigurationRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "spriteUrl",
+          "maximumHp",
+          "combatStats",
+          "weaknesses",
+          "resistances",
+          "specialProperties",
+          "durationSeconds",
+          "participantLimit",
+          "rewards"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Monster name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Monster and raid description"
+          },
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Monster sprite location"
+          },
+          "maximumHp": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Starting monster health"
+          },
+          "combatStats": {
+            "$ref": "#/components/schemas/RaidCombatStats"
+          },
+          "weaknesses": {
+            "type": "array",
+            "description": "Combat types that deal increased damage",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FLAME",
+                "NATURE",
+                "EARTH",
+                "ELECTRIC",
+                "WATER",
+                "SHADOW"
+              ]
+            }
+          },
+          "resistances": {
+            "type": "array",
+            "description": "Combat types that deal reduced damage",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FLAME",
+                "NATURE",
+                "EARTH",
+                "ELECTRIC",
+                "WATER",
+                "SHADOW"
+              ]
+            }
+          },
+          "specialProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Extensible special raid behavior"
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum raid duration in seconds"
+          },
+          "participantLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum number of participants"
+          },
+          "rewards": {
+            "$ref": "#/components/schemas/RaidRewardConfiguration"
+          }
+        }
+      },
+      "UpdateRaidConfigurationRequest": {
+        "type": "object",
+        "description": "Any create field may be updated before the configuration is activated; every field is optional.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Monster name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Monster and raid description"
+          },
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Monster sprite location"
+          },
+          "maximumHp": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Starting monster health"
+          },
+          "combatStats": {
+            "$ref": "#/components/schemas/RaidCombatStats"
+          },
+          "weaknesses": {
+            "type": "array",
+            "description": "Combat types that deal increased damage",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FLAME",
+                "NATURE",
+                "EARTH",
+                "ELECTRIC",
+                "WATER",
+                "SHADOW"
+              ]
+            }
+          },
+          "resistances": {
+            "type": "array",
+            "description": "Combat types that deal reduced damage",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FLAME",
+                "NATURE",
+                "EARTH",
+                "ELECTRIC",
+                "WATER",
+                "SHADOW"
+              ]
+            }
+          },
+          "specialProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Extensible special raid behavior"
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum raid duration in seconds"
+          },
+          "participantLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum number of participants"
+          },
+          "rewards": {
+            "$ref": "#/components/schemas/RaidRewardConfiguration"
+          }
+        }
+      },
+      "RaidCombatStats": {
+        "type": "object",
+        "required": [
+          "attack",
+          "defense"
+        ],
+        "properties": {
+          "attack": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Monster attack value"
+          },
+          "defense": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Monster defense value"
+          }
+        }
+      },
+      "RaidRewardConfiguration": {
+        "type": "object",
+        "required": [
+          "globalCurrency",
+          "xp",
+          "otherRewards"
+        ],
+        "properties": {
+          "globalCurrency": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Global currency awarded per eligible participant"
+          },
+          "xp": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "XP awarded per eligible participant"
+          },
+          "otherRewards": {
+            "type": "array",
+            "description": "Optional globally managed rewards",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      },
+      "RaidConfigurationResponse": {
+        "type": "object",
+        "required": [
+          "raidConfigurationId",
+          "name",
+          "description",
+          "spriteUrl",
+          "maximumHp",
+          "combatStats",
+          "weaknesses",
+          "resistances",
+          "specialProperties",
+          "durationSeconds",
+          "participantLimit",
+          "rewards",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "raidConfigurationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Raid configuration identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Monster name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Monster and raid description"
+          },
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Monster sprite location"
+          },
+          "maximumHp": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Starting monster health"
+          },
+          "combatStats": {
+            "$ref": "#/components/schemas/RaidCombatStats"
+          },
+          "weaknesses": {
+            "type": "array",
+            "description": "Combat types that deal increased damage",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FLAME",
+                "NATURE",
+                "EARTH",
+                "ELECTRIC",
+                "WATER",
+                "SHADOW"
+              ]
+            }
+          },
+          "resistances": {
+            "type": "array",
+            "description": "Combat types that deal reduced damage",
+            "items": {
+              "type": "string",
+              "enum": [
+                "FLAME",
+                "NATURE",
+                "EARTH",
+                "ELECTRIC",
+                "WATER",
+                "SHADOW"
+              ]
+            }
+          },
+          "specialProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Extensible special raid behavior"
+          },
+          "durationSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum raid duration in seconds"
+          },
+          "participantLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum number of participants"
+          },
+          "rewards": {
+            "$ref": "#/components/schemas/RaidRewardConfiguration"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update time"
+          }
+        }
+      },
+      "RaidConfigurationPageResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Configurations in the current page",
+            "items": {
+              "$ref": "#/components/schemas/RaidConfigurationResponse"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page, or null when there is no further page"
+          }
+        }
+      },
+      "CreateRaidScheduleRequest": {
+        "type": "object",
+        "required": [
+          "raidConfigurationId",
+          "startsAt",
+          "endsAt"
+        ],
+        "properties": {
+          "raidConfigurationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Raid configuration to schedule"
+          },
+          "startsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Scheduled activation time; must be in the future"
+          },
+          "endsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Scheduled end time"
+          }
+        }
+      },
+      "UpdateRaidScheduleRequest": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE",
+              "CANCELLED"
+            ],
+            "description": "Requested schedule state"
+          }
+        }
+      },
+      "RaidScheduleResponse": {
+        "type": "object",
+        "required": [
+          "scheduleId",
+          "raidConfigurationId",
+          "startsAt",
+          "endsAt",
+          "status",
+          "createdByAdminId"
+        ],
+        "properties": {
+          "scheduleId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Schedule identifier"
+          },
+          "raidConfigurationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Configuration used by the scheduled raid"
+          },
+          "startsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Scheduled start time"
+          },
+          "endsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Scheduled end time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "SCHEDULED",
+              "ACTIVE",
+              "INACTIVE",
+              "CANCELLED",
+              "COMPLETED"
+            ],
+            "description": "Current schedule state"
+          },
+          "createdByAdminId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Admin who created the schedule"
+          }
+        }
+      }
+    }
+  }
+}

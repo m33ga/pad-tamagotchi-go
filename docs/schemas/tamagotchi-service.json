@@ -1,0 +1,1076 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tamagotchi Service API",
+    "version": "1.0.0",
+    "description": "Owns every Tamagotchi and its current owner, ownership role, combat type, level, XP, sprite reference, and package-local health statistics. A secondary Tamagotchi is a reference to the original entity after an ownership transfer; the service never creates a duplicate of it. Package-local health statistics are validated against the definitions returned by Package Registry Service.\n\nThe service publishes no queue events.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Combat Types",
+      "description": "Predefined combat types and their advantages"
+    },
+    {
+      "name": "Tamagotchis",
+      "description": "Tamagotchi creation, retrieval, updates, and health statistics"
+    },
+    {
+      "name": "Ownership",
+      "description": "Primary selection and ownership transfers"
+    },
+    {
+      "name": "Progression",
+      "description": "Combat profiles and XP grants"
+    }
+  ],
+  "paths": {
+    "/tamagotchi-combat-types": {
+      "get": {
+        "operationId": "listCombatTypes",
+        "summary": "List the predefined combat types",
+        "description": "Callable by clients and internal services. The type-advantage cycle is FLAME > NATURE > EARTH > ELECTRIC > WATER > SHADOW > FLAME.",
+        "tags": ["Combat Types"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Combat types returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CombatTypeResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/tamagotchis": {
+      "post": {
+        "operationId": "createTamagotchi",
+        "summary": "Create a Tamagotchi",
+        "description": "Callable by the account owner or a package client. Health statistics are validated against the Package Registry definitions of the selected package.",
+        "tags": ["Tamagotchis"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTamagotchiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tamagotchi created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TamagotchiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: PRIMARY_TAMAGOTCHI_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_LOCAL_STATS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tamagotchis/{tamagotchiId}": {
+      "get": {
+        "operationId": "getTamagotchi",
+        "summary": "Retrieve a Tamagotchi",
+        "description": "Callable by the account owner or internal services.",
+        "tags": ["Tamagotchis"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TamagotchiId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tamagotchi returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TamagotchiResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: TAMAGOTCHI_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateTamagotchi",
+        "summary": "Update a Tamagotchi's name or sprite",
+        "description": "Callable only by the account owner.",
+        "tags": ["Tamagotchis"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TamagotchiId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTamagotchiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tamagotchi updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TamagotchiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/users/{userId}/tamagotchis": {
+      "get": {
+        "operationId": "getUserTamagotchis",
+        "summary": "List a user's Tamagotchis",
+        "description": "Callable by the account owner or internal services. The optional role filter narrows the result to primary or secondary Tamagotchis.",
+        "tags": ["Tamagotchis"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": false,
+            "description": "Optional ownership-role filter",
+            "schema": {
+              "type": "string",
+              "enum": ["PRIMARY", "SECONDARY"]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tamagotchis returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TamagotchiResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request: INVALID_ROLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_TAMAGOTCHIS_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/primary-tamagotchi": {
+      "get": {
+        "operationId": "getPrimaryTamagotchi",
+        "summary": "Retrieve a user's primary Tamagotchi",
+        "description": "Callable by the account owner, Battle Service, or Monster Raid Service.",
+        "tags": ["Ownership"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Primary Tamagotchi returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TamagotchiResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: PRIMARY_TAMAGOTCHI_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setPrimaryTamagotchi",
+        "summary": "Select a user's primary Tamagotchi",
+        "description": "Callable only by the account owner. The selected Tamagotchi must already be owned by the user.",
+        "tags": ["Ownership"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPrimaryTamagotchiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Primary Tamagotchi selected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TamagotchiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: TAMAGOTCHI_NOT_OWNED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tamagotchis/{tamagotchiId}/health-stats": {
+      "patch": {
+        "operationId": "updateHealthStats",
+        "summary": "Update a Tamagotchi's health statistics",
+        "description": "Callable by the account owner or a package client. New values are validated against the Package Registry statistic definitions of the originating package.",
+        "tags": ["Tamagotchis"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TamagotchiId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHealthStatsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Health statistics updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TamagotchiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_LOCAL_STATS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable: PACKAGE_REGISTRY_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tamagotchis/{tamagotchiId}/combat-profile": {
+      "get": {
+        "operationId": "getCombatProfile",
+        "summary": "Retrieve a Tamagotchi's combat profile",
+        "description": "Callable only by Battle Service or Monster Raid Service.",
+        "tags": ["Progression"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TamagotchiId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Combat profile returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CombatProfileResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: TAMAGOTCHI_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: TAMAGOTCHI_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tamagotchis/{tamagotchiId}/xp-grants": {
+      "post": {
+        "operationId": "grantXp",
+        "summary": "Grant XP to a Tamagotchi",
+        "description": "Callable only by Battle Service or Monster Raid Service. Idempotent for a given Idempotency-Key and referenceId.",
+        "tags": ["Progression"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TamagotchiId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantXpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "XP granted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantXpResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: XP_ALREADY_GRANTED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tamagotchi-ownership-transfers": {
+      "post": {
+        "operationId": "transferTamagotchiOwnership",
+        "summary": "Transfer a Tamagotchi to a new owner",
+        "description": "Callable only by Battle Service. The transfer updates the existing Tamagotchi instead of creating a new entry; the winner receives it as a secondary Tamagotchi. Idempotent for a given Idempotency-Key and referenceId.",
+        "tags": ["Ownership"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferTamagotchiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ownership transferred",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnershipTransferResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: OWNERSHIP_ALREADY_TRANSFERRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_TRANSFER",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Deduplicates retriable commands that create side effects",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "TamagotchiId": {
+        "name": "tamagotchiId",
+        "in": "path",
+        "required": true,
+        "description": "Global Tamagotchi identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Global user identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid authentication",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "correlationId"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": ["RESOURCE_NOT_FOUND"]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CreateTamagotchiRequest": {
+        "type": "object",
+        "required": ["ownerUserId", "packageId", "name", "combatType", "spriteUrl", "healthStats"],
+        "properties": {
+          "ownerUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Initial owner"
+          },
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package that defines the Tamagotchi's local statistics"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Tamagotchi display name"
+          },
+          "combatType": {
+            "type": "string",
+            "enum": ["FLAME", "NATURE", "EARTH", "ELECTRIC", "WATER", "SHADOW"],
+            "description": "Predefined combat type"
+          },
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Sprite reference"
+          },
+          "healthStats": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Package-local statistics validated against Package Registry definitions; values may be integer, decimal, or Boolean and unknown keys are rejected"
+          }
+        }
+      },
+      "UpdateTamagotchiRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Updated display name"
+          },
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Updated sprite reference"
+          }
+        }
+      },
+      "TamagotchiResponse": {
+        "type": "object",
+        "required": ["tamagotchiId", "ownerUserId", "packageId", "name", "ownershipRole", "combatType", "level", "xp", "spriteUrl", "healthStats", "createdAt", "updatedAt"],
+        "properties": {
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Global Tamagotchi identifier"
+          },
+          "ownerUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Current owner"
+          },
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Originating package"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name"
+          },
+          "ownershipRole": {
+            "type": "string",
+            "enum": ["PRIMARY", "SECONDARY"],
+            "description": "Role for the current owner"
+          },
+          "combatType": {
+            "type": "string",
+            "enum": ["FLAME", "NATURE", "EARTH", "ELECTRIC", "WATER", "SHADOW"],
+            "description": "Current combat type"
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Current level"
+          },
+          "xp": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total accumulated XP"
+          },
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Sprite reference"
+          },
+          "healthStats": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Non-normalized package-local statistics; values may be integer, decimal, or Boolean per Package Registry definitions"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update time"
+          }
+        }
+      },
+      "SetPrimaryTamagotchiRequest": {
+        "type": "object",
+        "required": ["tamagotchiId"],
+        "properties": {
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Owned Tamagotchi that becomes primary"
+          }
+        }
+      },
+      "UpdateHealthStatsRequest": {
+        "type": "object",
+        "required": ["stats"],
+        "properties": {
+          "stats": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Statistic keys and new values; values may be integer, decimal, or Boolean per Package Registry definitions and unknown keys are rejected"
+          }
+        }
+      },
+      "CombatTypeResponse": {
+        "type": "object",
+        "required": ["type", "strongAgainst"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["FLAME", "NATURE", "EARTH", "ELECTRIC", "WATER", "SHADOW"],
+            "description": "One of the six predefined types"
+          },
+          "strongAgainst": {
+            "type": "string",
+            "enum": ["FLAME", "NATURE", "EARTH", "ELECTRIC", "WATER", "SHADOW"],
+            "description": "Type against which it has an advantage"
+          }
+        }
+      },
+      "CombatProfileResponse": {
+        "type": "object",
+        "required": ["tamagotchiId", "ownerUserId", "packageId", "combatType", "level", "healthStats"],
+        "properties": {
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi identifier"
+          },
+          "ownerUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Current owner"
+          },
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package used to interpret local statistics"
+          },
+          "combatType": {
+            "type": "string",
+            "enum": ["FLAME", "NATURE", "EARTH", "ELECTRIC", "WATER", "SHADOW"],
+            "description": "Type used for advantage calculations"
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Level used for combat calculations"
+          },
+          "healthStats": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Current package-local statistics; values may be integer, decimal, or Boolean per Package Registry definitions"
+          }
+        }
+      },
+      "GrantXpRequest": {
+        "type": "object",
+        "required": ["amount", "source", "referenceId"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "XP to grant"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["BATTLE", "RAID"],
+            "description": "Activity producing the XP"
+          },
+          "referenceId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Battle or raid identifier used for deduplication"
+          }
+        }
+      },
+      "GrantXpResponse": {
+        "type": "object",
+        "required": ["tamagotchiId", "previousLevel", "newLevel", "totalXp", "processedAt"],
+        "properties": {
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Updated Tamagotchi"
+          },
+          "previousLevel": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Level before the grant"
+          },
+          "newLevel": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Level after the grant"
+          },
+          "totalXp": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total XP after the grant"
+          },
+          "processedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Grant processing time"
+          }
+        }
+      },
+      "TransferTamagotchiRequest": {
+        "type": "object",
+        "required": ["tamagotchiId", "fromUserId", "toUserId", "reason", "referenceId"],
+        "properties": {
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Existing Tamagotchi to transfer"
+          },
+          "fromUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Current owner"
+          },
+          "toUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "New owner"
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["BATTLE_REWARD"],
+            "description": "Business reason for the transfer"
+          },
+          "referenceId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Completed battle identifier used for deduplication"
+          }
+        }
+      },
+      "OwnershipTransferResponse": {
+        "type": "object",
+        "required": ["transferId", "tamagotchiId", "fromUserId", "toUserId", "newOwnershipRole", "transferredAt"],
+        "properties": {
+          "transferId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Ownership-transfer identifier"
+          },
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Transferred Tamagotchi"
+          },
+          "fromUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Previous owner"
+          },
+          "toUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "New owner"
+          },
+          "newOwnershipRole": {
+            "type": "string",
+            "enum": ["SECONDARY"],
+            "description": "Role assigned to the captured Tamagotchi"
+          },
+          "transferredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Transfer completion time"
+          }
+        }
+      }
+    }
+  }
+}

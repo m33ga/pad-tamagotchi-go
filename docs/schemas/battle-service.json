@@ -1,0 +1,1165 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Battle Service API",
+    "version": "1.0.0",
+    "description": "Owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns, and results in PostgreSQL.\n\nThe service publishes the `battle.request.created.v1` and `battle.completed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Battle Requests",
+      "description": "PvP challenges and their resolutions"
+    },
+    {
+      "name": "Battles",
+      "description": "Active turn-based battles, actions, and results"
+    }
+  ],
+  "paths": {
+    "/battle-requests": {
+      "post": {
+        "operationId": "createBattleRequest",
+        "summary": "Challenge another user to a battle",
+        "description": "Callable only by the challenger. Publishes `battle.request.created.v1` after the challenge is stored successfully.",
+        "tags": ["Battle Requests"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBattleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Battle request created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: BATTLE_REQUEST_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_SELECTION",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/battle-requests/{battleRequestId}": {
+      "get": {
+        "operationId": "getBattleRequest",
+        "summary": "Retrieve a battle request",
+        "description": "Callable only by the challenger or the challenged opponent.",
+        "tags": ["Battle Requests"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BattleRequestId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle request returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleRequestResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: BATTLE_REQUEST_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/battle-requests": {
+      "get": {
+        "operationId": "listUserBattleRequests",
+        "summary": "List a user's battle requests",
+        "description": "Callable only by the account owner.",
+        "tags": ["Battle Requests"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "description": "Restricts results to requests sent or received by the user",
+            "schema": {
+              "type": "string",
+              "enum": ["SENT", "RECEIVED"]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Restricts results to requests in the given state",
+            "schema": {
+              "type": "string",
+              "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED"]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle requests returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BattleRequestResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/battle-requests/{battleRequestId}/responses": {
+      "post": {
+        "operationId": "respondToBattleRequest",
+        "summary": "Accept or reject a battle request",
+        "description": "Callable only by the challenged opponent. Accepting creates the battle returned in the decision response.",
+        "tags": ["Battle Requests"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BattleRequestId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondToBattleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Battle request resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleRequestDecisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: REQUEST_ALREADY_RESOLVED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_SELECTION",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/battles/{battleId}": {
+      "get": {
+        "operationId": "getBattle",
+        "summary": "Retrieve a battle",
+        "description": "Callable only by battle participants.",
+        "tags": ["Battles"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BattleId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: BATTLE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/battles": {
+      "get": {
+        "operationId": "listUserBattles",
+        "summary": "List a user's battles",
+        "description": "Callable only by the account owner.",
+        "tags": ["Battles"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Restricts results to battles in the given lifecycle state",
+            "schema": {
+              "type": "string",
+              "enum": ["ACTIVE", "SETTLING", "COMPLETED", "FORFEITED"]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor returned by a previous page",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of battles per page",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattlePageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/battles/{battleId}/actions": {
+      "post": {
+        "operationId": "createBattleAction",
+        "summary": "Perform a battle action",
+        "description": "Callable only by the participant whose turn it is. Deduplicated by the client-generated actionId.",
+        "tags": ["Battles"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BattleId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBattleActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Action processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleActionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: NOT_CURRENT_TURN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_ACTION",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/battles/{battleId}/forfeitures": {
+      "post": {
+        "operationId": "forfeitBattle",
+        "summary": "Forfeit an active battle",
+        "description": "Callable only by battle participants. The forfeiting participant loses the battle.",
+        "tags": ["Battles"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/BattleId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Battle forfeited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: BATTLE_NOT_ACTIVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Deduplicates retriable commands that create side effects",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Global user identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "BattleRequestId": {
+        "name": "battleRequestId",
+        "in": "path",
+        "required": true,
+        "description": "Battle-request identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "BattleId": {
+        "name": "battleId",
+        "in": "path",
+        "required": true,
+        "description": "Battle identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "correlationId"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": ["RESOURCE_NOT_FOUND"]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CreateBattleRequest": {
+        "type": "object",
+        "required": ["opponentUserId", "primaryTamagotchiId", "secondaryTamagotchiId", "equippedBoosts"],
+        "properties": {
+          "opponentUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User being challenged"
+          },
+          "primaryTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Challenger's primary Tamagotchi"
+          },
+          "secondaryTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Challenger's selected secondary Tamagotchi"
+          },
+          "equippedBoosts": {
+            "type": "array",
+            "description": "Package-defined boosts selected by the challenger",
+            "items": {
+              "$ref": "#/components/schemas/BattleBoostSelection"
+            }
+          }
+        }
+      },
+      "RespondToBattleRequest": {
+        "type": "object",
+        "required": ["decision"],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": ["ACCEPT", "REJECT"],
+            "description": "Opponent's decision"
+          },
+          "primaryTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Opponent's primary Tamagotchi. Required when accepting"
+          },
+          "secondaryTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Opponent's selected secondary Tamagotchi. Required when accepting"
+          },
+          "equippedBoosts": {
+            "type": "array",
+            "description": "Package-defined boosts selected by the opponent. Required when accepting",
+            "items": {
+              "$ref": "#/components/schemas/BattleBoostSelection"
+            }
+          }
+        }
+      },
+      "BattleRequestDecisionResponse": {
+        "type": "object",
+        "required": ["battleRequest", "battle"],
+        "properties": {
+          "battleRequest": {
+            "$ref": "#/components/schemas/BattleRequestResponse",
+            "description": "Resolved challenge"
+          },
+          "battle": {
+            "description": "Created battle for ACCEPT, otherwise null",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BattleResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BattleRequestResponse": {
+        "type": "object",
+        "description": "State of a PvP challenge. The opponent's selection is not part of the request; it is submitted when the opponent accepts and appears only on the created battle.",
+        "required": ["battleRequestId", "challengerUserId", "opponentUserId", "challengerSelection", "status", "createdAt", "expiresAt"],
+        "properties": {
+          "battleRequestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Challenge identifier"
+          },
+          "challengerUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who created the challenge"
+          },
+          "opponentUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Challenged user"
+          },
+          "challengerSelection": {
+            "$ref": "#/components/schemas/BattleSelection",
+            "description": "Challenger's Tamagotchis and boosts"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED"],
+            "description": "Current request state"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Challenge creation time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time after which the challenge expires"
+          }
+        }
+      },
+      "BattleSelection": {
+        "type": "object",
+        "required": ["primaryTamagotchiId", "secondaryTamagotchiId", "equippedBoosts"],
+        "properties": {
+          "primaryTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Selected primary Tamagotchi"
+          },
+          "secondaryTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Selected secondary Tamagotchi"
+          },
+          "equippedBoosts": {
+            "type": "array",
+            "description": "Selected package-defined boosts",
+            "items": {
+              "$ref": "#/components/schemas/BattleBoostSelection"
+            }
+          }
+        }
+      },
+      "BattleBoostSelection": {
+        "type": "object",
+        "required": ["packageId", "boostKey"],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package defining the boost"
+          },
+          "boostKey": {
+            "type": "string",
+            "description": "Boost key unique within the package"
+          }
+        }
+      },
+      "BattleResponse": {
+        "type": "object",
+        "required": ["battleId", "battleRequestId", "status", "participants", "currentTurnUserId", "turnNumber", "winnerUserId", "loserUserId", "result", "createdAt", "updatedAt"],
+        "properties": {
+          "battleId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Battle identifier"
+          },
+          "battleRequestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Request that created the battle"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "SETTLING", "COMPLETED", "FORFEITED"],
+            "description": "Battle lifecycle state. When combat ends the battle enters SETTLING and performs idempotent settlement commands keyed by battleId: currency credit and debit through User Management Service, XP grants and the ownership transfer through Tamagotchi Service. The battle becomes COMPLETED only after every required command succeeds; if a dependency is unavailable it remains SETTLING and failed commands are retried without applying a reward twice"
+          },
+          "participants": {
+            "type": "array",
+            "description": "Current state for both players",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/BattleParticipant"
+            }
+          },
+          "currentTurnUserId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "User allowed to act, or null after the battle ends"
+          },
+          "turnNumber": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Current turn number"
+          },
+          "winnerUserId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Winner after completion"
+          },
+          "loserUserId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Loser after completion"
+          },
+          "result": {
+            "description": "Settlement result after completion",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BattleResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Battle creation time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last state-change time"
+          }
+        }
+      },
+      "BattlePageResponse": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Battles in the current page",
+            "items": {
+              "$ref": "#/components/schemas/BattleResponse"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Cursor for the next page"
+          }
+        }
+      },
+      "BattleParticipant": {
+        "type": "object",
+        "required": ["userId", "combatants", "equippedBoosts"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Participant identifier"
+          },
+          "combatants": {
+            "type": "array",
+            "description": "Primary and secondary battle state",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/BattleCombatant"
+            }
+          },
+          "equippedBoosts": {
+            "type": "array",
+            "description": "Boosts available during the battle",
+            "items": {
+              "$ref": "#/components/schemas/BattleBoostSelection"
+            }
+          }
+        }
+      },
+      "BattleCombatant": {
+        "type": "object",
+        "required": ["tamagotchiId", "role", "currentHealth", "defeated"],
+        "properties": {
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Participating Tamagotchi"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["PRIMARY", "SECONDARY"],
+            "description": "Selection role"
+          },
+          "currentHealth": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Current battle health"
+          },
+          "defeated": {
+            "type": "boolean",
+            "description": "Whether the Tamagotchi can continue fighting"
+          }
+        }
+      },
+      "CreateBattleActionRequest": {
+        "type": "object",
+        "required": ["actionId", "type", "actorTamagotchiId"],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client-generated identifier used for deduplication"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["ATTACK", "SWITCH_ACTIVE", "USE_BOOST"],
+            "description": "Requested turn action"
+          },
+          "actorTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi performing the action"
+          },
+          "targetTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi being attacked. Required for an attack"
+          },
+          "boostPackageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package defining the boost. Required when using a boost"
+          },
+          "boostKey": {
+            "type": "string",
+            "description": "Boost key unique within the package. Required when using a boost"
+          }
+        }
+      },
+      "BattleActionResponse": {
+        "type": "object",
+        "required": ["actionId", "type", "damage", "battle"],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Processed action identifier"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["ATTACK", "SWITCH_ACTIVE", "USE_BOOST"],
+            "description": "Processed action type"
+          },
+          "damage": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Damage produced by the action; zero for non-damage actions"
+          },
+          "battle": {
+            "$ref": "#/components/schemas/BattleResponse",
+            "description": "Battle state after applying the action"
+          }
+        }
+      },
+      "BattleResult": {
+        "type": "object",
+        "required": ["winnerUserId", "loserUserId", "winnerGlobalCurrency", "loserGlobalCurrencyLoss", "xpAwards", "transferredTamagotchiId", "settledAt"],
+        "properties": {
+          "winnerUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Winning player"
+          },
+          "loserUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Losing player"
+          },
+          "winnerGlobalCurrency": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Currency credited to the winner"
+          },
+          "loserGlobalCurrencyLoss": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Currency debited from the loser"
+          },
+          "xpAwards": {
+            "type": "array",
+            "description": "XP distributed to all selected Tamagotchis",
+            "items": {
+              "$ref": "#/components/schemas/BattleXpAward"
+            }
+          },
+          "transferredTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Loser's former primary Tamagotchi transferred to the winner"
+          },
+          "settledAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which all rewards and transfers completed"
+          }
+        }
+      },
+      "BattleXpAward": {
+        "type": "object",
+        "required": ["userId", "tamagotchiId", "amount"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Owner at the time XP is awarded"
+          },
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi receiving XP"
+          },
+          "amount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "XP amount"
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "description": "Common envelope for every event sent through the message queue. Not delivered over HTTP.",
+        "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "correlationId", "data"],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique event identifier used for deduplication"
+          },
+          "eventType": {
+            "type": "string",
+            "description": "Stable event name including the version suffix",
+            "examples": ["battle.request.created.v1"]
+          },
+          "eventVersion": {
+            "type": "integer",
+            "description": "Schema version of the event"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the business event occurred"
+          },
+          "producer": {
+            "type": "string",
+            "description": "Service that published the event",
+            "examples": ["battle-service"]
+          },
+          "correlationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifier connecting the event to the originating operation"
+          },
+          "data": {
+            "description": "Event payload",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BattleRequestCreatedEventV1"
+              },
+              {
+                "$ref": "#/components/schemas/BattleCompletedEventV1"
+              }
+            ]
+          }
+        }
+      },
+      "BattleRequestCreatedEventV1": {
+        "type": "object",
+        "description": "Payload of `battle.request.created.v1`, published after a challenge is stored successfully. Notification Service consumes it to notify the opponent.",
+        "required": ["battleRequestId", "challengerUserId", "opponentUserId", "expiresAt"],
+        "properties": {
+          "battleRequestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Challenge identifier"
+          },
+          "challengerUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who created the challenge"
+          },
+          "opponentUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who should be notified"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Challenge expiration time"
+          }
+        }
+      },
+      "BattleCompletedEventV1": {
+        "type": "object",
+        "description": "Payload of `battle.completed.v1`, published after currency, XP, and ownership settlement finishes. Notification Service consumes it to notify both players.",
+        "required": ["battleId", "winnerUserId", "loserUserId", "winnerGlobalCurrency", "loserGlobalCurrencyLoss", "transferredTamagotchiId", "settledAt"],
+        "properties": {
+          "battleId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Completed battle"
+          },
+          "winnerUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Winning player"
+          },
+          "loserUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Losing player"
+          },
+          "winnerGlobalCurrency": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Winner's currency reward"
+          },
+          "loserGlobalCurrencyLoss": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Loser's currency loss"
+          },
+          "transferredTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi transferred to the winner"
+          },
+          "settledAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Settlement completion time"
+          }
+        }
+      }
+    }
+  }
+}

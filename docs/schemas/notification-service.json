@@ -1,0 +1,443 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Notification Service API",
+    "version": "1.0.0",
+    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Devices",
+      "description": "Firebase device registrations"
+    },
+    {
+      "name": "Preferences",
+      "description": "Per-user notification category preferences"
+    }
+  ],
+  "paths": {
+    "/users/{userId}/notification-devices": {
+      "get": {
+        "operationId": "getNotificationDevices",
+        "summary": "List a user's registered notification devices",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId.",
+        "tags": ["Devices"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device registrations returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationDeviceResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/users/{userId}/notification-devices/{deviceId}": {
+      "put": {
+        "operationId": "registerNotificationDevice",
+        "summary": "Register or refresh a notification device",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Uses PUT because the same application installation may safely submit its current Firebase token multiple times.",
+        "tags": ["Devices"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterNotificationDeviceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Device registration stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDeviceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "Rejected domain operation: INVALID_FCM_TOKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNotificationDevice",
+        "summary": "Remove a notification device registration",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId.",
+        "tags": ["Devices"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Device registration removed"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: DEVICE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/notification-preferences": {
+      "get": {
+        "operationId": "getNotificationPreferences",
+        "summary": "Retrieve a user's notification preferences",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. A missing preference record means that all categories are enabled by default.",
+        "tags": ["Preferences"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preferences returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateNotificationPreferences",
+        "summary": "Replace a user's notification preferences",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. The request carries the complete category selection.",
+        "tags": ["Preferences"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateNotificationPreferencesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Preferences updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "Rejected domain operation: UNKNOWN_CATEGORY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Global user identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "DeviceId": {
+        "name": "deviceId",
+        "in": "path",
+        "required": true,
+        "description": "Client-generated stable installation identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "correlationId"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": ["RESOURCE_NOT_FOUND"]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "RegisterNotificationDeviceRequest": {
+        "type": "object",
+        "required": ["fcmRegistrationToken", "platform", "packageId"],
+        "properties": {
+          "fcmRegistrationToken": {
+            "type": "string",
+            "description": "Firebase token for the application installation. Firebase registration tokens are confidential: they are stored only by Notification Service and never returned in responses"
+          },
+          "platform": {
+            "type": "string",
+            "enum": ["ANDROID", "IOS", "WEB"],
+            "description": "Device platform"
+          },
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi application package registering the token"
+          },
+          "appVersion": {
+            "type": "string",
+            "description": "Client version used for delivery diagnostics"
+          }
+        }
+      },
+      "NotificationDeviceResponse": {
+        "type": "object",
+        "required": ["deviceId", "userId", "packageId", "platform", "enabled", "registeredAt", "updatedAt"],
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client-generated stable installation identifier"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Owner of the registration"
+          },
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Registered application package"
+          },
+          "platform": {
+            "type": "string",
+            "enum": ["ANDROID", "IOS", "WEB"],
+            "description": "Device platform"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether pushes may be sent to this registration"
+          },
+          "registeredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Initial registration time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last token or metadata update"
+          }
+        }
+      },
+      "UpdateNotificationPreferencesRequest": {
+        "type": "object",
+        "required": ["categories"],
+        "properties": {
+          "categories": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "Complete enabled/disabled category selection. Supported categories are FRIEND_REQUEST, PROXIMITY, BATTLE_REQUEST, BATTLE_RESULT, GUILD_INVITATION, and RAID_LIFECYCLE"
+          }
+        }
+      },
+      "NotificationPreferencesResponse": {
+        "type": "object",
+        "required": ["userId", "categories", "updatedAt"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Preference owner"
+          },
+          "categories": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "Effective category settings. Supported categories are FRIEND_REQUEST, PROXIMITY, BATTLE_REQUEST, BATTLE_RESULT, GUILD_INVITATION, and RAID_LIFECYCLE"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last preference update"
+          }
+        }
+      }
+    }
+  }
+}
