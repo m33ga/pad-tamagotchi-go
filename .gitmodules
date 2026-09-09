@@ -1,3 +1,6 @@
 [submodule "pad-notification-service"]
 	path = pad-notification-service
 	url = git@github.com:J0hnny05/pad-notification-service.git
+[submodule "pad-tamagotchi-service"]
+	path = pad-tamagotchi-service
+	url = git@github.com:J0hnny05/pad-tamagotchi-service.git
