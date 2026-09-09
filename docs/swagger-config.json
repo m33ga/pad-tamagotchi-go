@@ -1,0 +1,14 @@
+{
+  "urls": [
+    { "url": "schemas/user-management-service.json", "name": "User Management Service" },
+    { "url": "schemas/tamagotchi-service.json", "name": "Tamagotchi Service" },
+    { "url": "schemas/battle-service.json", "name": "Battle Service" },
+    { "url": "schemas/map-service.json", "name": "Map Service" },
+    { "url": "schemas/guild-service.json", "name": "Guild Service" },
+    { "url": "schemas/monster-raid-service.json", "name": "Monster Raid Service" },
+    { "url": "schemas/package-registry-service.json", "name": "Package Registry Service" },
+    { "url": "schemas/notification-service.json", "name": "Notification Service" }
+  ],
+  "urls.primaryName": "User Management Service",
+  "deepLinking": true
+}
