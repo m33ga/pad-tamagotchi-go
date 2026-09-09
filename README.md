@@ -1483,12 +1483,12 @@ Lab release process:
 | Service | Owner | Language | Database |
 |---|---|---|---|
 | User Management Service | [Crudu Alexandra](https://github.com/crudualexandra) | C# | PostgreSQL |
-| Tamagotchi Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | MongoDB |
+| Tamagotchi Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | PostgreSQL |
 | Battle Service | [Crudu Alexandra](https://github.com/crudualexandra) | C# | Redis |
 | Map Service | [Gurduza Mihai](https://github.com/m33ga) | Go | Redis |
 | Guild Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
 | Monster Raid Service | [Gurduza Mihai](https://github.com/m33ga) | Go | Redis |
-| Package Registry Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | MongoDB |
+| Package Registry Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
 | Notification Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | Redis |
 
 ### User Management Service
@@ -1507,7 +1507,7 @@ The Battle Service is responsible for executing turn-based PvP battles between p
 
 The Tamagotchi Service maintains the globally relevant state of Tamagotchis, including ownership, level, combat type and package-specific health statistics.
 
-**MongoDB** is used because Tamagotchi statistics are package-specific and can have different structures between packages. A document-oriented database provides the required flexibility.
+**PostgreSQL** is used because the service requires structured relational data while also supporting package-specific and flexible attributes through JSON/JSONB fields.
 
 ### Notification Service
 
@@ -1537,7 +1537,7 @@ The Monster Raid Service manages cooperative raids, including monster health, pa
 
 The Package Registry Service manages application packages and package-specific game configuration. It stores package information, developers, moderators and package-specific Tamagotchi statistics.
 
-**MongoDB** is used because different packages can define different, non-normalized Tamagotchi statistics and configuration structures. MongoDB allows these documents to evolve without requiring a fixed relational schema.
+**PostgreSQL** is used because package configuration can contain flexible attributes that can be stored using JSON/JSONB fields while still benefiting from relational data and transactional consistency.
 
 ## Technology Stack Rationale
 
@@ -1551,11 +1551,7 @@ Go is used for lightweight distributed services that require efficient concurren
 
 ### PostgreSQL
 
-PostgreSQL is used when data has a strong relational structure and requires transactional consistency. It is therefore appropriate for User Management and Guild Service.
-
-### MongoDB
-
-MongoDB is used for flexible document-oriented data. It is particularly useful for Tamagotchi and Package Registry because different packages can define different statistics and configurations.
+PostgreSQL is used when data has a strong relational structure and requires transactional consistency. It is used by User Management, Tamagotchi, Guild and Package Registry services. PostgreSQL also supports flexible and less-structured data through JSON/JSONB fields, allowing services to store package-specific attributes without requiring a separate document database.
 
 ### Redis
 
