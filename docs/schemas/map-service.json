@@ -1,0 +1,488 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Map Service API",
+    "version": "1.0.0",
+    "description": "Owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user in Redis with a TTL and stores durable settings and encounters in PostgreSQL.\n\nThe service publishes the `map.proximity.detected.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Locations",
+      "description": "Current user location state"
+    },
+    {
+      "name": "Map",
+      "description": "Map visibility calculations"
+    }
+  ],
+  "paths": {
+    "/users/{userId}/location": {
+      "put": {
+        "operationId": "updateLocation",
+        "summary": "Replace the user's current location",
+        "description": "Callable only by the account owner. Updates with a sequenceNumber lower than or equal to the stored one are rejected.",
+        "tags": ["Locations"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLocationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Location stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: STALE_LOCATION_UPDATE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteLocation",
+        "summary": "Remove the user's current location",
+        "description": "Callable only by the account owner.",
+        "tags": ["Locations"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Location removed"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: LOCATION_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/map": {
+      "get": {
+        "operationId": "getMapView",
+        "summary": "Retrieve the user's map view",
+        "description": "Callable only by the account owner. Friends and enemies are included whenever both users have unexpired locations; a user with relationship NONE is included only when the calculated distance is at most 6 meters, and expired locations are omitted.",
+        "tags": ["Map"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Map view returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapViewResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_OR_LOCATION_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable: USER_SERVICE_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Global user identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid authentication",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "correlationId"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": ["RESOURCE_NOT_FOUND"]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "UpdateLocationRequest": {
+        "type": "object",
+        "required": ["latitude", "longitude", "recordedAt", "sequenceNumber"],
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "Latest latitude reported by the client"
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180,
+            "description": "Latest longitude reported by the client"
+          },
+          "accuracyMeters": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Accuracy reported by the device"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the device obtained the location"
+          },
+          "sequenceNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Monotonically increasing client value used to reject out-of-order updates"
+          }
+        }
+      },
+      "LocationResponse": {
+        "type": "object",
+        "required": ["userId", "latitude", "longitude", "accuracyMeters", "recordedAt", "expiresAt"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User associated with the location"
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "Stored latitude"
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180,
+            "description": "Stored longitude"
+          },
+          "accuracyMeters": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "Device accuracy when supplied"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the device obtained the location"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time after which the location is no longer visible"
+          }
+        }
+      },
+      "MapViewResponse": {
+        "type": "object",
+        "required": ["userId", "generatedAt", "players"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User requesting the map"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which visibility was calculated"
+          },
+          "players": {
+            "type": "array",
+            "description": "Users visible according to the relationship and proximity rules",
+            "items": {
+              "$ref": "#/components/schemas/VisiblePlayer"
+            }
+          }
+        }
+      },
+      "VisiblePlayer": {
+        "type": "object",
+        "required": ["userId", "relationship", "latitude", "longitude", "distanceMeters", "recordedAt"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Visible user identifier"
+          },
+          "relationship": {
+            "type": "string",
+            "enum": ["FRIEND", "ENEMY", "NONE"],
+            "description": "Relationship returned by User Management Service"
+          },
+          "latitude": {
+            "type": "number",
+            "minimum": -90,
+            "maximum": 90,
+            "description": "Latest unexpired latitude"
+          },
+          "longitude": {
+            "type": "number",
+            "minimum": -180,
+            "maximum": 180,
+            "description": "Latest unexpired longitude"
+          },
+          "distanceMeters": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Calculated distance from the requesting user"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the visible location was obtained"
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "description": "Common envelope for every event sent through the message queue. Not delivered over HTTP.",
+        "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "correlationId", "data"],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique event identifier used for deduplication"
+          },
+          "eventType": {
+            "type": "string",
+            "description": "Stable event name including the version suffix",
+            "examples": ["map.proximity.detected.v1"]
+          },
+          "eventVersion": {
+            "type": "integer",
+            "description": "Schema version of the event"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the business event occurred"
+          },
+          "producer": {
+            "type": "string",
+            "description": "Service that published the event",
+            "examples": ["map-service"]
+          },
+          "correlationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifier connecting the event to the originating operation"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MapProximityDetectedEventV1"
+          }
+        }
+      },
+      "MapProximityDetectedEventV1": {
+        "type": "object",
+        "description": "Payload of `map.proximity.detected.v1`, published when two unrelated users move from outside to inside the 6-meter threshold. Notification Service consumes it to notify the affected users.",
+        "required": ["firstUserId", "secondUserId", "distanceMeters", "detectedAt"],
+        "properties": {
+          "firstUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "First nearby user"
+          },
+          "secondUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Second nearby user"
+          },
+          "distanceMeters": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Distance calculated when the threshold was crossed"
+          },
+          "detectedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Detection time"
+          }
+        }
+      }
+    }
+  }
+}

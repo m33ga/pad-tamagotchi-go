@@ -1,0 +1,1289 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "User Management Service API",
+    "version": "1.0.0",
+    "description": "Owns user identity, authentication, social relationships (friends and enemies), and currency balances. Passwords are accepted only by registration and authentication endpoints and are never returned. Internal balance commands require an authenticated service identity in addition to the common correlation and idempotency headers.\n\nThe service publishes the `user.friend-request.created.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Users",
+      "description": "User accounts and profiles"
+    },
+    {
+      "name": "Authentication",
+      "description": "Session creation, refresh, and termination"
+    },
+    {
+      "name": "Relationships",
+      "description": "Friend requests, friendships, and enemies"
+    },
+    {
+      "name": "Balances",
+      "description": "Global and package-local currency balances"
+    },
+    {
+      "name": "Packages",
+      "description": "User package registrations"
+    }
+  ],
+  "paths": {
+    "/users": {
+      "post": {
+        "operationId": "createUser",
+        "summary": "Register a new user",
+        "tags": ["Users"],
+        "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "New user created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "description": "Conflict: USERNAME_OR_EMAIL_TAKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable: PACKAGE_REGISTRY_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/sessions": {
+      "post": {
+        "operationId": "createSession",
+        "summary": "Authenticate and create a session",
+        "tags": ["Authentication"],
+        "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "description": "Unauthorized: INVALID_CREDENTIALS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/session-refreshes": {
+      "post": {
+        "operationId": "refreshSession",
+        "summary": "Renew a session using a refresh token",
+        "tags": ["Authentication"],
+        "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session renewed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized: INVALID_REFRESH_TOKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/sessions/current": {
+      "delete": {
+        "operationId": "deleteCurrentSession",
+        "summary": "Terminate the current session",
+        "tags": ["Authentication"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session terminated"
+          },
+          "401": {
+            "description": "Unauthorized: INVALID_TOKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}": {
+      "get": {
+        "operationId": "getUser",
+        "summary": "Retrieve a user",
+        "description": "Callable by clients and internal services.",
+        "tags": ["Users"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateUser",
+        "summary": "Update a user's profile",
+        "description": "Callable only by the account owner.",
+        "tags": ["Users"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: EMAIL_TAKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/relationships/{otherUserId}": {
+      "get": {
+        "operationId": "getRelationship",
+        "summary": "Retrieve the relationship between two users",
+        "description": "Callable by clients, Map Service, and Guild Service.",
+        "tags": ["Relationships"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "name": "otherUserId",
+            "in": "path",
+            "required": true,
+            "description": "Second user in the relationship query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relationship returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/friend-requests": {
+      "post": {
+        "operationId": "createFriendRequest",
+        "summary": "Send a friend request",
+        "description": "Publishes `user.friend-request.created.v1` after the request is stored successfully.",
+        "tags": ["Relationships"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFriendRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Friend request created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: RELATIONSHIP_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/friend-requests/{requestId}/responses": {
+      "post": {
+        "operationId": "respondToFriendRequest",
+        "summary": "Accept or reject a friend request",
+        "description": "Callable only by the request recipient.",
+        "tags": ["Relationships"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "description": "Friend-request identifier",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondToFriendRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Friend request resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: REQUEST_ALREADY_RESOLVED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/enemies/{enemyUserId}": {
+      "put": {
+        "operationId": "addEnemy",
+        "summary": "Mark a user as an enemy",
+        "description": "Callable only by the account owner.",
+        "tags": ["Relationships"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/EnemyUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Enemy relationship stored"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: RELATIONSHIP_CONFLICT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeEnemy",
+        "summary": "Remove an enemy relationship",
+        "description": "Callable only by the account owner.",
+        "tags": ["Relationships"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/EnemyUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Enemy relationship removed"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/users/{userId}/balances": {
+      "get": {
+        "operationId": "getBalances",
+        "summary": "Retrieve a user's balances",
+        "description": "Callable by the account owner, Battle Service, or Monster Raid Service.",
+        "tags": ["Balances"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Balances returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BalanceResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createBalanceTransaction",
+        "summary": "Apply a balance transaction",
+        "description": "Callable only by Battle Service or Monster Raid Service with an authenticated service identity. Idempotent for a given Idempotency-Key and referenceId.",
+        "tags": ["Balances"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BalanceTransactionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transaction applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BalanceTransactionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "Rejected domain operation: INSUFFICIENT_BALANCE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/packages": {
+      "get": {
+        "operationId": "getUserPackages",
+        "summary": "List a user's package registrations",
+        "description": "Callable by the account owner or internal services.",
+        "tags": ["Packages"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Package references returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PackageReference"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/packages/{packageId}": {
+      "put": {
+        "operationId": "registerUserPackage",
+        "summary": "Register the user with a package",
+        "description": "Callable only by the account owner. Package Registry Service remains the authority for the registration.",
+        "tags": ["Packages"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "name": "packageId",
+            "in": "path",
+            "required": true,
+            "description": "Package to register with",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Package registration created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageReference"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: USER_OR_PACKAGE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: PACKAGE_ALREADY_REGISTERED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependency unavailable: PACKAGE_REGISTRY_UNAVAILABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Deduplicates retriable commands that create side effects",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "description": "Global user identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "EnemyUserId": {
+        "name": "enemyUserId",
+        "in": "path",
+        "required": true,
+        "description": "User marked or unmarked as an enemy",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid authentication",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "correlationId"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": ["RESOURCE_NOT_FOUND"]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "required": ["username", "email", "password", "initialPackageId"],
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 32,
+            "description": "Public username"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Unique account email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 72,
+            "description": "Plain password transported only over HTTPS"
+          },
+          "initialPackageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package selected during registration"
+          }
+        }
+      },
+      "UpdateUserRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 32,
+            "description": "New public username"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "New unique email address"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Account email"
+          },
+          "password": {
+            "type": "string",
+            "description": "Account password"
+          }
+        }
+      },
+      "RefreshSessionRequest": {
+        "type": "object",
+        "required": ["refreshToken"],
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "description": "Previously issued refresh token"
+          }
+        }
+      },
+      "AuthSessionResponse": {
+        "type": "object",
+        "required": ["accessToken", "refreshToken", "expiresAt"],
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "Bearer JWT used for authenticated requests"
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Token used to renew the session"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Access-token expiration time"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "required": ["userId", "username", "email", "packageIds", "createdAt"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Global user identifier"
+          },
+          "username": {
+            "type": "string",
+            "description": "Public username"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Account email, visible only to the owner or authorized services"
+          },
+          "packageIds": {
+            "type": "array",
+            "description": "References to registered packages",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Account creation time"
+          }
+        }
+      },
+      "RelationshipResponse": {
+        "type": "object",
+        "required": ["userId", "otherUserId", "relationship"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "First user in the relationship query"
+          },
+          "otherUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Second user in the relationship query"
+          },
+          "relationship": {
+            "type": "string",
+            "enum": ["FRIEND", "ENEMY", "NONE"],
+            "description": "Current relationship classification"
+          }
+        }
+      },
+      "CreateFriendRequest": {
+        "type": "object",
+        "required": ["targetUserId"],
+        "properties": {
+          "targetUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who should receive the request"
+          }
+        }
+      },
+      "RespondToFriendRequest": {
+        "type": "object",
+        "required": ["decision"],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": ["ACCEPT", "REJECT"],
+            "description": "Recipient's decision"
+          }
+        }
+      },
+      "FriendRequestResponse": {
+        "type": "object",
+        "required": ["requestId", "senderUserId", "recipientUserId", "status", "createdAt"],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Friend-request identifier"
+          },
+          "senderUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who sent the request"
+          },
+          "recipientUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who receives the request"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["PENDING", "ACCEPTED", "REJECTED"],
+            "description": "Current request state"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Request creation time"
+          }
+        }
+      },
+      "BalanceResponse": {
+        "type": "object",
+        "required": ["userId", "globalBalance", "localBalances"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Balance owner"
+          },
+          "globalBalance": {
+            "type": "integer",
+            "description": "Global currency in its smallest unit"
+          },
+          "localBalances": {
+            "type": "array",
+            "description": "One local balance per registered package",
+            "items": {
+              "$ref": "#/components/schemas/LocalBalance"
+            }
+          }
+        }
+      },
+      "LocalBalance": {
+        "type": "object",
+        "required": ["packageId", "balance"],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Package defining the local currency"
+          },
+          "balance": {
+            "type": "integer",
+            "description": "Local currency in its smallest unit"
+          }
+        }
+      },
+      "BalanceTransactionRequest": {
+        "type": "object",
+        "required": ["currency", "amount", "reason", "referenceId"],
+        "properties": {
+          "currency": {
+            "type": "string",
+            "enum": ["GLOBAL", "LOCAL"],
+            "description": "Balance that should be changed"
+          },
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Required when currency is LOCAL"
+          },
+          "amount": {
+            "type": "integer",
+            "not": {
+              "const": 0
+            },
+            "description": "Non-zero integer; positive for credit and negative for debit"
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["BATTLE_REWARD", "BATTLE_LOSS", "RAID_REWARD", "ADMIN_ADJUSTMENT"],
+            "description": "Business reason for the balance change"
+          },
+          "referenceId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Battle, raid, or administrative operation identifier"
+          }
+        }
+      },
+      "BalanceTransactionResponse": {
+        "type": "object",
+        "required": ["transactionId", "resultingBalance", "processedAt"],
+        "properties": {
+          "transactionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Recorded transaction identifier"
+          },
+          "resultingBalance": {
+            "type": "integer",
+            "description": "Balance after applying the transaction"
+          },
+          "processedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Processing time"
+          }
+        }
+      },
+      "PackageReference": {
+        "type": "object",
+        "required": ["packageId", "registeredAt"],
+        "properties": {
+          "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Registered package identifier"
+          },
+          "registeredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the user registered with the package"
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "description": "Common envelope for every event sent through the message queue. Not delivered over HTTP.",
+        "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "correlationId", "data"],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique event identifier used for deduplication"
+          },
+          "eventType": {
+            "type": "string",
+            "description": "Stable event name including the version suffix",
+            "examples": ["user.friend-request.created.v1"]
+          },
+          "eventVersion": {
+            "type": "integer",
+            "description": "Schema version of the event"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the business event occurred"
+          },
+          "producer": {
+            "type": "string",
+            "description": "Service that published the event",
+            "examples": ["user-management-service"]
+          },
+          "correlationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifier connecting the event to the originating operation"
+          },
+          "data": {
+            "$ref": "#/components/schemas/UserFriendRequestCreatedEventV1"
+          }
+        }
+      },
+      "UserFriendRequestCreatedEventV1": {
+        "type": "object",
+        "description": "Payload of `user.friend-request.created.v1`, published after a friend request is stored successfully. Notification Service consumes it to notify the recipient.",
+        "required": ["requestId", "senderUserId", "recipientUserId", "createdAt"],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Friend-request identifier"
+          },
+          "senderUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who sent the request"
+          },
+          "recipientUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User who should be notified"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Request creation time"
+          }
+        }
+      }
+    }
+  }
+}

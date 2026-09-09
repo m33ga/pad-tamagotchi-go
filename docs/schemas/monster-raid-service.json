@@ -1,0 +1,1025 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Monster Raid Service API",
+    "version": "1.0.0",
+    "description": "Owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress.\n\nThe service publishes the `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API Gateway base path"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Raids",
+      "description": "Guild raid lifecycle and results"
+    },
+    {
+      "name": "Participants",
+      "description": "Raid participation and joined members"
+    },
+    {
+      "name": "Attacks",
+      "description": "Participant attacks against the raid monster"
+    }
+  ],
+  "paths": {
+    "/guilds/{guildId}/raids": {
+      "get": {
+        "operationId": "listGuildRaids",
+        "summary": "List a guild's raids",
+        "description": "Callable only by guild members.",
+        "tags": ["Raids"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Restricts results to raids in the given lifecycle state",
+            "schema": {
+              "type": "string",
+              "enum": ["ACTIVE", "SETTLING", "COMPLETED", "FAILED"]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raid page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: GUILD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRaid",
+        "summary": "Create a guild raid from an active schedule",
+        "description": "Callable only by guild members. Creation is idempotent for the combination of guildId and scheduleId: if concurrent requests attempt to create the same guild raid, only one active instance is stored. Publishes `raid.started.v1` after the raid is created.",
+        "tags": ["Raids"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRaidRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Raid created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: SCHEDULE_OR_GUILD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: ACTIVE_GUILD_RAID_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: SCHEDULE_NOT_ACTIVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raids/{raidId}": {
+      "get": {
+        "operationId": "getRaid",
+        "summary": "Retrieve a raid",
+        "description": "Callable only by members of the guild that owns the raid.",
+        "tags": ["Raids"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RaidId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raid returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: RAID_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raids/{raidId}/participants": {
+      "post": {
+        "operationId": "joinRaid",
+        "summary": "Join a raid",
+        "description": "Callable only by guild members. Joining requires an active Guild Service membership and ownership of the submitted primary Tamagotchi.",
+        "tags": ["Participants"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RaidId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRaidRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Participant joined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidParticipantResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: PARTICIPANT_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: RAID_NOT_ACTIVE or PARTICIPANT_LIMIT_REACHED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listRaidParticipants",
+        "summary": "List raid participants",
+        "description": "Callable only by members of the guild that owns the raid.",
+        "tags": ["Participants"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RaidId"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Participant page returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidParticipantPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query: INVALID_QUERY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: RAID_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raids/{raidId}/attacks": {
+      "post": {
+        "operationId": "createRaidAttack",
+        "summary": "Attack the raid monster",
+        "description": "Callable only by raid participants. Damage is calculated from the Tamagotchi combat profile, the raid configuration snapshot, and the relevant package statistic definitions; the server rate-limits attacks and never trusts client-provided damage values. Deduplicated by the client-generated actionId.",
+        "tags": ["Attacks"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RaidId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRaidAttackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Attack processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidAttackResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Conflict: ATTACK_ALREADY_PROCESSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected domain operation: RAID_NOT_ACTIVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raids/{raidId}/result": {
+      "get": {
+        "operationId": "getRaidResult",
+        "summary": "Retrieve a finished raid's result",
+        "description": "Callable only by members of the guild that owns the raid. Available only after the raid reaches a terminal state.",
+        "tags": ["Raids"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RaidId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raid result returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RaidResultResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Not found: RAID_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: RAID_NOT_FINISHED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer JWT issued by the authentication endpoints"
+      }
+    },
+    "parameters": {
+      "CorrelationId": {
+        "name": "X-Correlation-ID",
+        "in": "header",
+        "required": false,
+        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Deduplicates retriable commands that create side effects",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "GuildId": {
+        "name": "guildId",
+        "in": "path",
+        "required": true,
+        "description": "Guild identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "RaidId": {
+        "name": "raidId",
+        "in": "path",
+        "required": true,
+        "description": "Guild raid identifier",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque cursor returned by a previous page",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum number of items per page",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "correlationId"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "examples": ["RESOURCE_NOT_FOUND"]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable error description"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Correlation identifier of the failed operation"
+              },
+              "details": {
+                "type": "array",
+                "description": "Optional structured validation details",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CombatType": {
+        "type": "string",
+        "enum": ["FLAME", "NATURE", "EARTH", "ELECTRIC", "WATER", "SHADOW"],
+        "description": "Combat type used for weakness and resistance calculations"
+      },
+      "CreateRaidRequest": {
+        "type": "object",
+        "required": ["scheduleId"],
+        "properties": {
+          "scheduleId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Active Package Registry schedule used to initialize the raid"
+          }
+        }
+      },
+      "RaidResponse": {
+        "type": "object",
+        "required": ["raidId", "guildId", "scheduleId", "raidConfigurationId", "status", "monster", "participantCount", "startsAt", "endsAt", "finishedAt"],
+        "properties": {
+          "raidId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guild raid identifier"
+          },
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Guild participating in the raid"
+          },
+          "scheduleId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Schedule from which the raid was created"
+          },
+          "raidConfigurationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Configuration snapshot source"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "SETTLING", "COMPLETED", "FAILED"],
+            "description": "Current raid lifecycle state. When monster HP reaches zero the raid enters SETTLING and performs idempotent reward commands keyed by raidId; it becomes COMPLETED only after all required reward commands succeed. If the deadline arrives while monster HP is above zero, the raid becomes FAILED and no rewards are distributed"
+          },
+          "monster": {
+            "$ref": "#/components/schemas/RaidMonsterState",
+            "description": "Current monster state"
+          },
+          "participantCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of joined participants"
+          },
+          "startsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Raid activation time"
+          },
+          "endsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Deadline copied from the active schedule"
+          },
+          "finishedAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Completion or failure time"
+          }
+        }
+      },
+      "RaidPageResponse": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Raids in the current page",
+            "items": {
+              "$ref": "#/components/schemas/RaidResponse"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Cursor for the next page"
+          }
+        }
+      },
+      "RaidMonsterState": {
+        "type": "object",
+        "required": ["name", "spriteUrl", "maximumHp", "currentHp", "weaknesses", "resistances"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Monster name copied from the configuration"
+          },
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Monster sprite reference"
+          },
+          "maximumHp": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Monster health at raid start"
+          },
+          "currentHp": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Remaining monster health"
+          },
+          "weaknesses": {
+            "type": "array",
+            "description": "Types that deal increased damage",
+            "items": {
+              "$ref": "#/components/schemas/CombatType"
+            }
+          },
+          "resistances": {
+            "type": "array",
+            "description": "Types that deal reduced damage",
+            "items": {
+              "$ref": "#/components/schemas/CombatType"
+            }
+          }
+        }
+      },
+      "JoinRaidRequest": {
+        "type": "object",
+        "required": ["primaryTamagotchiId"],
+        "properties": {
+          "primaryTamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Participant's current primary Tamagotchi"
+          }
+        }
+      },
+      "RaidParticipantResponse": {
+        "type": "object",
+        "required": ["raidId", "userId", "tamagotchiId", "damageDealt", "joinedAt"],
+        "properties": {
+          "raidId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Joined raid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Participating guild member"
+          },
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi contributing damage"
+          },
+          "damageDealt": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Participant's accumulated damage"
+          },
+          "joinedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Join time"
+          }
+        }
+      },
+      "RaidParticipantPageResponse": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Participants in the current page",
+            "items": {
+              "$ref": "#/components/schemas/RaidParticipantResponse"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Cursor for the next page"
+          }
+        }
+      },
+      "CreateRaidAttackRequest": {
+        "type": "object",
+        "required": ["actionId", "tamagotchiId", "performedAt"],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client-generated identifier used for deduplication"
+          },
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Joined Tamagotchi performing the attack"
+          },
+          "performedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Client-observed attack time used for validation"
+          }
+        }
+      },
+      "RaidAttackResponse": {
+        "type": "object",
+        "required": ["actionId", "damage", "monsterCurrentHp", "raidStatus", "processedAt"],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Processed action identifier"
+          },
+          "damage": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Damage applied by this attack"
+          },
+          "monsterCurrentHp": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Remaining health after the attack"
+          },
+          "raidStatus": {
+            "type": "string",
+            "enum": ["ACTIVE", "SETTLING"],
+            "description": "State after applying the attack"
+          },
+          "processedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Server processing time"
+          }
+        }
+      },
+      "RaidResultResponse": {
+        "type": "object",
+        "required": ["raidId", "status", "totalDamage", "rewards", "finishedAt"],
+        "properties": {
+          "raidId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Finished raid"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["COMPLETED", "FAILED"],
+            "description": "Whether the monster was defeated before the deadline"
+          },
+          "totalDamage": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Damage contributed by all participants"
+          },
+          "rewards": {
+            "type": "array",
+            "description": "Per-participant rewards; empty for a failed raid",
+            "items": {
+              "$ref": "#/components/schemas/RaidParticipantReward"
+            }
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the terminal state was reached"
+          }
+        }
+      },
+      "RaidParticipantReward": {
+        "type": "object",
+        "required": ["userId", "tamagotchiId", "globalCurrency", "xp"],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Rewarded participant"
+          },
+          "tamagotchiId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Tamagotchi receiving XP"
+          },
+          "globalCurrency": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Currency credited through User Management Service"
+          },
+          "xp": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "XP granted through Tamagotchi Service"
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "description": "Common envelope for every event sent through the message queue. Not delivered over HTTP.",
+        "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "correlationId", "data"],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique event identifier used for deduplication"
+          },
+          "eventType": {
+            "type": "string",
+            "description": "Stable event name including the version suffix",
+            "examples": ["raid.started.v1"]
+          },
+          "eventVersion": {
+            "type": "integer",
+            "description": "Schema version of the event"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the business event occurred"
+          },
+          "producer": {
+            "type": "string",
+            "description": "Service that published the event",
+            "examples": ["monster-raid-service"]
+          },
+          "correlationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifier connecting the event to the originating operation"
+          },
+          "data": {
+            "description": "Event payload",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RaidStartedEventV1"
+              },
+              {
+                "$ref": "#/components/schemas/RaidFinishedEventV1"
+              }
+            ]
+          }
+        }
+      },
+      "RaidStartedEventV1": {
+        "type": "object",
+        "description": "Payload of `raid.started.v1`, published after a guild raid is created. Notification Service consumes it to notify guild members.",
+        "required": ["raidId", "guildId", "monsterName", "recipientUserIds", "startsAt", "endsAt"],
+        "properties": {
+          "raidId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Created guild raid"
+          },
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Participating guild"
+          },
+          "monsterName": {
+            "type": "string",
+            "description": "Name displayed in the notification"
+          },
+          "recipientUserIds": {
+            "type": "array",
+            "description": "Eligible guild members to notify",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "startsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Raid start time"
+          },
+          "endsAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Raid deadline"
+          }
+        }
+      },
+      "RaidFinishedEventV1": {
+        "type": "object",
+        "description": "Shared payload of `raid.completed.v1` and `raid.failed.v1`, published only after the corresponding terminal state is stored. Notification Service consumes both to notify guild members and participants.",
+        "required": ["raidId", "guildId", "status", "participantUserIds", "finishedAt"],
+        "properties": {
+          "raidId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Finished raid"
+          },
+          "guildId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Participating guild"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["COMPLETED", "FAILED"],
+            "description": "Final raid outcome"
+          },
+          "participantUserIds": {
+            "type": "array",
+            "description": "Users who participated",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the terminal state was stored"
+          }
+        }
+      }
+    }
+  }
+}
