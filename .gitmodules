@@ -4,3 +4,9 @@
 [submodule "pad-tamagotchi-service"]
 	path = pad-tamagotchi-service
 	url = git@github.com:J0hnny05/pad-tamagotchi-service.git
+[submodule "pad-guild-service"]
+	path = pad-guild-service
+	url = https://github.com/CosmaK-47/pad-tamagotchi-go-guild-service.git
+[submodule "pad-package-registry-service"]
+	path = pad-package-registry-service
+	url = https://github.com/CosmaK-47/pad-tamagotchi-go-package-registry-service.git
