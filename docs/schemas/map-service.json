@@ -3,7 +3,7 @@
   "info": {
     "title": "Map Service API",
     "version": "1.0.0",
-    "description": "Owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user in Redis with a TTL and stores durable settings and encounters in PostgreSQL.\n\nThe service publishes the `map.proximity.detected.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "description": "Owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location. The service keeps only the newest location for each user in Redis with a TTL and stores durable settings and encounters in PostgreSQL.\n\nThe service publishes the `map.proximity.detected.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -12,7 +12,7 @@
   "servers": [
     {
       "url": "/api/v1",
-      "description": "API Gateway base path"
+      "description": "Base path"
     }
   ],
   "security": [
