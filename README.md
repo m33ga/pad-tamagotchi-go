@@ -1467,9 +1467,61 @@ Lab release process:
 | GitGuardian | Server-side secret scanning | On every push / PR |
 | pre-commit + gitleaks | Local secret scanning, whitespace/YAML hygiene, commit message format | Before every local commit |
 
-**Never** commit `.env` files, API keys or credentials.
+**Never** commit real `.env` files, API keys or credentials. Commit only placeholder templates such as `.env.example`.
 
+## Lab 1 Deployment
 
+The common Docker Compose deployment runs the User Management and Battle services from their public, versioned DockerHub images. It does not build from either private service repository.
+
+| Service | DockerHub image | API | PostgreSQL | Postman collection |
+|---|---|---:|---:|---|
+| User Management Service | [`sanda2004/user-management-service:1.0.1`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | `localhost:5433` | [`collections/user-management-service.postman_collection.json`](collections/user-management-service.postman_collection.json) |
+| Battle Service | [`sanda2004/battle-service:1.0.0`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
+
+### Requirements
+
+- Docker Engine or Docker Desktop with Docker Compose v2
+- Ports `5010`, `5020`, `5433`, and `5434` available, or different ports configured in `.env`
+- Internet access for the first pull from DockerHub
+
+### Run the Services
+
+1. Copy the committed environment template:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Replace every `change_me` value in `.env`. Use one private `JWT_SIGNING_KEY` of at least 32 UTF-8 characters for both services. Never commit this file.
+
+3. Pull the public images and start the deployment:
+
+   ```bash
+   docker compose pull
+   docker compose up -d --wait
+   ```
+
+4. Verify the services:
+
+   ```bash
+   curl http://localhost:5010/_health
+   curl http://localhost:5020/_health
+   docker compose ps
+   ```
+
+5. Stop the containers without deleting database data:
+
+   ```bash
+   docker compose down
+   ```
+
+The APIs use `/api/v1` as their base path. PostgreSQL data is stored in the named volumes `user-management-data` and `battle-data`; `docker compose down --volumes` intentionally deletes that persisted data.
+
+Both services apply their ordered SQL migrations automatically with Evolve. Copies of the database scripts are available in [`database/user-management`](database/user-management) and [`database/battle`](database/battle).
+
+The User Management Service mocks Package Registry validation and package registration. The Battle Service mocks User Management, Tamagotchi, Package Registry, and queue publishing dependencies. No other service is required for this Lab 1 deployment.
+
+To run the Postman collections, import both JSON files from [`collections`](collections), keep their default `baseUrl` values, and set the private `jwtSigningKey` collection variable to the same value as `JWT_SIGNING_KEY` in the local `.env` file. Do not export or commit that value.
 
 ## Service Ownership and Technology Stack
 
@@ -1477,7 +1529,7 @@ Lab release process:
 |---|---|---|---|
 | User Management Service | [Crudu Alexandra](https://github.com/crudualexandra) | C# | PostgreSQL |
 | Tamagotchi Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | PostgreSQL |
-| Battle Service | [Crudu Alexandra](https://github.com/crudualexandra) | C# | Redis |
+| Battle Service | [Crudu Alexandra](https://github.com/crudualexandra) | C# | PostgreSQL |
 | Map Service | [Gurduza Mihai](https://github.com/m33ga) | Go | Redis |
 | Guild Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
 | Monster Raid Service | [Gurduza Mihai](https://github.com/m33ga) | Go | Redis |
@@ -1494,7 +1546,7 @@ The User Management Service is responsible for global user identity and account 
 
 The Battle Service is responsible for executing turn-based PvP battles between players. It calculates combat damage, manages battle state and processes battle rewards.
 
-**Redis** is used for battle state because battles require fast access to frequently changing, temporary state such as the current turn, health and battle status.
+**PostgreSQL** is used because battle requests, actions, state transitions, idempotency records and settlement progress must survive restarts and remain transactionally consistent.
 
 ### Tamagotchi Service
 
@@ -1544,11 +1596,11 @@ Go is used for lightweight distributed services that require efficient concurren
 
 ### PostgreSQL
 
-PostgreSQL is used when data has a strong relational structure and requires transactional consistency. It is used by User Management, Tamagotchi, Guild and Package Registry services. PostgreSQL also supports flexible and less-structured data through JSON/JSONB fields, allowing services to store package-specific attributes without requiring a separate document database.
+PostgreSQL is used when data has a strong relational structure and requires transactional consistency. It is used by User Management, Tamagotchi, Battle, Guild and Package Registry services. PostgreSQL also supports flexible and less-structured data through JSON/JSONB fields, allowing services to store package-specific attributes without requiring a separate document database.
 
 ### Redis
 
-Redis is used for high-speed, frequently changing or temporary state. It is appropriate for Battle, Map, Monster Raid and Notification workloads where low-latency access is important.
+Redis is used for high-speed, frequently changing or temporary state. It is appropriate for Map, Monster Raid and Notification workloads where low-latency access is important.
 
 ### Object Storage
 
