@@ -1,0 +1,440 @@
+{
+  "info": {
+    "_postman_id": "2548694d-5793-4818-843d-b4e8688d009c",
+    "name": "Tamagotchi Go - Battle Service",
+    "description": "Executable Lab 1 collection for all Battle Service contract endpoints. Start the Docker Compose stack, set jwtSigningKey to the same local development key used by Battle Service, then run the collection in order. The scripts create short-lived fixture-user JWTs and capture request and battle identifiers.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{challengerAccessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const secret = pm.variables.get('jwtSigningKey');",
+          "if (!secret || secret.length < 32) throw new Error('Set jwtSigningKey to the Battle Service local JWT key.');",
+          "const expires = Math.floor(Date.now() / 1000) + 300;",
+          "const Crypto = require('crypto-js');",
+          "const encode = value => Crypto.enc.Base64.stringify(Crypto.enc.Utf8.parse(JSON.stringify(value))).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+          "const signUser = (sub, sid) => { const unsigned = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: 'tamagotchi-go', aud: 'tamagotchi-go', kind: 'user', sub, sid, exp: expires })}`; const signature = Crypto.enc.Base64.stringify(Crypto.HmacSHA256(unsigned, secret)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_'); return `${unsigned}.${signature}`; };",
+          "pm.collectionVariables.set('challengerAccessToken', signUser(pm.collectionVariables.get('challengerUserId'), '30000000-0000-4000-8000-000000000001'));",
+          "pm.collectionVariables.set('opponentAccessToken', signUser(pm.collectionVariables.get('opponentUserId'), '30000000-0000-4000-8000-000000000002'));",
+          "pm.request.headers.upsert({ key: 'X-Correlation-ID', value: pm.variables.replaceIn('{{$guid}}') });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Battle Requests",
+      "item": [
+        {
+          "name": "Create battle request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{battleRequestIdempotencyKey}}"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{challengerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"opponentUserId\": \"{{opponentUserId}}\",\n  \"primaryTamagotchiId\": \"{{challengerPrimaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{challengerSecondaryTamagotchiId}}\",\n  \"equippedBoosts\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/battle-requests"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('battleRequestIdempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('battleRequestId', body.battleRequestId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get battle request",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{challengerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/battle-requests/{{battleRequestId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List sent battle requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{challengerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/users/{{challengerUserId}}/battle-requests?direction=SENT&status=PENDING"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Accept battle request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{opponentAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"ACCEPT\",\n  \"primaryTamagotchiId\": \"{{opponentPrimaryTamagotchiId}}\",\n  \"secondaryTamagotchiId\": \"{{opponentSecondaryTamagotchiId}}\",\n  \"equippedBoosts\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/battle-requests/{{battleRequestId}}/responses"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('battleId', body.battle.battleId);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Battles",
+      "item": [
+        {
+          "name": "Get battle",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{challengerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/battles/{{battleId}}"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List active battles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{challengerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/users/{{challengerUserId}}/battles?status=ACTIVE&limit=20"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Perform attack",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{battleActionIdempotencyKey}}"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{challengerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actionId\": \"{{actionId}}\",\n  \"type\": \"ATTACK\",\n  \"actorTamagotchiId\": \"{{challengerPrimaryTamagotchiId}}\",\n  \"targetTamagotchiId\": \"{{opponentPrimaryTamagotchiId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/battles/{{battleId}}/actions"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('actionId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('battleActionIdempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forfeit battle",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{opponentAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/battles/{{battleId}}/forfeitures"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5020/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "jwtSigningKey",
+      "value": "",
+      "type": "string",
+      "description": "Set locally to the same development key used by Battle Service. Never commit a real key."
+    },
+    {
+      "key": "challengerUserId",
+      "value": "00000000-0000-4000-8000-000000000003",
+      "type": "string"
+    },
+    {
+      "key": "opponentUserId",
+      "value": "00000000-0000-4000-8000-000000000004",
+      "type": "string"
+    },
+    {
+      "key": "challengerPrimaryTamagotchiId",
+      "value": "10000000-0000-4000-8000-000000000031",
+      "type": "string"
+    },
+    {
+      "key": "challengerSecondaryTamagotchiId",
+      "value": "10000000-0000-4000-8000-000000000032",
+      "type": "string"
+    },
+    {
+      "key": "opponentPrimaryTamagotchiId",
+      "value": "10000000-0000-4000-8000-000000000041",
+      "type": "string"
+    },
+    {
+      "key": "opponentSecondaryTamagotchiId",
+      "value": "10000000-0000-4000-8000-000000000042",
+      "type": "string"
+    },
+    {
+      "key": "challengerAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "opponentAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "actionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleRequestIdempotencyKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleActionIdempotencyKey",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
