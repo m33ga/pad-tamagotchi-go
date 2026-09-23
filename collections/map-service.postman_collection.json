@@ -1,0 +1,578 @@
+{
+	"info": {
+		"_postman_id": "15abb00b-7ae2-4948-a8e3-955f79bd4cb0",
+		"name": "Tamagotchi Go - Map Service",
+		"description": "Generated from the Map Service OpenAPI 3.1 document (`docs/openapi/openapi.json` in the service repository).\n\nStart the common Docker Compose deployment, then run the requests in order. The `userId` and `friendUserId` variables use the identifiers the mocked User Management Service knows, so the map view returns a friend.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Locations",
+			"item": [
+				{
+					"name": "Update the user's location",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"description": "Correlation identifier; generated when absent",
+								"key": "X-Correlation-ID",
+								"value": "{{$guid}}",
+								"disabled": true
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"latitude\": 47.0105,\n  \"longitude\": 28.8638,\n  \"recordedAt\": \"{{$isoTimestamp}}\",\n  \"sequenceNumber\": {{$timestamp}},\n  \"accuracyMeters\": 4.5\n}",
+							"options": {
+								"raw": {
+									"headerFamily": "json",
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/:userId/location",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"users",
+								":userId",
+								"location"
+							],
+							"variable": [
+								{
+									"key": "userId",
+									"value": "{{userId}}",
+									"description": "User identifier"
+								}
+							]
+						},
+						"description": "Stores the newest position reported by the device. Updates whose sequence number is not higher than the stored one are rejected as stale."
+					},
+					"response": [
+						{
+							"name": "OK",
+							"originalRequest": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									},
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"latitude\": 47.0105,\n  \"longitude\": 28.8638,\n  \"recordedAt\": \"2026-09-23T12:00:00Z\",\n  \"sequenceNumber\": 1,\n  \"accuracyMeters\": 4.5\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/location",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"location"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"userId\": \"00000000-0000-0000-0000-000000000001\",\n  \"latitude\": 47.0105,\n  \"longitude\": 28.8638,\n  \"accuracyMeters\": 4.5,\n  \"recordedAt\": \"2026-09-23T12:00:00Z\",\n  \"expiresAt\": \"2026-09-23T12:01:00Z\"\n}"
+						},
+						{
+							"name": "STALE_LOCATION_UPDATE",
+							"originalRequest": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									},
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"latitude\": 47.0105,\n  \"longitude\": 28.8638,\n  \"recordedAt\": \"2026-09-23T12:00:00Z\",\n  \"sequenceNumber\": 1,\n  \"accuracyMeters\": 4.5\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/location",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"location"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "Conflict",
+							"code": 409,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"STALE_LOCATION_UPDATE\",\n    \"message\": \"A location with an equal or higher sequence number is already stored.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						},
+						{
+							"name": "VALIDATION_ERROR",
+							"originalRequest": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									},
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"latitude\": 100,\n  \"longitude\": 28.8638,\n  \"recordedAt\": \"2026-09-23T12:00:00Z\",\n  \"sequenceNumber\": 1\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/location",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"location"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "Bad Request",
+							"code": 400,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"The request is invalid.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": [\n      \"Key: 'updateLocationRequest.Latitude' Error:Field validation for 'Latitude' failed on the 'lte' tag\"\n    ]\n  }\n}"
+						}
+					]
+				},
+				{
+					"name": "Update a friend's location",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"latitude\": 47.0106,\n  \"longitude\": 28.8638,\n  \"recordedAt\": \"{{$isoTimestamp}}\",\n  \"sequenceNumber\": {{$timestamp}}\n}",
+							"options": {
+								"raw": {
+									"headerFamily": "json",
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/users/:userId/location",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"users",
+								":userId",
+								"location"
+							],
+							"variable": [
+								{
+									"key": "userId",
+									"value": "{{friendUserId}}",
+									"description": "The user the mocked User Management Service reports as a friend"
+								}
+							]
+						},
+						"description": "Places a second user on the map. The mocked User Management Service reports this user as a friend of `userId`, so the next request returns them regardless of distance."
+					},
+					"response": []
+				},
+				{
+					"name": "Delete the user's location",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"description": "Correlation identifier; generated when absent",
+								"key": "X-Correlation-ID",
+								"value": "{{$guid}}",
+								"disabled": true
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/users/:userId/location",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"users",
+								":userId",
+								"location"
+							],
+							"variable": [
+								{
+									"key": "userId",
+									"value": "{{userId}}",
+									"description": "User identifier"
+								}
+							]
+						},
+						"description": "Removes the stored location so the user disappears from every map."
+					},
+					"response": [
+						{
+							"name": "No content",
+							"originalRequest": {
+								"method": "DELETE",
+								"header": [],
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/location",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"location"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "No Content",
+							"code": 204,
+							"_postman_previewlanguage": "text",
+							"header": [],
+							"cookie": [],
+							"body": null
+						},
+						{
+							"name": "LOCATION_NOT_FOUND",
+							"originalRequest": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/location",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"location"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "Not Found",
+							"code": 404,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"LOCATION_NOT_FOUND\",\n    \"message\": \"The user has no stored location.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "Map",
+			"item": [
+				{
+					"name": "Get the user's map",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"description": "Correlation identifier; generated when absent",
+								"key": "X-Correlation-ID",
+								"value": "{{$guid}}",
+								"disabled": true
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/users/:userId/map",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"users",
+								":userId",
+								"map"
+							],
+							"variable": [
+								{
+									"key": "userId",
+									"value": "{{userId}}",
+									"description": "User identifier"
+								}
+							]
+						},
+						"description": "Returns the users visible to the requesting user. Friends and enemies are always included, unrelated users only within 6 meters."
+					},
+					"response": [
+						{
+							"name": "OK",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/map",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"map"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"userId\": \"00000000-0000-0000-0000-000000000001\",\n  \"generatedAt\": \"2026-09-23T12:00:05Z\",\n  \"players\": [\n    {\n      \"userId\": \"00000000-0000-0000-0000-000000000002\",\n      \"relationship\": \"FRIEND\",\n      \"latitude\": 47.0106,\n      \"longitude\": 28.8638,\n      \"distanceMeters\": 11.12,\n      \"recordedAt\": \"2026-09-23T12:00:02Z\"\n    }\n  ]\n}"
+						},
+						{
+							"name": "USER_OR_LOCATION_NOT_FOUND",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/map",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"map"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "Not Found",
+							"code": 404,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"USER_OR_LOCATION_NOT_FOUND\",\n    \"message\": \"The requesting user has no unexpired location.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						},
+						{
+							"name": "USER_SERVICE_UNAVAILABLE",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/users/:userId/map",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"users",
+										":userId",
+										"map"
+									],
+									"variable": [
+										{
+											"key": "userId",
+											"value": "{{userId}}"
+										}
+									]
+								}
+							},
+							"status": "Service Unavailable",
+							"code": 503,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"USER_SERVICE_UNAVAILABLE\",\n    \"message\": \"User Management Service could not be reached.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					]
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5030/api/v1",
+			"type": "string"
+		},
+		{
+			"key": "userId",
+			"value": "00000000-0000-0000-0000-000000000001",
+			"type": "string"
+		},
+		{
+			"key": "friendUserId",
+			"value": "00000000-0000-0000-0000-000000000002",
+			"type": "string"
+		}
+	]
+}
