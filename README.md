@@ -1471,17 +1471,19 @@ Lab release process:
 
 ## Lab 1 Deployment
 
-The common Docker Compose deployment runs the User Management and Battle services from their public, versioned DockerHub images. It does not build from either private service repository.
+The common Docker Compose deployment runs the User Management, Battle, Map and Monster Raid services from their public, versioned DockerHub images. It does not build from any private service repository.
 
-| Service | DockerHub image | API | PostgreSQL | Postman collection |
-|---|---|---:|---:|---|
-| User Management Service | [`sanda2004/user-management-service:1.0.3`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | `localhost:5433` | [`collections/user-management-service.postman_collection.json`](collections/user-management-service.postman_collection.json) |
-| Battle Service | [`sanda2004/battle-service:1.0.2`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
+| Service | DockerHub image | API | Databases | Postman collection |
+|---|---|---:|---|---|
+| User Management Service | [`sanda2004/user-management-service:1.0.3`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | PostgreSQL on `localhost:5433` | [`collections/user-management-service.postman_collection.json`](collections/user-management-service.postman_collection.json) |
+| Battle Service | [`sanda2004/battle-service:1.0.2`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | PostgreSQL on `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
+| Map Service | [`grdz/map-service:1.0.3`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | Redis on `localhost:6380` | [`collections/map-service.postman_collection.json`](collections/map-service.postman_collection.json) |
+| Monster Raid Service | [`grdz/monster-raid-service:1.0.3`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | PostgreSQL on `localhost:5435`, Redis on `localhost:6381` | [`collections/monster-raid-service.postman_collection.json`](collections/monster-raid-service.postman_collection.json) |
 
 ### Requirements
 
 - Docker Engine or Docker Desktop with Docker Compose v2
-- Ports `5010`, `5020`, `5433`, and `5434` available, or different ports configured in `.env`
+- Ports `5010`, `5020`, `5030`, `5040`, `5433`, `5434`, `5435`, `6380`, and `6381` available, or different ports configured in `.env`
 - Internet access for the first pull from DockerHub
 
 ### Run the Services
@@ -1506,6 +1508,8 @@ The common Docker Compose deployment runs the User Management and Battle service
    ```bash
    curl http://localhost:5010/_health
    curl http://localhost:5020/_health
+   curl http://localhost:5030/health
+   curl http://localhost:5040/health
    docker compose ps
    ```
 
@@ -1515,13 +1519,15 @@ The common Docker Compose deployment runs the User Management and Battle service
    docker compose down
    ```
 
-The APIs use `/api/v1` as their base path. PostgreSQL data is stored in the named volumes `user-management-data` and `battle-data`; `docker compose down --volumes` intentionally deletes that persisted data.
+The APIs use `/api/v1` as their base path. The C# services answer health checks on `/_health` and the Go services on `/health`. Data is stored in the named volumes `user-management-data`, `battle-data`, `monster-raid-data`, `map-redis-data` and `monster-raid-redis-data`; `docker compose down --volumes` intentionally deletes that persisted data.
 
-Both services apply their ordered SQL migrations automatically with Evolve when they start.
+Every database and cache also publishes a host port, so they can be inspected directly with `psql` or `redis-cli`; each Redis instance requires its own password from `.env`, `MAP_REDIS_PASSWORD` and `MONSTER_RAID_REDIS_PASSWORD`. Both Go services serve their generated OpenAPI document at `/openapi.json` with a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs).
 
-The User Management Service mocks Package Registry validation and package registration. The Battle Service mocks User Management, Tamagotchi, Package Registry, and queue publishing dependencies. No other service is required for this Lab 1 deployment.
+The User Management and Battle services apply their ordered SQL migrations automatically with Evolve when they start, and the Monster Raid Service applies its own with goose. No database needs manual preparation.
 
-To run the Postman collections, import both JSON files from [`collections`](collections), keep their default `baseUrl` values, and set the private `jwtSigningKey` collection variable to the same value as `JWT_SIGNING_KEY` in the local `.env` file. Do not export or commit that value.
+The User Management Service mocks Package Registry validation and package registration. The Battle Service mocks User Management, Tamagotchi, Package Registry, and queue publishing dependencies. The Map Service mocks the User Management relationships it reads, and the Monster Raid Service mocks Guild and Package Registry. No other service is required for this Lab 1 deployment.
+
+To run the Postman collections, import the JSON files from [`collections`](collections) and keep their default `baseUrl` values. For the User Management and Battle collections, set the private `jwtSigningKey` collection variable to the same value as `JWT_SIGNING_KEY` in the local `.env` file; do not export or commit that value. The Map and Monster Raid collections need no key, because those services do not verify tokens yet and Monster Raid identifies the caller with the `X-User-ID` header until the gateway injects it from the JWT. Run them from top to bottom: starting a guild raid stores the new raid's identifier for the requests that follow.
 
 ## Service Ownership and Technology Stack
 

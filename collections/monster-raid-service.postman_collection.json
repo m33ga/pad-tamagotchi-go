@@ -1,0 +1,1050 @@
+{
+	"info": {
+		"_postman_id": "6cf1ea86-e8a2-4ee9-a9a2-aca14373393b",
+		"name": "Tamagotchi Go - Monster Raid Service",
+		"description": "Generated from the Monster Raid Service OpenAPI 3.1 document (`docs/openapi/openapi.json` in the service repository).\n\nStart the common Docker Compose deployment, then run the requests in order: starting a raid stores a fresh `guildId` and the returned `raidId` in collection variables, which every later request reuses. `scheduleId` is the schedule the mocked Package Registry Service serves, and the monster it configures has 1000 health with 25 damage per attack, so 40 attacks finish a raid.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Raids",
+			"item": [
+				{
+					"name": "Start a guild raid",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// A guild may only have one active raid, so every run uses a new guild.",
+									"pm.collectionVariables.set('guildId', pm.variables.replaceIn('{{$guid}}'));"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('raid created', () => pm.response.to.have.status(201));",
+									"",
+									"const raid = pm.response.json();",
+									"pm.collectionVariables.set('raidId', raid.raidId);"
+								]
+							}
+						}
+					],
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"description": "Correlation identifier; generated when absent",
+								"key": "X-Correlation-ID",
+								"value": "{{$guid}}",
+								"disabled": true
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"scheduleId\": \"{{scheduleId}}\"\n}",
+							"options": {
+								"raw": {
+									"headerFamily": "json",
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/guilds/:guildId/raids",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"guilds",
+								":guildId",
+								"raids"
+							],
+							"variable": [
+								{
+									"key": "guildId",
+									"value": "{{guildId}}",
+									"description": "Guild identifier"
+								}
+							]
+						},
+						"description": "Creates a raid from an active Package Registry schedule and snapshots its configuration, so later configuration changes cannot alter a running raid. A guild may only have one active raid."
+					},
+					"response": [
+						{
+							"name": "Created",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"scheduleId\": \"00000000-0000-0000-0000-0000000000aa\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/guilds/:guildId/raids",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"guilds",
+										":guildId",
+										"raids"
+									],
+									"variable": [
+										{
+											"key": "guildId",
+											"value": "{{guildId}}"
+										}
+									]
+								}
+							},
+							"status": "Created",
+							"code": 201,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"raidId\": \"8f6434c8-52bf-480d-965b-ff8dcbd54248\",\n  \"guildId\": \"39950923-4459-4527-9843-0886faaf57ab\",\n  \"scheduleId\": \"00000000-0000-0000-0000-0000000000aa\",\n  \"raidConfigurationId\": \"00000000-0000-0000-0000-0000000000cc\",\n  \"status\": \"ACTIVE\",\n  \"monster\": {\n    \"name\": \"Ancient Golem\",\n    \"spriteUrl\": \"https://storage.tamagotchi-go.local/sprites/ancient-golem.png\",\n    \"maximumHp\": 1000,\n    \"currentHp\": 1000,\n    \"weaknesses\": [\n      \"FIRE\"\n    ],\n    \"resistances\": [\n      \"WATER\"\n    ]\n  },\n  \"participantCount\": 0,\n  \"startsAt\": \"2026-09-23T12:00:00Z\",\n  \"endsAt\": \"2026-09-23T13:00:00Z\",\n  \"finishedAt\": null\n}"
+						},
+						{
+							"name": "ACTIVE_GUILD_RAID_EXISTS",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"scheduleId\": \"00000000-0000-0000-0000-0000000000aa\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/guilds/:guildId/raids",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"guilds",
+										":guildId",
+										"raids"
+									],
+									"variable": [
+										{
+											"key": "guildId",
+											"value": "{{guildId}}"
+										}
+									]
+								}
+							},
+							"status": "Conflict",
+							"code": 409,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"ACTIVE_GUILD_RAID_EXISTS\",\n    \"message\": \"The guild already has an active raid.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						},
+						{
+							"name": "SCHEDULE_NOT_ACTIVE",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"scheduleId\": \"00000000-0000-0000-0000-0000000000bb\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/guilds/:guildId/raids",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"guilds",
+										":guildId",
+										"raids"
+									],
+									"variable": [
+										{
+											"key": "guildId",
+											"value": "{{guildId}}"
+										}
+									]
+								}
+							},
+							"status": "Unprocessable Entity",
+							"code": 422,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"SCHEDULE_NOT_ACTIVE\",\n    \"message\": \"The schedule is not active.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					]
+				},
+				{
+					"name": "List the guild's raids",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/guilds/:guildId/raids?status=ACTIVE&limit=20",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"guilds",
+								":guildId",
+								"raids"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "ACTIVE",
+									"description": "Filter by lifecycle state: ACTIVE, SETTLING, COMPLETED or FAILED"
+								},
+								{
+									"key": "cursor",
+									"value": "",
+									"description": "Cursor returned by the previous page",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "20",
+									"description": "Maximum items per page"
+								}
+							],
+							"variable": [
+								{
+									"key": "guildId",
+									"value": "{{guildId}}",
+									"description": "Guild identifier"
+								}
+							]
+						},
+						"description": "Returns the guild's raids in creation order, optionally filtered by status."
+					},
+					"response": []
+				},
+				{
+					"name": "Get a raid",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/raids/:raidId",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"raids",
+								":raidId"
+							],
+							"variable": [
+								{
+									"key": "raidId",
+									"value": "{{raidId}}",
+									"description": "Raid identifier"
+								}
+							]
+						},
+						"description": "Returns the raid with its current monster state."
+					},
+					"response": [
+						{
+							"name": "RAID_NOT_FOUND",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Not Found",
+							"code": 404,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"RAID_NOT_FOUND\",\n    \"message\": \"The raid does not exist.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					]
+				},
+				{
+					"name": "Get the raid result",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/raids/:raidId/result",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"raids",
+								":raidId",
+								"result"
+							],
+							"variable": [
+								{
+									"key": "raidId",
+									"value": "{{raidId}}",
+									"description": "Raid identifier"
+								}
+							]
+						},
+						"description": "Returns the outcome of a finished raid. Rewards stay empty until reward settlement is implemented.\n\nAnswers 409 RAID_NOT_FINISHED until the monster is defeated, which takes 40 attacks with the mocked configuration."
+					},
+					"response": [
+						{
+							"name": "OK",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/result",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"result"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"raidId\": \"8f6434c8-52bf-480d-965b-ff8dcbd54248\",\n  \"status\": \"COMPLETED\",\n  \"totalDamage\": 1000,\n  \"rewards\": [],\n  \"finishedAt\": \"2026-09-23T12:08:03Z\"\n}"
+						},
+						{
+							"name": "RAID_NOT_FINISHED",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/result",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"result"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Conflict",
+							"code": 409,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"RAID_NOT_FINISHED\",\n    \"message\": \"The raid is not finished.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "Participants",
+			"item": [
+				{
+					"name": "Join a raid",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('participant joined', () => pm.response.to.have.status(201));"
+								]
+							}
+						}
+					],
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"description": "Calling user; injected by the gateway from the JWT in a later lab",
+								"key": "X-User-ID",
+								"value": "{{userId}}"
+							},
+							{
+								"description": "Correlation identifier; generated when absent",
+								"key": "X-Correlation-ID",
+								"value": "{{$guid}}",
+								"disabled": true
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"primaryTamagotchiId\": \"{{tamagotchiId}}\"\n}",
+							"options": {
+								"raw": {
+									"headerFamily": "json",
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/raids/:raidId/participants",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"raids",
+								":raidId",
+								"participants"
+							],
+							"variable": [
+								{
+									"key": "raidId",
+									"value": "{{raidId}}",
+									"description": "Raid identifier"
+								}
+							]
+						},
+						"description": "Adds the calling guild member to an active raid with their primary Tamagotchi."
+					},
+					"response": [
+						{
+							"name": "Created",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "X-User-ID",
+										"value": "{{userId}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"primaryTamagotchiId\": \"{{tamagotchiId}}\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/participants",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"participants"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Created",
+							"code": 201,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"raidId\": \"8f6434c8-52bf-480d-965b-ff8dcbd54248\",\n  \"userId\": \"40ab3082-433f-4018-8f8f-e25e3b544a04\",\n  \"tamagotchiId\": \"0db0a7c5-399e-4c0b-bbbe-96f3b30b108a\",\n  \"damageDealt\": 0,\n  \"joinedAt\": \"2026-09-23T12:00:58Z\"\n}"
+						},
+						{
+							"name": "NOT_GUILD_MEMBER",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"description": "The user the mocked Guild Service reports as an outsider",
+										"key": "X-User-ID",
+										"value": "00000000-0000-0000-0000-0000000000ee"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"primaryTamagotchiId\": \"{{tamagotchiId}}\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/participants",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"participants"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Forbidden",
+							"code": 403,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"NOT_GUILD_MEMBER\",\n    \"message\": \"The user is not a member of the raid's guild.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						},
+						{
+							"name": "PARTICIPANT_EXISTS",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "X-User-ID",
+										"value": "{{userId}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"primaryTamagotchiId\": \"{{tamagotchiId}}\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/participants",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"participants"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Conflict",
+							"code": 409,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"PARTICIPANT_EXISTS\",\n    \"message\": \"The user already joined the raid.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					]
+				},
+				{
+					"name": "List raid participants",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/raids/:raidId/participants?limit=20",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"raids",
+								":raidId",
+								"participants"
+							],
+							"query": [
+								{
+									"key": "cursor",
+									"value": "",
+									"description": "Cursor returned by the previous page",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "20",
+									"description": "Maximum items per page"
+								}
+							],
+							"variable": [
+								{
+									"key": "raidId",
+									"value": "{{raidId}}",
+									"description": "Raid identifier"
+								}
+							]
+						},
+						"description": "Returns the raid's participants in join order with their accumulated damage."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Attacks",
+			"item": [
+				{
+					"name": "Attack the monster",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('attack applied', () => pm.response.to.have.status(200));",
+									"",
+									"const attack = pm.response.json();",
+									"console.log(`monster at ${attack.monsterCurrentHp} hp, raid ${attack.raidStatus}`);"
+								]
+							}
+						}
+					],
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"description": "Calling user; injected by the gateway from the JWT in a later lab",
+								"key": "X-User-ID",
+								"value": "{{userId}}"
+							},
+							{
+								"description": "Correlation identifier; generated when absent",
+								"key": "X-Correlation-ID",
+								"value": "{{$guid}}",
+								"disabled": true
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"actionId\": \"{{$guid}}\",\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"performedAt\": \"{{$isoTimestamp}}\"\n}",
+							"options": {
+								"raw": {
+									"headerFamily": "json",
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/raids/:raidId/attacks",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"raids",
+								":raidId",
+								"attacks"
+							],
+							"variable": [
+								{
+									"key": "raidId",
+									"value": "{{raidId}}",
+									"description": "Raid identifier"
+								}
+							]
+						},
+						"description": "Applies one attack to the raid monster. The action identifier deduplicates retries, and the server calculates the damage itself. The raid completes when the monster reaches zero health.\n\nEach run sends a new `actionId`; repeating the same one answers 409 ATTACK_ALREADY_PROCESSED."
+					},
+					"response": [
+						{
+							"name": "OK",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "X-User-ID",
+										"value": "{{userId}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"actionId\": \"0824160c-4a20-4580-939a-ec89b95986c5\",\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"performedAt\": \"2026-09-23T12:01:00Z\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/attacks",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"attacks"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"actionId\": \"0824160c-4a20-4580-939a-ec89b95986c5\",\n  \"damage\": 25,\n  \"monsterCurrentHp\": 975,\n  \"raidStatus\": \"ACTIVE\",\n  \"processedAt\": \"2026-09-23T12:01:00Z\"\n}"
+						},
+						{
+							"name": "ATTACK_ALREADY_PROCESSED",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "X-User-ID",
+										"value": "{{userId}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"actionId\": \"0824160c-4a20-4580-939a-ec89b95986c5\",\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"performedAt\": \"2026-09-23T12:01:00Z\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/attacks",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"attacks"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Conflict",
+							"code": 409,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"ATTACK_ALREADY_PROCESSED\",\n    \"message\": \"The attack action was already processed.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						},
+						{
+							"name": "NOT_RAID_PARTICIPANT",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "X-User-ID",
+										"value": "9f1d9d32-1a2a-4a0e-9a6d-8c5d3f2a1b77"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"actionId\": \"9b2a7f0e-2c3d-4f5a-8b6c-1d2e3f4a5b6c\",\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"performedAt\": \"2026-09-23T12:01:00Z\"\n}",
+									"options": {
+										"raw": {
+											"headerFamily": "json",
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/attacks",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"attacks"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Forbidden",
+							"code": 403,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"NOT_RAID_PARTICIPANT\",\n    \"message\": \"The user has not joined the raid with this Tamagotchi.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					]
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5040/api/v1",
+			"type": "string"
+		},
+		{
+			"key": "scheduleId",
+			"value": "00000000-0000-0000-0000-0000000000aa",
+			"type": "string"
+		},
+		{
+			"key": "userId",
+			"value": "40ab3082-433f-4018-8f8f-e25e3b544a04",
+			"type": "string"
+		},
+		{
+			"key": "tamagotchiId",
+			"value": "0db0a7c5-399e-4c0b-bbbe-96f3b30b108a",
+			"type": "string"
+		},
+		{
+			"key": "guildId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "raidId",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

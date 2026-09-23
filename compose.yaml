@@ -65,6 +65,101 @@ services:
       timeout: 5s
       retries: 10
 
+  map-api:
+    image: grdz/map-service:1.0.3
+    pull_policy: always
+    env_file:
+      - .env
+    environment:
+      REDIS_ADDR: map-redis:6379
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
+    ports:
+      - "${MAP_API_PORT:-5030}:8080"
+    depends_on:
+      map-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  map-redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--requirepass", "${MAP_REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${MAP_REDIS_PASSWORD}
+    ports:
+      - "${MAP_REDIS_PUBLISHED_PORT:-6380}:6379"
+    volumes:
+      - map-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  monster-raid-api:
+    image: grdz/monster-raid-service:1.0.3
+    pull_policy: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: monster-raid-db
+      POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
+      POSTGRES_USER: ${MONSTER_RAID_DB_USER}
+      POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
+      REDIS_ADDR: monster-raid-redis:6379
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
+    ports:
+      - "${MONSTER_RAID_API_PORT:-5040}:8080"
+    depends_on:
+      monster-raid-db:
+        condition: service_healthy
+      monster-raid-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  monster-raid-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
+      POSTGRES_USER: ${MONSTER_RAID_DB_USER}
+      POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
+    ports:
+      - "${MONSTER_RAID_DB_PUBLISHED_PORT:-5435}:5432"
+    volumes:
+      - monster-raid-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  monster-raid-redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--requirepass", "${MONSTER_RAID_REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${MONSTER_RAID_REDIS_PASSWORD}
+    ports:
+      - "${MONSTER_RAID_REDIS_PUBLISHED_PORT:-6381}:6379"
+    volumes:
+      - monster-raid-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   user-management-data:
   battle-data:
+  map-redis-data:
+  monster-raid-data:
+  monster-raid-redis-data:
