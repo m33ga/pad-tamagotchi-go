@@ -1521,7 +1521,7 @@ The common Docker Compose deployment runs the User Management, Battle, Map and M
 
 The APIs use `/api/v1` as their base path. The C# services answer health checks on `/_health` and the Go services on `/health`. Data is stored in the named volumes `user-management-data`, `battle-data`, `monster-raid-data`, `map-redis-data` and `monster-raid-redis-data`; `docker compose down --volumes` intentionally deletes that persisted data.
 
-Every database and cache also publishes a host port, so they can be inspected directly with `psql` or `redis-cli`; both Redis instances require the `REDIS_PASSWORD` from `.env`. Both Go services serve their generated OpenAPI document at `/openapi.json` with a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs).
+Every database and cache also publishes a host port, so they can be inspected directly with `psql` or `redis-cli`; each Redis instance requires its own password from `.env`, `MAP_REDIS_PASSWORD` and `MONSTER_RAID_REDIS_PASSWORD`. Both Go services serve their generated OpenAPI document at `/openapi.json` with a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs).
 
 The User Management and Battle services apply their ordered SQL migrations automatically with Evolve when they start, and the Monster Raid Service applies its own with goose. No database needs manual preparation.
 

@@ -72,6 +72,7 @@ services:
       - .env
     environment:
       REDIS_ADDR: map-redis:6379
+      REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
     ports:
       - "${MAP_API_PORT:-5030}:8080"
     depends_on:
@@ -86,9 +87,9 @@ services:
 
   map-redis:
     image: redis:8-alpine
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    command: ["redis-server", "--requirepass", "${MAP_REDIS_PASSWORD}"]
     environment:
-      REDISCLI_AUTH: ${REDIS_PASSWORD}
+      REDISCLI_AUTH: ${MAP_REDIS_PASSWORD}
     ports:
       - "${MAP_REDIS_PUBLISHED_PORT:-6380}:6379"
     volumes:
@@ -110,6 +111,7 @@ services:
       POSTGRES_USER: ${MONSTER_RAID_DB_USER}
       POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
       REDIS_ADDR: monster-raid-redis:6379
+      REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
     ports:
       - "${MONSTER_RAID_API_PORT:-5040}:8080"
     depends_on:
@@ -142,9 +144,9 @@ services:
 
   monster-raid-redis:
     image: redis:8-alpine
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    command: ["redis-server", "--requirepass", "${MONSTER_RAID_REDIS_PASSWORD}"]
     environment:
-      REDISCLI_AUTH: ${REDIS_PASSWORD}
+      REDISCLI_AUTH: ${MONSTER_RAID_REDIS_PASSWORD}
     ports:
       - "${MONSTER_RAID_REDIS_PUBLISHED_PORT:-6381}:6379"
     volumes:
