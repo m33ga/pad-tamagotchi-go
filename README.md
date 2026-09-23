@@ -1475,8 +1475,8 @@ The common Docker Compose deployment runs the User Management and Battle service
 
 | Service | DockerHub image | API | PostgreSQL | Postman collection |
 |---|---|---:|---:|---|
-| User Management Service | [`sanda2004/user-management-service:1.0.1`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | `localhost:5433` | [`collections/user-management-service.postman_collection.json`](collections/user-management-service.postman_collection.json) |
-| Battle Service | [`sanda2004/battle-service:1.0.0`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
+| User Management Service | [`sanda2004/user-management-service:1.0.3`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | `localhost:5433` | [`collections/user-management-service.postman_collection.json`](collections/user-management-service.postman_collection.json) |
+| Battle Service | [`sanda2004/battle-service:1.0.2`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
 
 ### Requirements
 
