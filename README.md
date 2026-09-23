@@ -1517,7 +1517,7 @@ The common Docker Compose deployment runs the User Management and Battle service
 
 The APIs use `/api/v1` as their base path. PostgreSQL data is stored in the named volumes `user-management-data` and `battle-data`; `docker compose down --volumes` intentionally deletes that persisted data.
 
-Both services apply their ordered SQL migrations automatically with Evolve. Copies of the database scripts are available in [`database/user-management`](database/user-management) and [`database/battle`](database/battle).
+Both services apply their ordered SQL migrations automatically with Evolve when they start.
 
 The User Management Service mocks Package Registry validation and package registration. The Battle Service mocks User Management, Tamagotchi, Package Registry, and queue publishing dependencies. No other service is required for this Lab 1 deployment.
 
