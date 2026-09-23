@@ -1556,7 +1556,7 @@ To run the Postman collections, import the JSON files from [`collections`](colle
 | Battle Service | [Crudu Alexandra](https://github.com/crudualexandra) | C# | PostgreSQL |
 | Map Service | [Gurduza Mihai](https://github.com/m33ga) | Go | Redis |
 | Guild Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
-| Monster Raid Service | [Gurduza Mihai](https://github.com/m33ga) | Go | Redis |
+| Monster Raid Service | [Gurduza Mihai](https://github.com/m33ga) | Go | PostgreSQL, Redis |
 | Package Registry Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
 | Notification Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | Redis |
 
@@ -1600,7 +1600,7 @@ The Guild Service manages guilds, memberships, roles, permissions and guild chat
 
 The Monster Raid Service manages cooperative raids, including monster health, participants, damage, raid duration and rewards.
 
-**Redis** is used for the frequently changing raid state, such as monster HP, participants and active raid status.
+**PostgreSQL** is used because raids, participants, attacks and rewards must survive restarts and settle consistently. **Redis** keeps only the live monster HP, where concurrent attacks need fast atomic updates.
 
 ### Package Registry Service
 
@@ -1620,7 +1620,7 @@ Go is used for lightweight distributed services that require efficient concurren
 
 ### PostgreSQL
 
-PostgreSQL is used when data has a strong relational structure and requires transactional consistency. It is used by User Management, Tamagotchi, Battle, Guild and Package Registry services. PostgreSQL also supports flexible and less-structured data through JSON/JSONB fields, allowing services to store package-specific attributes without requiring a separate document database.
+PostgreSQL is used when data has a strong relational structure and requires transactional consistency. It is used by User Management, Tamagotchi, Battle, Guild, Monster Raid and Package Registry services. PostgreSQL also supports flexible and less-structured data through JSON/JSONB fields, allowing services to store package-specific attributes without requiring a separate document database.
 
 ### Redis
 
