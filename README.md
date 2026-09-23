@@ -1477,13 +1477,13 @@ The common Docker Compose deployment runs the User Management, Battle, Map and M
 |---|---|---:|---|---|
 | User Management Service | [`sanda2004/user-management-service:1.0.3`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | PostgreSQL on `localhost:5433` | [`collections/user-management-service.postman_collection.json`](collections/user-management-service.postman_collection.json) |
 | Battle Service | [`sanda2004/battle-service:1.0.2`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | PostgreSQL on `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
-| Map Service | [`grdz/map-service:1.0.3`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | Redis, internal to the deployment | [`collections/map-service.postman_collection.json`](collections/map-service.postman_collection.json) |
-| Monster Raid Service | [`grdz/monster-raid-service:1.0.3`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | PostgreSQL and Redis, internal to the deployment | [`collections/monster-raid-service.postman_collection.json`](collections/monster-raid-service.postman_collection.json) |
+| Map Service | [`grdz/map-service:1.0.3`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | Redis on `localhost:6380` | [`collections/map-service.postman_collection.json`](collections/map-service.postman_collection.json) |
+| Monster Raid Service | [`grdz/monster-raid-service:1.0.3`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | PostgreSQL on `localhost:5435`, Redis on `localhost:6381` | [`collections/monster-raid-service.postman_collection.json`](collections/monster-raid-service.postman_collection.json) |
 
 ### Requirements
 
 - Docker Engine or Docker Desktop with Docker Compose v2
-- Ports `5010`, `5020`, `5030`, `5040`, `5433`, and `5434` available, or different ports configured in `.env`
+- Ports `5010`, `5020`, `5030`, `5040`, `5433`, `5434`, `5435`, `6380`, and `6381` available, or different ports configured in `.env`
 - Internet access for the first pull from DockerHub
 
 ### Run the Services
@@ -1521,7 +1521,7 @@ The common Docker Compose deployment runs the User Management, Battle, Map and M
 
 The APIs use `/api/v1` as their base path. The C# services answer health checks on `/_health` and the Go services on `/health`. Data is stored in the named volumes `user-management-data`, `battle-data`, `monster-raid-data`, `map-redis-data` and `monster-raid-redis-data`; `docker compose down --volumes` intentionally deletes that persisted data.
 
-Only the four APIs publish a host port. The Map and Monster Raid databases stay inside the deployment network, and both Go services serve their generated OpenAPI document at `/openapi.json` with a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs).
+Every database and cache also publishes a host port, so they can be inspected directly with `psql` or `redis-cli`; both Redis instances require the `REDIS_PASSWORD` from `.env`. Both Go services serve their generated OpenAPI document at `/openapi.json` with a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs).
 
 The User Management and Battle services apply their ordered SQL migrations automatically with Evolve when they start, and the Monster Raid Service applies its own with goose. No database needs manual preparation.
 
