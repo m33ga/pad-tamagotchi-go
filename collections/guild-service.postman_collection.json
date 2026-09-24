@@ -52,7 +52,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Codex Keep\",\n  \"description\": \"A guild created by the Lab 1 Postman collection.\",\n  \"requiredPackageId\": null\n}",
+              "raw": "{\n  \"name\": \"Lab Guild {{$guid}}\",\n  \"description\": \"A guild created by the Lab 1 Postman collection.\",\n  \"requiredPackageId\": null\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -68,8 +68,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
-                  "const data = pm.response.json();",
-                  "pm.collectionVariables.set(\"guildId\", data.guildId);"
+                  "var createdGuild = pm.response.json();",
+                  "pm.collectionVariables.set(\"guildId\", createdGuild.guildId);"
                 ]
               }
             }
@@ -308,8 +308,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
-                  "const data = pm.response.json();",
-                  "pm.collectionVariables.set(\"invitationId\", data.invitationId);"
+                  "var createdInvitation = pm.response.json();",
+                  "pm.collectionVariables.set(\"invitationId\", createdInvitation.invitationId);"
                 ]
               }
             }

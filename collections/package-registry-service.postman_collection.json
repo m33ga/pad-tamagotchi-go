@@ -72,8 +72,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
-                  "const data = pm.response.json();",
-                  "pm.collectionVariables.set(\"packageId\", data.packageId);"
+                  "var createdPackage = pm.response.json();",
+                  "pm.collectionVariables.set(\"packageId\", createdPackage.packageId);"
                 ]
               }
             }
@@ -641,8 +641,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
-                  "const data = pm.response.json();",
-                  "pm.collectionVariables.set(\"raidConfigurationId\", data.raidConfigurationId);"
+                  "var createdRaidConfiguration = pm.response.json();",
+                  "pm.collectionVariables.set(\"raidConfigurationId\", createdRaidConfiguration.raidConfigurationId);"
                 ]
               }
             }
@@ -809,8 +809,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
-                  "const data = pm.response.json();",
-                  "pm.collectionVariables.set(\"scheduleId\", data.scheduleId);"
+                  "var createdRaidSchedule = pm.response.json();",
+                  "pm.collectionVariables.set(\"scheduleId\", createdRaidSchedule.scheduleId);"
                 ]
               }
             }
