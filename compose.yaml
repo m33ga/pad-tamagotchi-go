@@ -162,7 +162,7 @@ services:
     pull_policy: always
     environment:
       PORT: ${GUILD_API_PORT}
-      DATABASE_URL: ${GUILD_DATABASE_URL}
+      DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
       MOCK_EXTERNAL_SERVICES: "true"
     ports:
       - "${GUILD_API_PORT}:${GUILD_API_PORT}"
@@ -197,7 +197,7 @@ services:
     pull_policy: always
     environment:
       PORT: ${PACKAGE_REGISTRY_API_PORT}
-      DATABASE_URL: ${PACKAGE_REGISTRY_DATABASE_URL}
+      DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
     ports:
       - "${PACKAGE_REGISTRY_API_PORT}:${PACKAGE_REGISTRY_API_PORT}"
     depends_on:
