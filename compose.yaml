@@ -157,9 +157,82 @@ services:
       timeout: 5s
       retries: 10
 
+  guild-api:
+    image: cosmak47/pad-guild-service:0.1.0
+    pull_policy: always
+    environment:
+      PORT: "8081"
+      DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
+      MOCK_EXTERNAL_SERVICES: "true"
+    ports:
+      - "${GUILD_API_PORT:-8081}:8081"
+    depends_on:
+      guild-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  guild-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${GUILD_DB_NAME}
+      POSTGRES_USER: ${GUILD_DB_USER}
+      POSTGRES_PASSWORD: ${GUILD_DB_PASSWORD}
+    ports:
+      - "${GUILD_DB_PUBLISHED_PORT:-5436}:5432"
+    volumes:
+      - guild-data:/var/lib/postgresql/data
+      - ./db/guild/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  package-registry-api:
+    image: cosmak47/pad-package-registry-service:0.1.0
+    pull_policy: always
+    environment:
+      PORT: "8082"
+      DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
+    ports:
+      - "${PACKAGE_REGISTRY_API_PORT:-8082}:8082"
+    depends_on:
+      package-registry-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  package-registry-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${PACKAGE_REGISTRY_DB_NAME}
+      POSTGRES_USER: ${PACKAGE_REGISTRY_DB_USER}
+      POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD}
+    ports:
+      - "${PACKAGE_REGISTRY_DB_PUBLISHED_PORT:-5437}:5432"
+    volumes:
+      - package-registry-data:/var/lib/postgresql/data
+      - ./db/package-registry/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   user-management-data:
   battle-data:
   map-redis-data:
   monster-raid-data:
   monster-raid-redis-data:
+  guild-data:
+  package-registry-data:
