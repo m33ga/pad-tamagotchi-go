@@ -1,0 +1,809 @@
+{
+  "info": {
+    "name": "Tamagotchi Go - Tamagotchi Service",
+    "description": "Tamagotchi Service endpoints: creature lifecycle, roster and primary selection, combat profile, XP grants and ownership transfers.\n\nRun the folders in order. \"1. Combat Types\" needs no state; \"2. Tamagotchis\" creates a creature and stores its id for the folders that follow.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{ownerAccessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5030/api/v1"
+    },
+    {
+      "key": "ownerUserId",
+      "value": ""
+    },
+    {
+      "key": "winnerUserId",
+      "value": ""
+    },
+    {
+      "key": "packageId",
+      "value": ""
+    },
+    {
+      "key": "tamagotchiId",
+      "value": ""
+    },
+    {
+      "key": "secondaryTamagotchiId",
+      "value": ""
+    },
+    {
+      "key": "ownerAccessToken",
+      "value": ""
+    },
+    {
+      "key": "battleReferenceId",
+      "value": ""
+    },
+    {
+      "key": "raidReferenceId",
+      "value": ""
+    },
+    {
+      "key": "transferReferenceId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Combat Types",
+      "item": [
+        {
+          "name": "List combat types",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchi-combat-types",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Returns the six predefined types\", () => pm.expect(body).to.have.lengthOf(6));",
+                  "pm.test(\"Each type declares what it beats\", () => body.forEach(it => {",
+                  "    pm.expect(it).to.have.property(\"type\");",
+                  "    pm.expect(it).to.have.property(\"strongAgainst\");",
+                  "}));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Tamagotchis",
+      "item": [
+        {
+          "name": "Create tamagotchi",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerUserId\": \"{{ownerUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Blaze\",\n  \"combatType\": \"FLAME\",\n  \"spriteUrl\": \"https://cdn.example.com/sprites/blaze.png\",\n  \"healthStats\": {\n    \"hunger\": 20,\n    \"tiredness\": 10,\n    \"happiness\": 80\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('ownerUserId')) {",
+                  "    pm.collectionVariables.set('ownerUserId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
+                  "if (!pm.collectionVariables.get('packageId')) {",
+                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set(\"tamagotchiId\", body.tamagotchiId);",
+                  "pm.test(\"First creature is the primary one\", () => pm.expect(body.ownershipRole).to.eql(\"PRIMARY\"));",
+                  "pm.test(\"Starts at level 1 with no XP\", () => {",
+                  "    pm.expect(body.level).to.eql(1);",
+                  "    pm.expect(body.xp).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get tamagotchi",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Returns the requested creature\", () => pm.expect(body.tamagotchiId).to.eql(pm.collectionVariables.get(\"tamagotchiId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update tamagotchi",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Blaze the Brave\",\n  \"spriteUrl\": \"https://cdn.example.com/sprites/blaze-v2.png\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Name is updated\", () => pm.expect(pm.response.json().name).to.eql(\"Blaze the Brave\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update health stats",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/health-stats",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stats\": {\n    \"hunger\": 55\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Supplied stat is applied\", () => pm.expect(body.healthStats.hunger).to.eql(55));",
+                  "pm.test(\"Untouched stats are preserved\", () => pm.expect(body.healthStats.happiness).to.eql(80));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update health stats - unknown key",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/health-stats",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stats\": {\n    \"notARealStat\": 1\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"Rejected as invalid local stats\", () => pm.expect(pm.response.json().error.code).to.eql(\"INVALID_LOCAL_STATS\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get tamagotchi - not found",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/00000000-0000-0000-0000-000000000000",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Reports the creature is missing\", () => pm.expect(pm.response.json().error.code).to.eql(\"TAMAGOTCHI_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. User Roster",
+      "item": [
+        {
+          "name": "List user tamagotchis",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/tamagotchis",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Owner has at least one creature\", () => pm.expect(pm.response.json()).to.be.an(\"array\").that.is.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List user tamagotchis - primary only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/tamagotchis?role=PRIMARY",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Every result is primary\", () => pm.response.json().forEach(it => pm.expect(it.ownershipRole).to.eql(\"PRIMARY\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List user tamagotchis - invalid role",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/tamagotchis?role=NOT_A_ROLE",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Reports an invalid role\", () => pm.expect(pm.response.json().error.code).to.eql(\"INVALID_ROLE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get primary tamagotchi",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/primary-tamagotchi",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Returned creature is primary\", () => pm.expect(pm.response.json().ownershipRole).to.eql(\"PRIMARY\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set primary tamagotchi",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/primary-tamagotchi",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tamagotchiId\": \"{{tamagotchiId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Selected creature is now primary\", () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.tamagotchiId).to.eql(pm.collectionVariables.get(\"tamagotchiId\"));",
+                  "    pm.expect(body.ownershipRole).to.eql(\"PRIMARY\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Combat Profile",
+      "item": [
+        {
+          "name": "Get combat profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/combat-profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Carries what combat needs\", () => {",
+                  "    pm.expect(body).to.have.property(\"combatType\");",
+                  "    pm.expect(body).to.have.property(\"level\");",
+                  "    pm.expect(body).to.have.property(\"healthStats\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. XP Grants",
+      "item": [
+        {
+          "name": "Grant XP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/xp-grants",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 120,\n  \"source\": \"BATTLE\",\n  \"referenceId\": \"{{battleReferenceId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('battleReferenceId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"XP is accumulated\", () => pm.expect(body.totalXp).to.be.at.least(120));",
+                  "pm.test(\"Level reflects the new total\", () => pm.expect(body.newLevel).to.be.at.least(body.previousLevel));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Grant XP - replayed reference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/xp-grants",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 120,\n  \"source\": \"BATTLE\",\n  \"referenceId\": \"{{battleReferenceId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"Same reference is not granted twice\", () => pm.expect(pm.response.json().error.code).to.eql(\"XP_ALREADY_GRANTED\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Ownership Transfers",
+      "item": [
+        {
+          "name": "Transfer ownership",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchi-ownership-transfers",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"fromUserId\": \"{{ownerUserId}}\",\n  \"toUserId\": \"{{winnerUserId}}\",\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{transferReferenceId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('winnerUserId')) {",
+                  "    pm.collectionVariables.set('winnerUserId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
+                  "pm.collectionVariables.set('transferReferenceId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Winner receives it as secondary\", () => pm.expect(body.newOwnershipRole).to.eql(\"SECONDARY\"));",
+                  "pm.test(\"Transfer records both sides\", () => {",
+                  "    pm.expect(body.fromUserId).to.eql(pm.collectionVariables.get(\"ownerUserId\"));",
+                  "    pm.expect(body.toUserId).to.eql(pm.collectionVariables.get(\"winnerUserId\"));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transfer ownership - replayed reference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchi-ownership-transfers",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"fromUserId\": \"{{ownerUserId}}\",\n  \"toUserId\": \"{{winnerUserId}}\",\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{transferReferenceId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"Same battle cannot transfer twice\", () => pm.expect(pm.response.json().error.code).to.eql(\"OWNERSHIP_ALREADY_TRANSFERRED\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
