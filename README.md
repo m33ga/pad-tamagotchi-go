@@ -1471,7 +1471,7 @@ Lab release process:
 
 ## Lab 1 Deployment
 
-The common Docker Compose deployment runs the User Management, Battle, Map and Monster Raid services from their public, versioned DockerHub images. It does not build from any private service repository.
+The common Docker Compose deployment runs the User Management, Battle, Map, Monster Raid, Tamagotchi and Notification services from their public, versioned DockerHub images. It does not build from any private service repository.
 
 | Service | DockerHub image | API | Databases | Postman collection |
 |---|---|---:|---|---|
@@ -1479,6 +1479,8 @@ The common Docker Compose deployment runs the User Management, Battle, Map and M
 | Battle Service | [`sanda2004/battle-service:1.0.2`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | PostgreSQL on `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
 | Map Service | [`grdz/map-service:1.0.3`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | Redis on `localhost:6380` | [`collections/map-service.postman_collection.json`](collections/map-service.postman_collection.json) |
 | Monster Raid Service | [`grdz/monster-raid-service:1.0.3`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | PostgreSQL on `localhost:5435`, Redis on `localhost:6381` | [`collections/monster-raid-service.postman_collection.json`](collections/monster-raid-service.postman_collection.json) |
+| Tamagotchi Service | [`johnnyc05/pad-tamagotchi-service:v1.0.1`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:5050` | PostgreSQL on `localhost:5436` | [`collections/tamagotchi-service.postman_collection.json`](collections/tamagotchi-service.postman_collection.json) |
+| Notification Service | [`johnnyc05/pad-notification-service:v1.0.0`](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `http://localhost:5060` | PostgreSQL on `localhost:5437`, Redis on `localhost:6382` | |
 
 ### Requirements
 
