@@ -161,16 +161,16 @@ services:
     image: cosmak47/pad-guild-service:0.1.0
     pull_policy: always
     environment:
-      PORT: "8081"
-      DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
+      PORT: ${GUILD_API_PORT}
+      DATABASE_URL: ${GUILD_DATABASE_URL}
       MOCK_EXTERNAL_SERVICES: "true"
     ports:
-      - "${GUILD_API_PORT:-8081}:8081"
+      - "${GUILD_API_PORT}:${GUILD_API_PORT}"
     depends_on:
       guild-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8081/healthz"]
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:${GUILD_API_PORT}/healthz"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -186,7 +186,6 @@ services:
       - "${GUILD_DB_PUBLISHED_PORT:-5436}:5432"
     volumes:
       - guild-data:/var/lib/postgresql/data
-      - ./db/guild/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -197,15 +196,15 @@ services:
     image: cosmak47/pad-package-registry-service:0.1.0
     pull_policy: always
     environment:
-      PORT: "8082"
-      DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
+      PORT: ${PACKAGE_REGISTRY_API_PORT}
+      DATABASE_URL: ${PACKAGE_REGISTRY_DATABASE_URL}
     ports:
-      - "${PACKAGE_REGISTRY_API_PORT:-8082}:8082"
+      - "${PACKAGE_REGISTRY_API_PORT}:${PACKAGE_REGISTRY_API_PORT}"
     depends_on:
       package-registry-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8082/healthz"]
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:${PACKAGE_REGISTRY_API_PORT}/healthz"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -221,7 +220,6 @@ services:
       - "${PACKAGE_REGISTRY_DB_PUBLISHED_PORT:-5437}:5432"
     volumes:
       - package-registry-data:/var/lib/postgresql/data
-      - ./db/package-registry/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
