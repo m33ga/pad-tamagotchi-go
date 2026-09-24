@@ -250,7 +250,7 @@
               },
               {
                 "key": "Idempotency-Key",
-                "value": "{{registrationIdempotencyKey}}"
+                "value": "{{$guid}}"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/registrations",
@@ -793,7 +793,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"raidConfigurationId\": \"{{raidConfigurationId}}\",\n  \"startsAt\": \"2027-01-01T10:00:00Z\",\n  \"endsAt\": \"2027-01-01T11:00:00Z\"\n}",
+              "raw": "{\n  \"raidConfigurationId\": \"{{raidConfigurationId}}\",\n  \"startsAt\": \"{{raidStartsAt}}\",\n  \"endsAt\": \"{{raidEndsAt}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -803,6 +803,20 @@
           },
           "response": [],
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "(function () {",
+                  "  var raidStart = new Date(Date.now() + 60 * 60 * 1000);",
+                  "  var raidEnd = new Date(raidStart.getTime() + 60 * 60 * 1000);",
+                  "  pm.variables.set(\"raidStartsAt\", raidStart.toISOString());",
+                  "  pm.variables.set(\"raidEndsAt\", raidEnd.toISOString());",
+                  "}());"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -933,6 +947,54 @@
               }
             }
           ]
+        },
+        {
+          "name": "Cancel raid schedule",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"CANCELLED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
         }
       ]
     }
@@ -961,10 +1023,6 @@
     {
       "key": "registeredUserId",
       "value": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
-    },
-    {
-      "key": "registrationIdempotencyKey",
-      "value": "lab1-registration-0001"
     },
     {
       "key": "packageId",
