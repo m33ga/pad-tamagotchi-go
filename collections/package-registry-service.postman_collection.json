@@ -1,0 +1,982 @@
+{
+  "info": {
+    "_postman_id": "a269e2ca-46c1-4f04-b01e-8958f7b31368",
+    "name": "Tamagotchi Go - Package Registry Service",
+    "description": "Executable Lab 1 collection for the Package Registry Service HTTP contract, including raid configuration and scheduling. Start the common Docker Compose deployment, then run the folders and requests in order. Bearer tokens and X-User-Role headers use the mocked identities and roles documented by the service.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Package Registry Service",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{registryBaseUrl}}/healthz"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create package",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Lab {{$guid}}\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Package created by the Lab 1 collection.\",\n  \"developerIds\": [\n    \"{{developerUserId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set(\"packageId\", data.packageId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List packages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{registryBaseUrl}}/api/v1/packages?status=DRAFT&limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get package",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update package",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "DEVELOPER"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{developerUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": \"1.1.0\",\n  \"description\": \"Updated through Postman.\",\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add moderator",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "DEVELOPER"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/moderators",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{developerUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{moderatorUserId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register user for package",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "SERVICE"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{registrationIdempotencyKey}}"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/registrations",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{serviceUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{registeredUserId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get package registration",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "SERVICE"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/registrations/{{registeredUserId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{serviceUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List user's registrations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "SERVICE"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/users/{{registeredUserId}}/package-registrations",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{serviceUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Replace stat definitions",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "DEVELOPER"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/stat-definitions",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{developerUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"definitions\": [\n    {\n      \"key\": \"hunger\",\n      \"displayName\": \"Hunger\",\n      \"valueType\": \"INTEGER\",\n      \"minimumValue\": 0,\n      \"maximumValue\": 100,\n      \"combatBonusRules\": [\n        {\n          \"operator\": \"LTE\",\n          \"threshold\": 20,\n          \"bonusType\": \"ATTACK\",\n          \"modifier\": -5\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get stat definitions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "SERVICE"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/stat-definitions",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{serviceUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Replace battle boosts",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "DEVELOPER"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{developerUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"boosts\": [\n    {\n      \"key\": \"power_snack\",\n      \"displayName\": \"Power Snack\",\n      \"affectedStat\": \"ATTACK\",\n      \"modifier\": 10,\n      \"maxUsesPerBattle\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get battle boosts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "SERVICE"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{serviceUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get battle boost by key",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "SERVICE"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts/power_snack",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{serviceUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Remove moderator",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "DEVELOPER"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/moderators/{{moderatorUserId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{developerUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () { pm.response.to.have.status(204); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Raid Configuration",
+      "item": [
+        {
+          "name": "Create raid configuration",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-configurations",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Shadow Dragon\",\n  \"description\": \"Cooperative Lab 1 boss.\",\n  \"spriteUrl\": \"https://example.com/shadow-dragon.png\",\n  \"maximumHp\": 5000,\n  \"combatStats\": {\n    \"attack\": 120,\n    \"defense\": 80\n  },\n  \"weaknesses\": [\n    \"WATER\"\n  ],\n  \"resistances\": [\n    \"SHADOW\"\n  ],\n  \"specialProperties\": {\n    \"phaseCount\": 2\n  },\n  \"durationSeconds\": 900,\n  \"participantLimit\": 20,\n  \"rewards\": {\n    \"globalCurrency\": 100,\n    \"xp\": 250,\n    \"otherRewards\": []\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set(\"raidConfigurationId\", data.raidConfigurationId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List raid configurations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-configurations?limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get raid configuration",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-configurations/{{raidConfigurationId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update raid configuration",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-configurations/{{raidConfigurationId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participantLimit\": 25\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create raid schedule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-schedules",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"raidConfigurationId\": \"{{raidConfigurationId}}\",\n  \"startsAt\": \"2027-01-01T10:00:00Z\",\n  \"endsAt\": \"2027-01-01T11:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });",
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set(\"scheduleId\", data.scheduleId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List raid schedules",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-schedules?status=SCHEDULED",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get raid schedule",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activate raid schedule",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-User-Role",
+                "value": "ADMIN"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminUserId}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "registryBaseUrl",
+      "value": "http://localhost:8082"
+    },
+    {
+      "key": "adminUserId",
+      "value": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    },
+    {
+      "key": "developerUserId",
+      "value": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    },
+    {
+      "key": "moderatorUserId",
+      "value": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    },
+    {
+      "key": "serviceUserId",
+      "value": "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    },
+    {
+      "key": "registeredUserId",
+      "value": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    },
+    {
+      "key": "registrationIdempotencyKey",
+      "value": "lab1-registration-0001"
+    },
+    {
+      "key": "packageId",
+      "value": ""
+    },
+    {
+      "key": "raidConfigurationId",
+      "value": ""
+    },
+    {
+      "key": "scheduleId",
+      "value": ""
+    }
+  ]
+}
