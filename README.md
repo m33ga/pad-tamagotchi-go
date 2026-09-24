@@ -1471,7 +1471,7 @@ Lab release process:
 
 ## Lab 1 Deployment
 
-The common Docker Compose deployment runs the User Management, Battle, Map and Monster Raid services from their public, versioned DockerHub images. It does not build from any private service repository.
+The common Docker Compose deployment runs the User Management, Battle, Map, Monster Raid, Guild and Package Registry services from their public, versioned DockerHub images. It does not build from any private service repository.
 
 | Service | DockerHub image | API | Databases | Postman collection |
 |---|---|---:|---|---|
@@ -1479,11 +1479,13 @@ The common Docker Compose deployment runs the User Management, Battle, Map and M
 | Battle Service | [`sanda2004/battle-service:1.0.2`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | PostgreSQL on `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
 | Map Service | [`grdz/map-service:1.0.3`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | Redis on `localhost:6380` | [`collections/map-service.postman_collection.json`](collections/map-service.postman_collection.json) |
 | Monster Raid Service | [`grdz/monster-raid-service:1.0.3`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | PostgreSQL on `localhost:5435`, Redis on `localhost:6381` | [`collections/monster-raid-service.postman_collection.json`](collections/monster-raid-service.postman_collection.json) |
+| Guild Service | [`cosmak47/pad-guild-service:0.1.0`](https://hub.docker.com/r/cosmak47/pad-guild-service) | `http://localhost:8081` | PostgreSQL on `localhost:5436` | [`collections/guild-service.postman_collection.json`](collections/guild-service.postman_collection.json) |
+| Package Registry Service | [`cosmak47/pad-package-registry-service:0.1.0`](https://hub.docker.com/r/cosmak47/pad-package-registry-service) | `http://localhost:8082` | PostgreSQL on `localhost:5437` | [`collections/package-registry-service.postman_collection.json`](collections/package-registry-service.postman_collection.json) |
 
 ### Requirements
 
 - Docker Engine or Docker Desktop with Docker Compose v2
-- Ports `5010`, `5020`, `5030`, `5040`, `5433`, `5434`, `5435`, `6380`, and `6381` available, or different ports configured in `.env`
+- Ports `5010`, `5020`, `5030`, `5040`, `8081`, `8082`, `5433`, `5434`, `5435`, `5436`, `5437`, `6380`, and `6381` available, or different ports configured in `.env`
 - Internet access for the first pull from DockerHub
 
 ### Run the Services
@@ -1510,6 +1512,8 @@ The common Docker Compose deployment runs the User Management, Battle, Map and M
    curl http://localhost:5020/_health
    curl http://localhost:5030/health
    curl http://localhost:5040/health
+   curl http://localhost:8081/healthz
+   curl http://localhost:8082/healthz
    docker compose ps
    ```
 
@@ -1519,15 +1523,15 @@ The common Docker Compose deployment runs the User Management, Battle, Map and M
    docker compose down
    ```
 
-The APIs use `/api/v1` as their base path. The C# services answer health checks on `/_health` and the Go services on `/health`. Data is stored in the named volumes `user-management-data`, `battle-data`, `monster-raid-data`, `map-redis-data` and `monster-raid-redis-data`; `docker compose down --volumes` intentionally deletes that persisted data.
+The APIs use `/api/v1` as their base path. The C# services answer health checks on `/_health`, Map and Monster Raid on `/health`, and Guild and Package Registry on `/healthz`. Data is stored in the named volumes `user-management-data`, `battle-data`, `monster-raid-data`, `map-redis-data`, `monster-raid-redis-data`, `guild-data` and `package-registry-data`; `docker compose down --volumes` intentionally deletes that persisted data.
 
 Every database and cache also publishes a host port, so they can be inspected directly with `psql` or `redis-cli`; each Redis instance requires its own password from `.env`, `MAP_REDIS_PASSWORD` and `MONSTER_RAID_REDIS_PASSWORD`. Both Go services serve their generated OpenAPI document at `/openapi.json` with a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs).
 
-The User Management and Battle services apply their ordered SQL migrations automatically with Evolve when they start, and the Monster Raid Service applies its own with goose. No database needs manual preparation.
+The User Management and Battle services apply their ordered SQL migrations automatically with Evolve when they start, and the Monster Raid Service applies its own with goose. Guild and Package Registry include their idempotent migrations in their private service images and apply them automatically when the services start. No database needs manual preparation.
 
-The User Management Service mocks Package Registry validation and package registration. The Battle Service mocks User Management, Tamagotchi, Package Registry, and queue publishing dependencies. The Map Service mocks the User Management relationships it reads, and the Monster Raid Service mocks Guild and Package Registry. No other service is required for this Lab 1 deployment.
+The User Management Service mocks Package Registry validation and package registration. The Battle Service mocks User Management, Tamagotchi, Package Registry, and queue publishing dependencies. The Map Service mocks the User Management relationships it reads, and the Monster Raid Service mocks Guild and Package Registry. Guild mocks User Management, Package Registry and queue publishing while preserving invitation events in its transactional outbox. Package Registry has no outbound service dependency and uses mocked JWT identities and roles for Lab 1. No other service is required for this Lab 1 deployment.
 
-To run the Postman collections, import the JSON files from [`collections`](collections) and keep their default `baseUrl` values. For the User Management and Battle collections, set the private `jwtSigningKey` collection variable to the same value as `JWT_SIGNING_KEY` in the local `.env` file; do not export or commit that value. The Map and Monster Raid collections need no key, because those services do not verify tokens yet and Monster Raid identifies the caller with the `X-User-ID` header until the gateway injects it from the JWT. Run them from top to bottom: starting a guild raid stores the new raid's identifier for the requests that follow.
+To run the Postman collections, import the JSON files from [`collections`](collections) and keep their default service URLs. For the User Management and Battle collections, set the private `jwtSigningKey` collection variable to the same value as `JWT_SIGNING_KEY` in the local `.env` file; do not export or commit that value. The Map and Monster Raid collections need no key, because those services do not verify tokens yet and Monster Raid identifies the caller with the `X-User-ID` header until the gateway injects it from the JWT. Guild uses UUID bearer tokens as mocked user identities. Package Registry uses UUID bearer tokens together with the documented `X-User-Role` values. Run each collection from top to bottom so that its scripts retain the identifiers required by later requests.
 
 ## Service Ownership and Technology Stack
 
