@@ -226,6 +226,101 @@ services:
       timeout: 5s
       retries: 10
 
+  tamagotchi-api:
+    image: johnnyc05/pad-tamagotchi-service:v1.0.2
+    pull_policy: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: tamagotchi-db
+      POSTGRES_DB: ${TAMAGOTCHI_DB_NAME}
+      POSTGRES_USER: ${TAMAGOTCHI_DB_USER}
+      POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD}
+    ports:
+      - "${TAMAGOTCHI_API_PORT:-5050}:8080"
+    depends_on:
+      tamagotchi-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  tamagotchi-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${TAMAGOTCHI_DB_NAME}
+      POSTGRES_USER: ${TAMAGOTCHI_DB_USER}
+      POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD}
+    ports:
+      - "${TAMAGOTCHI_DB_PUBLISHED_PORT:-5438}:5432"
+    volumes:
+      - tamagotchi-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  notification-api:
+    image: johnnyc05/pad-notification-service:v1.2.0
+    pull_policy: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: notification-db
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME}
+      POSTGRES_USER: ${NOTIFICATION_DB_USER}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      REDIS_ADDR: notification-redis:6379
+      REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
+    ports:
+      - "${NOTIFICATION_API_PORT:-5060}:8080"
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      notification-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  notification-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME}
+      POSTGRES_USER: ${NOTIFICATION_DB_USER}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+    ports:
+      - "${NOTIFICATION_DB_PUBLISHED_PORT:-5439}:5432"
+    volumes:
+      - notification-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  notification-redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--requirepass", "${NOTIFICATION_REDIS_PASSWORD}", "--appendonly", "yes"]
+    environment:
+      REDISCLI_AUTH: ${NOTIFICATION_REDIS_PASSWORD}
+    ports:
+      - "${NOTIFICATION_REDIS_PUBLISHED_PORT:-6382}:6379"
+    volumes:
+      - notification-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   user-management-data:
   battle-data:
@@ -234,3 +329,6 @@ volumes:
   monster-raid-redis-data:
   guild-data:
   package-registry-data:
+  tamagotchi-data:
+  notification-data:
+  notification-redis-data:

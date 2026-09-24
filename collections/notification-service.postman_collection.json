@@ -1,0 +1,479 @@
+{
+  "info": {
+    "name": "Tamagotchi Go - Notification Service",
+    "description": "Notification Service endpoints: Firebase device registrations and per-category notification preferences.\n\nRun the folders in order. \"1. Devices\" registers an installation and stores its identifiers for the requests that follow.\n\nFirebase registration tokens are confidential: they are sent when registering a device and are deliberately never returned in a response, which the tests assert.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{ownerAccessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5060/api/v1"
+    },
+    {
+      "key": "ownerUserId",
+      "value": ""
+    },
+    {
+      "key": "deviceId",
+      "value": ""
+    },
+    {
+      "key": "packageId",
+      "value": ""
+    },
+    {
+      "key": "ownerAccessToken",
+      "value": ""
+    },
+    {
+      "key": "fcmToken",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Devices",
+      "item": [
+        {
+          "name": "Register device",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices/{{deviceId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmRegistrationToken\": \"{{fcmToken}}\",\n  \"platform\": \"ANDROID\",\n  \"packageId\": \"{{packageId}}\",\n  \"appVersion\": \"1.0.0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('ownerUserId')) {",
+                  "    pm.collectionVariables.set('ownerUserId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
+                  "if (!pm.collectionVariables.get('packageId')) {",
+                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
+                  "if (!pm.collectionVariables.get('deviceId')) {",
+                  "    pm.collectionVariables.set('deviceId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
+                  "pm.collectionVariables.set('fcmToken', 'confidential-fcm-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Registration is enabled\", () => pm.expect(body.enabled).to.be.true);",
+                  "pm.test(\"Device keeps the identifier the client chose\", () =>",
+                  "    pm.expect(body.deviceId).to.eql(pm.collectionVariables.get(\"deviceId\")));",
+                  "pm.test(\"Firebase token is never returned\", () =>",
+                  "    pm.expect(pm.response.text()).to.not.include(\"confidential-fcm-\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register device again - same installation",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices/{{deviceId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmRegistrationToken\": \"{{fcmToken}}\",\n  \"platform\": \"ANDROID\",\n  \"packageId\": \"{{packageId}}\",\n  \"appVersion\": \"1.0.0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Re-registering updates rather than duplicating\", () =>",
+                  "    pm.expect(pm.response.json().deviceId).to.eql(pm.collectionVariables.get(\"deviceId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List devices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"The installation is registered once\", () => pm.expect(body).to.have.lengthOf(1));",
+                  "pm.test(\"Firebase token is never returned\", () =>",
+                  "    pm.expect(pm.response.text()).to.not.include(\"confidential-fcm-\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register device - unknown platform",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices/{{$guid}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmRegistrationToken\": \"token\",\n  \"platform\": \"BLACKBERRY\",\n  \"packageId\": \"{{packageId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Reports a validation failure\", () =>",
+                  "    pm.expect(pm.response.json().error.code).to.eql(\"VALIDATION_FAILED\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Preferences",
+      "item": [
+        {
+          "name": "Get preferences - defaults",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-preferences",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Every supported category is present\", () =>",
+                  "    pm.expect(Object.keys(body.categories)).to.have.lengthOf(6));",
+                  "pm.test(\"A user with no stored preference has them all enabled\", () =>",
+                  "    Object.values(body.categories).forEach(it => pm.expect(it).to.be.true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update preferences",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-preferences",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categories\": {\n    \"PROXIMITY\": false,\n    \"BATTLE_REQUEST\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Disabled category is recorded\", () => pm.expect(body.categories.PROXIMITY).to.be.false);",
+                  "pm.test(\"Untouched categories stay enabled\", () => {",
+                  "    pm.expect(body.categories.BATTLE_REQUEST).to.be.true;",
+                  "    pm.expect(body.categories.RAID_LIFECYCLE).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get preferences - after update",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-preferences",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"The update persisted\", () =>",
+                  "    pm.expect(pm.response.json().categories.PROXIMITY).to.be.false);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update preferences - unknown category",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-preferences",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categories\": {\n    \"NOT_A_CATEGORY\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"Reports the unknown category\", () =>",
+                  "    pm.expect(pm.response.json().error.code).to.eql(\"UNKNOWN_CATEGORY\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Device Removal",
+      "item": [
+        {
+          "name": "Delete device",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices/{{deviceId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete device - already removed",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices/{{deviceId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Reports the device is missing\", () =>",
+                  "    pm.expect(pm.response.json().error.code).to.eql(\"DEVICE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
