@@ -14,7 +14,7 @@ Developed for the PAD (Distributed Applications Programming) course at FAF, Tech
 - [Communication Contract](#communication-contract)
 - [Project Management](#project-management)
 - [Development Guidelines](#development-guidelines)
-- [Lab 1 Deployment](#lab-1-deployment)
+- [Deployment](#deployment)
 - [Service Ownership and Technology Stack](#service-ownership-and-technology-stack)
 - [Technology Stack Rationale](#technology-stack-rationale)
 
@@ -62,7 +62,7 @@ Receives continuous geolocation updates from the user's application. It stores t
 
 It provides a map of nearby users: friends and enemies are always visible, while unknown users become relevant only when they come within roughly **6 meters** of one another. When two previously unrelated users cross the proximity threshold, the service generates an event that can result in suggestions to befriend or battle one another.
 
-The service **does not** directly manage battles or notifications — it only emits proximity events. It relies on the **User Management Service** for friend/enemy relationships and publishes events consumed by the **Notification Service**.
+The service **does not** directly manage battles or notifications - it only emits proximity events. It relies on the **User Management Service** for friend/enemy relationships and publishes events consumed by the **Notification Service**.
 
 ### Guild Service
 
@@ -76,7 +76,7 @@ Guilds act as the social context for **Monster Raids**: members can join an acti
 
 Provides a cooperative, clicker-style raid in which members of a guild collectively fight a single powerful monster. A raid has a monster with a large amount of health and a defined duration.
 
-Any eligible guild member may contribute their **primary Tamagotchi** to the raid. Instead of a one-on-one battle, every participating Tamagotchi contributes damage to the same monster. The service maintains the current monster HP, participating users, damage dealt, timestamps, and raid status. Actions may be deliberately simple — players repeatedly attack/click to deal damage, with the amount determined by their primary Tamagotchi's combat properties and any equipped boosts.
+Any eligible guild member may contribute their **primary Tamagotchi** to the raid. Instead of a one-on-one battle, every participating Tamagotchi contributes damage to the same monster. The service maintains the current monster HP, participating users, damage dealt, timestamps, and raid status. Actions may be deliberately simple - players repeatedly attack/click to deal damage, with the amount determined by their primary Tamagotchi's combat properties and any equipped boosts.
 
 When the monster dies, the service distributes rewards (global currency, XP, or other globally managed rewards) to participating users. A raid may also **fail** when its timer expires.
 
@@ -88,7 +88,7 @@ Maintains the packages of the apps participating in the ecosystem and acts as th
 
 It stores package information (identifier/name, version, description, status, associated developers/moderators) and records which users are registered with which packages.
 
-**Moderators** are privileged users associated with a package, representing its developers. They define the package's local Tamagotchi growth mechanics and statistics. Different packages may use completely different, non-normalized statistics — for example, one package may use *hunger, happiness, tiredness*, while another uses *energy, mood, discipline, creativity*. The service stores the definition and interpretation rules for these statistics, including a statistic's maximum value and thresholds that may produce a combat bonus. The **Battle Service** may consult these definitions to compute package-specific bonuses without requiring all packages to share the same data structure.
+**Moderators** are privileged users associated with a package, representing its developers. They define the package's local Tamagotchi growth mechanics and statistics. Different packages may use completely different, non-normalized statistics - for example, one package may use *hunger, happiness, tiredness*, while another uses *energy, mood, discipline, creativity*. The service stores the definition and interpretation rules for these statistics, including a statistic's maximum value and thresholds that may produce a combat bonus. The **Battle Service** may consult these definitions to compute package-specific bonuses without requiring all packages to share the same data structure.
 
 **Admins** are globally privileged users who design and schedule Monster Raids. They define monster name, description, sprites, maximum HP, combat statistics, weaknesses, resistances, special properties, raid duration, participant limits, and reward configuration, and may schedule, activate, deactivate, or cancel raids.
 
@@ -107,11 +107,15 @@ Examples include:
 
 It consumes events published by other services (notably the **User Management Service**, **Map Service**, **Battle Service**, **Guild Service**, and **Monster Raid Service**) and delivers them to the appropriate clients.
 
+[Back to top](#table-of-contents)
+
 ## Architecture Diagram
 
 Requests flow from the client through the API Gateway, which fronts the microservices. Each service owns its own database. Synchronous calls (solid arrows) handle request/response between services, while asynchronous events (dotted arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
 
 ![Architecture Diagram](docs/architecture.png)
+
+[Back to top](#table-of-contents)
 
 ## Communication Patterns
 
@@ -184,6 +188,8 @@ The following interactions correspond to the arrows in the architecture diagram 
 - `X-Correlation-ID` traces one operation across services and events.
 - Commands that can be submitted more than once accept an `Idempotency-Key`.
 - Services return consistent JSON error objects containing `code`, `message`, and `correlationId`.
+
+[Back to top](#table-of-contents)
 
 ## Communication Contract
 
@@ -261,11 +267,11 @@ Every event sent through the queue uses the following envelope:
 | User Management Service | Accounts, sessions, relationships, wallets and ledger | PostgreSQL |
 | Tamagotchi Service | Creatures, roster slots, package-local vitals and ownership transfers | PostgreSQL; flexible vitals are stored in a `jsonb` column |
 | Package Registry Service | Packages, moderators, statistic definitions and rules, boosts, monsters, raid schedules and global configuration | PostgreSQL |
-| Map Service | Latest location per user, map settings and encounters | Redis with TTL for current locations; PostgreSQL for durable encounters and settings |
+| Map Service | Latest location per user, map settings and encounters | Redis with a TTL per location, so stale positions expire on their own |
 | Battle Service | Battle requests, battles, sides, turns and results | PostgreSQL |
 | Guild Service | Guilds, memberships, membership requests and chat messages | PostgreSQL |
 | Monster Raid Service | Raids, participants, attack batches and rewards | PostgreSQL; current monster HP is kept in Redis |
-| Notification Service | Devices, preferences, notification history and templates | PostgreSQL |
+| Notification Service | Devices, preferences, notification history and templates | PostgreSQL; delivered event identifiers are kept in Redis |
 
 MongoDB is not part of the selected architecture. An S3-compatible object store keeps blobs, images and large JSON documents. Services store only the corresponding object key or URL in their own database; Package Registry Service owns shared package and monster assets, while Tamagotchi Service stores references to creature assets.
 
@@ -1066,7 +1072,7 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 #### Map Service
 
-Map Service owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user in Redis with a TTL and stores durable settings and encounters in PostgreSQL.
+Map Service owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user, in Redis with a TTL, so a position that stops being refreshed disappears from the map on its own.
 
 ##### Endpoint Catalog
 
@@ -1407,9 +1413,13 @@ PostgreSQL stores device registrations, preferences, notification history, templ
 | Inbound | Monster Raid Service through Queue | Consume raid lifecycle events | Deliver raid notifications |
 | Outbound | Firebase Cloud Messaging | Send push messages over the provider HTTPS API | Deliver notifications to registered client devices |
 
+[Back to top](#table-of-contents)
+
 ## Project Management
 
 Tasks are tracked on the [GitHub Project board](https://github.com/users/m33ga/projects/1). Work is defined through issues (use the issue templates) and assigned before development starts.
+
+[Back to top](#table-of-contents)
 
 ## Development Guidelines
 
@@ -1481,26 +1491,41 @@ Lab release process:
 
 **Never** commit real `.env` files, API keys or credentials. Commit only placeholder templates such as `.env.example`.
 
-## Lab 1 Deployment
+[Back to top](#table-of-contents)
 
-The common Docker Compose deployment runs the User Management, Battle, Map, Monster Raid, Guild, Package Registry, Tamagotchi and Notification services from their public, versioned DockerHub images. It does not build from any private service repository.
+## Deployment
 
-| Service | DockerHub image | API | Databases | Postman collection |
-|---|---|---:|---|---|
-| User Management Service | [`sanda2004/user-management-service:1.0.3`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | PostgreSQL on `localhost:5433` | [`collections/user-management-service.postman_collection.json`](collections/user-management-service.postman_collection.json) |
-| Battle Service | [`sanda2004/battle-service:1.0.2`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | PostgreSQL on `localhost:5434` | [`collections/battle-service.postman_collection.json`](collections/battle-service.postman_collection.json) |
-| Map Service | [`grdz/map-service:1.0.3`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | Redis on `localhost:6380` | [`collections/map-service.postman_collection.json`](collections/map-service.postman_collection.json) |
-| Monster Raid Service | [`grdz/monster-raid-service:1.0.3`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | PostgreSQL on `localhost:5435`, Redis on `localhost:6381` | [`collections/monster-raid-service.postman_collection.json`](collections/monster-raid-service.postman_collection.json) |
-| Guild Service | [`cosmak47/pad-guild-service:0.1.0`](https://hub.docker.com/r/cosmak47/pad-guild-service) | `http://localhost:8081` | PostgreSQL on `localhost:5436` | [`collections/guild-service.postman_collection.json`](collections/guild-service.postman_collection.json) |
-| Package Registry Service | [`cosmak47/pad-package-registry-service:0.1.0`](https://hub.docker.com/r/cosmak47/pad-package-registry-service) | `http://localhost:8082` | PostgreSQL on `localhost:5437` | [`collections/package-registry-service.postman_collection.json`](collections/package-registry-service.postman_collection.json) |
-| Tamagotchi Service | [`johnnyc05/pad-tamagotchi-service:v1.0.3`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:5050` | PostgreSQL on `localhost:5438` | [`collections/tamagotchi-service.postman_collection.json`](collections/tamagotchi-service.postman_collection.json) |
-| Notification Service | [`johnnyc05/pad-notification-service:v1.2.1`](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `http://localhost:5060` | PostgreSQL on `localhost:5439`, Redis on `localhost:6382` | [`collections/notification-service.postman_collection.json`](collections/notification-service.postman_collection.json) |
+Docker Compose runs all eight services together from their public DockerHub images. It never builds from a private service repository, so a machine only needs Docker and the image tags pinned in [`compose.yaml`](compose.yaml).
+
+| Service | Image | API | Collection |
+|---|---|---|---|
+| User Management | [`sanda2004/user-management-service`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | [user-management](collections/user-management-service.postman_collection.json) |
+| Battle | [`sanda2004/battle-service`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | [battle](collections/battle-service.postman_collection.json) |
+| Map | [`grdz/map-service`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | [map](collections/map-service.postman_collection.json) |
+| Monster Raid | [`grdz/monster-raid-service`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | [monster-raid](collections/monster-raid-service.postman_collection.json) |
+| Tamagotchi | [`johnnyc05/pad-tamagotchi-service`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:5050` | [tamagotchi](collections/tamagotchi-service.postman_collection.json) |
+| Notification | [`johnnyc05/pad-notification-service`](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `http://localhost:5060` | [notification](collections/notification-service.postman_collection.json) |
+| Guild | [`cosmak47/pad-guild-service`](https://hub.docker.com/r/cosmak47/pad-guild-service) | `http://localhost:8081` | [guild](collections/guild-service.postman_collection.json) |
+| Package Registry | [`cosmak47/pad-package-registry-service`](https://hub.docker.com/r/cosmak47/pad-package-registry-service) | `http://localhost:8082` | [package-registry](collections/package-registry-service.postman_collection.json) |
 
 ### Requirements
 
 - Docker Engine or Docker Desktop with Docker Compose v2
-- Ports `5010`, `5020`, `5030`, `5040`, `8081`, `8082`, `5433`, `5434`, `5435`, `5436`, `5437`, `6380`, and `6381` available, or different ports configured in `.env`
-- Internet access for the first pull from DockerHub
+- Internet access for the first image pull
+- The host ports below free, or replacement values set in `.env`
+
+| Service | API | PostgreSQL | Redis |
+|---|---:|---:|---:|
+| User Management | 5010 | 5433 | |
+| Battle | 5020 | 5434 | |
+| Map | 5030 | | 6380 |
+| Monster Raid | 5040 | 5435 | 6381 |
+| Tamagotchi | 5050 | 5438 | |
+| Notification | 5060 | 5439 | 6382 |
+| Guild | 8081 | 5436 | |
+| Package Registry | 8082 | 5437 | |
+
+Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PACKAGE_REGISTRY_API_PORT` are the only two without a built-in fallback, so they must be present in `.env` or the deployment refuses to start.
 
 ### Run the Services
 
@@ -1510,7 +1535,7 @@ The common Docker Compose deployment runs the User Management, Battle, Map, Mons
    cp .env.example .env
    ```
 
-2. Replace every `change_me` value in `.env`. Use one private `JWT_SIGNING_KEY` of at least 32 UTF-8 characters for both services. Never commit this file.
+2. Replace every `change_me` value in `.env`. `JWT_SIGNING_KEY` is one private key of at least 32 UTF-8 characters, shared by the services that issue and verify tokens. Never commit this file.
 
 3. Pull the public images and start the deployment:
 
@@ -1519,33 +1544,59 @@ The common Docker Compose deployment runs the User Management, Battle, Map, Mons
    docker compose up -d --wait
    ```
 
-4. Verify the services:
+4. Verify that every service answers:
 
    ```bash
    curl http://localhost:5010/_health
    curl http://localhost:5020/_health
    curl http://localhost:5030/health
    curl http://localhost:5040/health
+   curl http://localhost:5050/_health
+   curl http://localhost:5060/_health
    curl http://localhost:8081/healthz
    curl http://localhost:8082/healthz
    docker compose ps
    ```
 
-5. Stop the containers without deleting database data:
+5. Stop the containers, keeping the stored data:
 
    ```bash
    docker compose down
    ```
 
-The APIs use `/api/v1` as their base path. The C# services answer health checks on `/_health`, Map and Monster Raid on `/health`, and Guild and Package Registry on `/healthz`. Data is stored in the named volumes `user-management-data`, `battle-data`, `monster-raid-data`, `map-redis-data`, `monster-raid-redis-data`, `guild-data` and `package-registry-data`; `docker compose down --volumes` intentionally deletes that persisted data.
+### Endpoints
 
-Every database and cache also publishes a host port, so they can be inspected directly with `psql` or `redis-cli`; each Redis instance requires its own password from `.env`, `MAP_REDIS_PASSWORD` and `MONSTER_RAID_REDIS_PASSWORD`. Both Go services serve their generated OpenAPI document at `/openapi.json` with a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs).
+Every API is served under `/api/v1`. Health checks sit outside that prefix and differ by stack: the C# services answer on `/_health`, Map and Monster Raid on `/health`, and Guild and Package Registry on `/healthz`.
 
-The User Management and Battle services apply their ordered SQL migrations automatically with Evolve when they start, and the Monster Raid Service applies its own with goose. Guild and Package Registry include their idempotent migrations in their private service images and apply them automatically when the services start. No database needs manual preparation.
+Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs). The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
 
-The User Management Service mocks Package Registry validation and package registration. The Battle Service mocks User Management, Tamagotchi, Package Registry, and queue publishing dependencies. The Map Service mocks the User Management relationships it reads, and the Monster Raid Service mocks Guild and Package Registry. Guild mocks User Management, Package Registry and queue publishing while preserving invitation events in its transactional outbox. Package Registry has no outbound service dependency and uses mocked JWT identities and roles for Lab 1. No other service is required for this Lab 1 deployment.
+### Storage
 
-To run the Postman collections, import the JSON files from [`collections`](collections) and keep their default service URLs. For the User Management and Battle collections, set the private `jwtSigningKey` collection variable to the same value as `JWT_SIGNING_KEY` in the local `.env` file; do not export or commit that value. The Map and Monster Raid collections need no key, because those services do not verify tokens yet and Monster Raid identifies the caller with the `X-User-ID` header until the gateway injects it from the JWT. Guild uses UUID bearer tokens as mocked user identities. Package Registry uses UUID bearer tokens together with the documented `X-User-Role` values. Run each collection from top to bottom so that its scripts retain the identifiers required by later requests.
+Every database and cache publishes a host port, so they can be inspected directly with `psql` or `redis-cli`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+
+Data persists in ten named volumes: `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+
+No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, and Guild and Package Registry ship idempotent migrations inside their images.
+
+### Mocked Dependencies
+
+Each service mocks the collaborators it cannot reach, so the deployment runs without a gateway or a message broker:
+
+- **User Management** mocks Package Registry validation and package registration.
+- **Battle** mocks User Management, Tamagotchi, Package Registry and queue publishing.
+- **Map** mocks the User Management relationships it reads.
+- **Monster Raid** mocks Guild and Package Registry.
+- **Guild** mocks User Management, Package Registry and queue publishing, keeping invitation events in its transactional outbox.
+- **Package Registry** has no outbound dependency and uses mocked identities and roles.
+- **Tamagotchi** and **Notification** need no other service running. With no broker deployed, Notification has no events to consume.
+
+### Postman Collections
+
+Import the JSON files from [`collections`](collections) and keep their default service URLs. Run each collection from top to bottom, because its test scripts hand identifiers to later requests.
+
+The User Management and Battle collections ship `jwtSigningKey` empty and their token scripts fail until it is set. Give it the same value as `JWT_SIGNING_KEY` in the local `.env`, and never export or commit it. Map and Monster Raid need no token, and Monster Raid identifies the caller with the `X-User-ID` header. Guild uses UUID bearer tokens as mocked identities, and Package Registry uses the same together with the documented `X-User-Role` values.
+
+[Back to top](#table-of-contents)
 
 ## Service Ownership and Technology Stack
 
@@ -1558,7 +1609,7 @@ To run the Postman collections, import the JSON files from [`collections`](colle
 | Guild Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
 | Monster Raid Service | [Gurduza Mihai](https://github.com/m33ga) | Go | PostgreSQL, Redis |
 | Package Registry Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
-| Notification Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | Redis |
+| Notification Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | PostgreSQL, Redis |
 
 ### User Management Service
 
@@ -1582,7 +1633,7 @@ The Tamagotchi Service maintains the globally relevant state of Tamagotchis, inc
 
 The Notification Service handles asynchronous notifications sent to users through Firebase Cloud Messaging. It consumes events generated by other services and delivers notifications to clients.
 
-**Redis** is used for fast-access notification and event-related data where low latency is important.
+**PostgreSQL** is used for the data that must survive restarts, such as registered devices, per-category preferences and notification history. **Redis** is used for fast-access event data where low latency is important, such as deduplicating events already delivered.
 
 ### Map Service
 
@@ -1607,6 +1658,8 @@ The Monster Raid Service manages cooperative raids, including monster health, pa
 The Package Registry Service manages application packages and package-specific game configuration. It stores package information, developers, moderators and package-specific Tamagotchi statistics.
 
 **PostgreSQL** is used because package configuration can contain flexible attributes that can be stored using JSON/JSONB fields while still benefiting from relational data and transactional consistency.
+
+[Back to top](#table-of-contents)
 
 ## Technology Stack Rationale
 
@@ -1633,3 +1686,5 @@ An S3-compatible object store (e.g. [RustFS](https://github.com/rustfs/rustfs)) 
 ### Database-per-Service
 
 Each microservice owns its database instead of directly sharing another service's database. This reduces coupling between services and allows each service to choose the database technology that best fits its data and workload.
+
+[Back to top](#table-of-contents)
