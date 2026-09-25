@@ -227,7 +227,7 @@ services:
       retries: 10
 
   tamagotchi-api:
-    image: johnnyc05/pad-tamagotchi-service:v1.0.2
+    image: johnnyc05/pad-tamagotchi-service:v1.0.3
     pull_policy: always
     env_file:
       - .env
@@ -265,7 +265,7 @@ services:
       retries: 10
 
   notification-api:
-    image: johnnyc05/pad-notification-service:v1.2.0
+    image: johnnyc05/pad-notification-service:v1.2.1
     pull_policy: always
     env_file:
       - .env
