@@ -267,7 +267,7 @@ Every event sent through the queue uses the following envelope:
 | User Management Service | Accounts, sessions, relationships, wallets and ledger | PostgreSQL |
 | Tamagotchi Service | Creatures, roster slots, package-local vitals and ownership transfers | PostgreSQL; flexible vitals are stored in a `jsonb` column |
 | Package Registry Service | Packages, moderators, statistic definitions and rules, boosts, monsters, raid schedules and global configuration | PostgreSQL |
-| Map Service | Latest location per user, map settings and encounters | Redis with a TTL per location, so stale positions expire on their own |
+| Map Service | Latest location per user and the proximity markers that deduplicate detection events | Redis with a TTL per location, so stale positions expire on their own |
 | Battle Service | Battle requests, battles, sides, turns and results | PostgreSQL |
 | Guild Service | Guilds, memberships, membership requests and chat messages | PostgreSQL |
 | Monster Raid Service | Raids, participants, attack batches and rewards | PostgreSQL; current monster HP is kept in Redis |
@@ -1072,7 +1072,7 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 #### Map Service
 
-Map Service owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user, in Redis with a TTL, so a position that stops being refreshed disappears from the map on its own.
+Map Service owns current location state and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user, in Redis with a TTL, so a position that stops being refreshed disappears from the map on its own.
 
 ##### Endpoint Catalog
 
