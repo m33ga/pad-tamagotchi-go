@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Guild Service API",
-    "version": "1.0.0",
-    "description": "Owns guild identity, membership, roles, permissions, and Guild Chat. Guilds, memberships, membership requests and chat messages are stored in PostgreSQL. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package. The real-time Guild Chat WebSocket contract at `/ws/v1/guilds/{guildId}/chat` cannot be expressed in OpenAPI and is documented in the repository README.\n\nThe service publishes the `guild.invitation.created.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "version": "2.0.0",
+    "description": "Owns guild identity, membership, roles, permissions, and Guild Chat. External REST clients authenticate at the API Gateway with a bearer token. The gateway removes Authorization and supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers to this internal service; a direct request without X-Caller-Kind is rejected. User Management and Package Registry calls also pass through the gateway with guild-service client credentials.\n\nGuild Chat is negotiated with POST /guilds/{guildId}/chat-sessions. The returned ticket is 32 random bytes encoded base64url, expires after 60 seconds and is consumed atomically once by the direct WebSocket handshake. The WebSocket protocol at `/ws/v1/guilds/{guildId}/chat?ticket=...` cannot be expressed in OpenAPI and is documented in the repository README.\n\nEvery REST handler has a request deadline and fail-fast concurrency limit. Saturation returns 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1; expiry returns 504 REQUEST_TIMEOUT. The service publishes the `guild.invitation.created.v1` queue event.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -36,6 +36,10 @@
     {
       "name": "Messages",
       "description": "Guild Chat message history over REST"
+    },
+    {
+      "name": "Chat Sessions",
+      "description": "One-time direct WebSocket ticket negotiation"
     }
   ],
   "paths": {
@@ -44,7 +48,9 @@
         "operationId": "listGuilds",
         "summary": "List guilds",
         "description": "Callable by clients.",
-        "tags": ["Guilds"],
+        "tags": [
+          "Guilds"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/Cursor"
@@ -79,6 +85,12 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -86,7 +98,9 @@
         "operationId": "createGuild",
         "summary": "Create a new guild",
         "description": "Callable by clients. The creator becomes the guild owner.",
-        "tags": ["Guilds"],
+        "tags": [
+          "Guilds"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/CorrelationId"
@@ -141,6 +155,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -150,7 +170,9 @@
         "operationId": "getGuild",
         "summary": "Retrieve a guild",
         "description": "Callable by clients and Monster Raid Service.",
-        "tags": ["Guilds"],
+        "tags": [
+          "Guilds"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -182,6 +204,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -189,7 +217,9 @@
         "operationId": "updateGuild",
         "summary": "Update a guild",
         "description": "Callable only by the guild owner.",
-        "tags": ["Guilds"],
+        "tags": [
+          "Guilds"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -240,6 +270,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -247,7 +283,9 @@
         "operationId": "deleteGuild",
         "summary": "Delete a guild",
         "description": "Callable only by the guild owner.",
-        "tags": ["Guilds"],
+        "tags": [
+          "Guilds"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -278,6 +316,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -287,7 +331,9 @@
         "operationId": "getUserGuilds",
         "summary": "List the guilds a user belongs to",
         "description": "Callable by the account owner or internal services.",
-        "tags": ["Guilds"],
+        "tags": [
+          "Guilds"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/UserId"
@@ -325,6 +371,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -334,7 +386,9 @@
         "operationId": "listGuildMembers",
         "summary": "List guild members",
         "description": "Callable by guild members and Monster Raid Service.",
-        "tags": ["Members"],
+        "tags": [
+          "Members"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -378,6 +432,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -387,7 +447,9 @@
         "operationId": "getGuildMember",
         "summary": "Retrieve a guild membership",
         "description": "Callable by guild members and Monster Raid Service.",
-        "tags": ["Members"],
+        "tags": [
+          "Members"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -425,6 +487,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -432,7 +500,9 @@
         "operationId": "updateGuildMember",
         "summary": "Change a member's role",
         "description": "Callable only by the guild owner. Ownership changes use the separate transfer endpoint.",
-        "tags": ["Members"],
+        "tags": [
+          "Members"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -486,6 +556,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -493,7 +569,9 @@
         "operationId": "removeGuildMember",
         "summary": "Remove a member or leave the guild",
         "description": "Callable by the member themselves, an officer, or the guild owner.",
-        "tags": ["Members"],
+        "tags": [
+          "Members"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -527,6 +605,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -536,7 +620,9 @@
         "operationId": "transferGuildOwnership",
         "summary": "Transfer guild ownership",
         "description": "Callable only by the guild owner. The new owner must be an existing member.",
-        "tags": ["Guilds"],
+        "tags": [
+          "Guilds"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -587,6 +673,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -596,7 +688,9 @@
         "operationId": "createGuildInvitation",
         "summary": "Invite a user to the guild",
         "description": "Callable only by the guild owner or an officer. Publishes `guild.invitation.created.v1` after the invitation is stored successfully.",
-        "tags": ["Invitations"],
+        "tags": [
+          "Invitations"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -660,6 +754,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -667,7 +767,9 @@
         "operationId": "listGuildInvitations",
         "summary": "List a guild's invitations",
         "description": "Callable only by the guild owner or an officer.",
-        "tags": ["Invitations"],
+        "tags": [
+          "Invitations"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -711,6 +813,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -720,7 +828,9 @@
         "operationId": "listUserGuildInvitations",
         "summary": "List a user's guild invitations",
         "description": "Callable only by the invitation recipient.",
-        "tags": ["Invitations"],
+        "tags": [
+          "Invitations"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/UserId"
@@ -764,6 +874,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -773,7 +889,9 @@
         "operationId": "respondToGuildInvitation",
         "summary": "Accept or reject a guild invitation",
         "description": "Callable only by the invitation recipient.",
-        "tags": ["Invitations"],
+        "tags": [
+          "Invitations"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -844,6 +962,12 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -853,7 +977,9 @@
         "operationId": "listGuildMessages",
         "summary": "List guild chat messages",
         "description": "Callable only by guild members. Messages are ordered from newest to oldest.",
-        "tags": ["Messages"],
+        "tags": [
+          "Messages"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/GuildId"
@@ -904,6 +1030,71 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
+          }
+        }
+      }
+    },
+    "/guilds/{guildId}/chat-sessions": {
+      "post": {
+        "operationId": "createGuildChatSession",
+        "summary": "Negotiate a direct Guild Chat WebSocket connection",
+        "description": "Requires an authenticated user who is an active member. Returns a configured public socket URL and a 60-second, single-use ticket bound to the guild and user. The socket handshake consumes the ticket atomically and does not accept a bearer token.",
+        "tags": [
+          "Chat Sessions"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/GuildId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Chat session negotiated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden: NOT_A_MEMBER",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found: GUILD_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -985,7 +1176,13 @@
         "description": "Filter invitations by their current state",
         "schema": {
           "type": "string",
-          "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED"]
+          "enum": [
+            "PENDING",
+            "ACCEPTED",
+            "REJECTED",
+            "EXPIRED",
+            "CANCELLED"
+          ]
         }
       }
     },
@@ -1029,21 +1226,57 @@
             }
           }
         }
+      },
+      "ConcurrencyLimitReached": {
+        "description": "The fail-fast in-flight request limit was reached. Retry-After is 1 second and the error code is CONCURRENCY_LIMIT_REACHED.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "const": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "RequestTimeout": {
+        "description": "The request deadline expired. The error code is REQUEST_TIMEOUT.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
       }
     },
     "schemas": {
       "ErrorResponse": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message", "correlationId"],
+            "required": [
+              "code",
+              "message",
+              "correlationId"
+            ],
             "properties": {
               "code": {
                 "type": "string",
                 "description": "Stable machine-readable error code",
-                "examples": ["RESOURCE_NOT_FOUND"]
+                "examples": [
+                  "RESOURCE_NOT_FOUND"
+                ]
               },
               "message": {
                 "type": "string",
@@ -1067,7 +1300,10 @@
       },
       "CreateGuildRequest": {
         "type": "object",
-        "required": ["name", "description"],
+        "required": [
+          "name",
+          "description"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -1102,7 +1338,10 @@
             "description": "Updated description"
           },
           "requiredPackageId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
             "description": "Add, replace, or remove the package restriction"
           }
@@ -1110,7 +1349,16 @@
       },
       "GuildResponse": {
         "type": "object",
-        "required": ["guildId", "name", "description", "ownerId", "requiredPackageId", "memberCount", "createdAt", "updatedAt"],
+        "required": [
+          "guildId",
+          "name",
+          "description",
+          "ownerId",
+          "requiredPackageId",
+          "memberCount",
+          "createdAt",
+          "updatedAt"
+        ],
         "properties": {
           "guildId": {
             "type": "string",
@@ -1131,7 +1379,10 @@
             "description": "Current guild owner"
           },
           "requiredPackageId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
             "description": "Required package, if configured"
           },
@@ -1154,7 +1405,10 @@
       },
       "GuildPageResponse": {
         "type": "object",
-        "required": ["items", "nextCursor"],
+        "required": [
+          "items",
+          "nextCursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -1164,14 +1418,22 @@
             }
           },
           "nextCursor": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Cursor for the next page"
           }
         }
       },
       "GuildMemberResponse": {
         "type": "object",
-        "required": ["guildId", "userId", "role", "joinedAt"],
+        "required": [
+          "guildId",
+          "userId",
+          "role",
+          "joinedAt"
+        ],
         "properties": {
           "guildId": {
             "type": "string",
@@ -1185,7 +1447,11 @@
           },
           "role": {
             "type": "string",
-            "enum": ["OWNER", "OFFICER", "MEMBER"],
+            "enum": [
+              "OWNER",
+              "OFFICER",
+              "MEMBER"
+            ],
             "description": "Member's guild role"
           },
           "joinedAt": {
@@ -1197,7 +1463,10 @@
       },
       "GuildMemberPageResponse": {
         "type": "object",
-        "required": ["items", "nextCursor"],
+        "required": [
+          "items",
+          "nextCursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -1207,25 +1476,35 @@
             }
           },
           "nextCursor": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Cursor for the next page"
           }
         }
       },
       "UpdateGuildMemberRequest": {
         "type": "object",
-        "required": ["role"],
+        "required": [
+          "role"
+        ],
         "properties": {
           "role": {
             "type": "string",
-            "enum": ["OFFICER", "MEMBER"],
+            "enum": [
+              "OFFICER",
+              "MEMBER"
+            ],
             "description": "New role; ownership uses the separate transfer endpoint"
           }
         }
       },
       "TransferGuildOwnershipRequest": {
         "type": "object",
-        "required": ["newOwnerId"],
+        "required": [
+          "newOwnerId"
+        ],
         "properties": {
           "newOwnerId": {
             "type": "string",
@@ -1236,7 +1515,9 @@
       },
       "CreateGuildInvitationRequest": {
         "type": "object",
-        "required": ["inviteeUserId"],
+        "required": [
+          "inviteeUserId"
+        ],
         "properties": {
           "inviteeUserId": {
             "type": "string",
@@ -1247,18 +1528,31 @@
       },
       "RespondToGuildInvitationRequest": {
         "type": "object",
-        "required": ["decision"],
+        "required": [
+          "decision"
+        ],
         "properties": {
           "decision": {
             "type": "string",
-            "enum": ["ACCEPT", "REJECT"],
+            "enum": [
+              "ACCEPT",
+              "REJECT"
+            ],
             "description": "Invitation recipient's decision"
           }
         }
       },
       "GuildInvitationResponse": {
         "type": "object",
-        "required": ["invitationId", "guildId", "inviterUserId", "inviteeUserId", "status", "createdAt", "expiresAt"],
+        "required": [
+          "invitationId",
+          "guildId",
+          "inviterUserId",
+          "inviteeUserId",
+          "status",
+          "createdAt",
+          "expiresAt"
+        ],
         "properties": {
           "invitationId": {
             "type": "string",
@@ -1282,7 +1576,13 @@
           },
           "status": {
             "type": "string",
-            "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED"],
+            "enum": [
+              "PENDING",
+              "ACCEPTED",
+              "REJECTED",
+              "EXPIRED",
+              "CANCELLED"
+            ],
             "description": "Current invitation state"
           },
           "createdAt": {
@@ -1299,7 +1599,13 @@
       },
       "GuildMessageResponse": {
         "type": "object",
-        "required": ["messageId", "guildId", "authorUserId", "content", "sentAt"],
+        "required": [
+          "messageId",
+          "guildId",
+          "authorUserId",
+          "content",
+          "sentAt"
+        ],
         "properties": {
           "messageId": {
             "type": "string",
@@ -1331,7 +1637,10 @@
       },
       "GuildMessagePageResponse": {
         "type": "object",
-        "required": ["items", "nextCursor"],
+        "required": [
+          "items",
+          "nextCursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -1341,15 +1650,53 @@
             }
           },
           "nextCursor": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Cursor for older messages"
+          }
+        }
+      },
+      "ChatSessionResponse": {
+        "type": "object",
+        "required": [
+          "url",
+          "ticket",
+          "expiresAt"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^wss?://",
+            "description": "Public direct WebSocket URL configured by PUBLIC_WS_URL"
+          },
+          "ticket": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 43,
+            "description": "Single-use base64url encoding of 32 random bytes"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Ticket expiry, 60 seconds after issue"
           }
         }
       },
       "EventEnvelope": {
         "type": "object",
         "description": "Common envelope for every event sent through the message queue. Not delivered over HTTP.",
-        "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "correlationId", "data"],
+        "required": [
+          "eventId",
+          "eventType",
+          "eventVersion",
+          "occurredAt",
+          "producer",
+          "correlationId",
+          "data"
+        ],
         "properties": {
           "eventId": {
             "type": "string",
@@ -1359,7 +1706,9 @@
           "eventType": {
             "type": "string",
             "description": "Stable event name including the version suffix",
-            "examples": ["guild.invitation.created.v1"]
+            "examples": [
+              "guild.invitation.created.v1"
+            ]
           },
           "eventVersion": {
             "type": "integer",
@@ -1373,7 +1722,9 @@
           "producer": {
             "type": "string",
             "description": "Service that published the event",
-            "examples": ["guild-service"]
+            "examples": [
+              "guild-service"
+            ]
           },
           "correlationId": {
             "type": "string",
@@ -1388,7 +1739,14 @@
       "GuildInvitationCreatedEventV1": {
         "type": "object",
         "description": "Payload of `guild.invitation.created.v1`, published after an invitation is stored successfully. Notification Service consumes it to notify the invited user.",
-        "required": ["invitationId", "guildId", "guildName", "inviterUserId", "inviteeUserId", "expiresAt"],
+        "required": [
+          "invitationId",
+          "guildId",
+          "guildName",
+          "inviterUserId",
+          "inviteeUserId",
+          "expiresAt"
+        ],
         "properties": {
           "invitationId": {
             "type": "string",

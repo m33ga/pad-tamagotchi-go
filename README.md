@@ -11,6 +11,7 @@ Developed for the PAD (Distributed Applications Programming) course at FAF, Tech
 - [Service Boundaries](#service-boundaries)
 - [Architecture Diagram](#architecture-diagram)
 - [Communication Patterns](#communication-patterns)
+- [Gateway](#gateway)
 - [Communication Contract](#communication-contract)
 - [Project Management](#project-management)
 - [Development Guidelines](#development-guidelines)
@@ -188,6 +189,18 @@ The following interactions correspond to the arrows in the architecture diagram 
 - `X-Correlation-ID` traces one operation across services and events.
 - Commands that can be submitted more than once accept an `Idempotency-Key`.
 - Services return consistent JSON error objects containing `code`, `message`, and `correlationId`.
+
+[Back to top](#table-of-contents)
+
+## Gateway
+
+The API Gateway is the only HTTP ingress for Lab 2. A public request uses `http://localhost:8000/<service>/api/v1/...`; the gateway removes the first path segment and forwards the remainder to the matching internal service. The configured prefixes are `user-management`, `battle`, `tamagotchi`, `notification`, `map`, `monster-raid`, `guild`, and `package-registry`.
+
+Registration, login, refresh, and OAuth client-credentials issuance are the only anonymous operations: `POST /user-management/api/v1/users`, `/auth/sessions`, `/auth/session-refreshes`, and `/oauth2/token`. Every other REST request requires a user or service bearer token. The gateway validates that token, removes caller-supplied `Authorization` and identity headers, and creates the trusted `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name`, `X-Scopes`, and `X-Correlation-ID` headers consumed by internal services.
+
+Gateway failures preserve the common JSON error envelope. They include `401` for an invalid or missing token, `404` for an unknown route, `405` for a method the gateway does not forward, `502` when the upstream is unavailable, `503` for concurrency saturation or an unready gateway, `504` for an upstream or whole-request timeout, and `500` for an unexpected gateway failure. Guild Chat is the only direct client-to-service edge: its authenticated REST negotiation passes through the gateway and returns a short-lived, single-use ticket for the separately published WebSocket listener.
+
+The authoritative routing, authentication, limits, and service requirements are documented in the [Gateway specification](https://github.com/m33ga/gateway/blob/main/docs/spec.md).
 
 [Back to top](#table-of-contents)
 
@@ -404,7 +417,9 @@ User Management Service owns user identity, authentication, social relationships
 
 #### Package Registry Service
 
-Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. Package moderators manage their own package configuration, while globally privileged admins manage raid configuration and scheduling.
+Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS`—the former caller-supplied role header is not accepted.
+
+`POST /packages/{packageId}/registrations` and `GET /users/{userId}/package-registrations` require `X-Service-Name: user-management-service`. Raid schedule reads accept `X-Service-Name: monster-raid-service` or a configured administrator. Every handler has a bounded deadline and fail-fast concurrency limit, returning `504 REQUEST_TIMEOUT` or `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
 
 ##### Endpoint Catalog
 
@@ -625,6 +640,7 @@ Guild Service owns guild identity, membership, roles, permissions, and Guild Cha
 | `GET /api/v1/users/{userId}/guild-invitations?status={status}` | Invitation recipient | Query parameter | `200 GuildInvitationResponse[]` | `400`, `403`, `404 USER_NOT_FOUND` |
 | `POST /api/v1/guilds/{guildId}/invitations/{invitationId}/responses` | Invitation recipient | `RespondToGuildInvitationRequest` | `200 GuildInvitationResponse` | `400`, `403`, `404`, `409 INVITATION_ALREADY_RESOLVED`, `422 MEMBERSHIP_RULE_NOT_SATISFIED` |
 | `GET /api/v1/guilds/{guildId}/messages?before={messageId}&limit={limit}` | Guild member | Query parameters | `200 GuildMessagePageResponse` | `400`, `403`, `404 GUILD_NOT_FOUND` |
+| `POST /api/v1/guilds/{guildId}/chat-sessions` | Active guild member | None | `201 ChatSessionResponse` | `403 NOT_A_MEMBER`, `404 GUILD_NOT_FOUND`, `503`, `504` |
 
 ##### Guild and Membership Schemas
 
@@ -709,13 +725,20 @@ Guild Service owns guild identity, membership, roles, permissions, and Guild Cha
   "GuildMessagePageResponse": {
     "items": "Array of GuildMessageResponse; required. Messages ordered from newest to oldest",
     "nextCursor": "String or null; required. Cursor for older messages"
+  },
+  "ChatSessionResponse": {
+    "url": "ws:// or wss:// URL; required. Public direct WebSocket address",
+    "ticket": "43-character base64url string; required. Single-use encoding of 32 random bytes",
+    "expiresAt": "UTC timestamp; required. Exactly 60 seconds after ticket issue"
   }
 }
 ```
 
 ##### Guild Chat WebSocket Contract
 
-Guild members connect to `/ws/v1/guilds/{guildId}/chat` using a bearer JWT during the connection handshake. The service rejects unauthenticated users and users who are not active members of the guild.
+Guild members first make the authenticated REST call `POST /guild/api/v1/guilds/{guildId}/chat-sessions` through the gateway. The service verifies the trusted `X-User-ID` membership and returns `url`, `ticket`, and `expiresAt`. The ticket contains 32 random bytes encoded base64url, is bound to the guild and user, expires after 60 seconds, and is stored only as a hash.
+
+The client then connects directly to `{url}?ticket={ticket}`. The dedicated WebSocket listener atomically deletes a matching ticket before upgrading; missing, expired, reused, or wrong-guild tickets return `401`. Connection identity comes only from the stored ticket, and the handshake does not accept a bearer token. REST remains on the internal listener; only the separate socket listener is published, so public clients cannot forge trusted gateway headers against REST.
 
 The client sends:
 
@@ -1505,8 +1528,10 @@ Docker Compose runs all eight services together from their public DockerHub imag
 | Monster Raid | [`grdz/monster-raid-service`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | [monster-raid](collections/monster-raid-service.postman_collection.json) |
 | Tamagotchi | [`johnnyc05/pad-tamagotchi-service`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:5050` | [tamagotchi](collections/tamagotchi-service.postman_collection.json) |
 | Notification | [`johnnyc05/pad-notification-service`](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `http://localhost:5060` | [notification](collections/notification-service.postman_collection.json) |
-| Guild | [`cosmak47/pad-guild-service`](https://hub.docker.com/r/cosmak47/pad-guild-service) | `http://localhost:8081` | [guild](collections/guild-service.postman_collection.json) |
-| Package Registry | [`cosmak47/pad-package-registry-service`](https://hub.docker.com/r/cosmak47/pad-package-registry-service) | `http://localhost:8082` | [package-registry](collections/package-registry-service.postman_collection.json) |
+| Guild | [`cosmak47/pad-guild-service:2.0.0`](https://hub.docker.com/r/cosmak47/pad-guild-service/tags) | `http://localhost:8000/guild`; socket `ws://localhost:8081` | [guild](collections/guild-service.postman_collection.json) |
+| Package Registry | [`cosmak47/pad-package-registry-service:2.0.0`](https://hub.docker.com/r/cosmak47/pad-package-registry-service/tags) | `http://localhost:8000/package-registry` | [package-registry](collections/package-registry-service.postman_collection.json) |
+
+For Lab 2, the Guild and Package Registry REST listeners join only the Compose `internal` network and have no host mapping. Their gateway prefixes are `/guild` and `/package-registry`; the gateway strips that prefix before forwarding. Guild is the deliberate exception for real-time traffic: host port `8081` maps only to the container's dedicated WebSocket listener (`WS_PORT=8082`), while its REST listener remains internal on port `8081`. This separation prevents a host client from forging gateway identity headers against Guild REST.
 
 ### Requirements
 
@@ -1522,10 +1547,10 @@ Docker Compose runs all eight services together from their public DockerHub imag
 | Monster Raid | 5040 | 5435 | 6381 |
 | Tamagotchi | 5050 | 5438 | |
 | Notification | 5060 | 5439 | 6382 |
-| Guild | 8081 | 5436 | |
-| Package Registry | 8082 | 5437 | |
+| Guild | Gateway 8000; WebSocket 8081 | internal only | |
+| Package Registry | Gateway 8000 | internal only | |
 
-Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PACKAGE_REGISTRY_API_PORT` are the only two without a built-in fallback, so they must be present in `.env` or the deployment refuses to start.
+Every published port above is a default that `.env` can override. `GUILD_API_PORT` and `PACKAGE_REGISTRY_API_PORT` are internal listener ports; they must be present in `.env` but are not exposed to the host.
 
 ### Run the Services
 
@@ -1553,8 +1578,8 @@ Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PA
    curl http://localhost:5040/health
    curl http://localhost:5050/_health
    curl http://localhost:5060/_health
-   curl http://localhost:8081/healthz
-   curl http://localhost:8082/healthz
+   docker compose exec guild-api wget --spider --quiet http://localhost:8081/healthz
+   docker compose exec package-registry-api wget --spider --quiet http://localhost:8082/healthz
    docker compose ps
    ```
 
@@ -1572,7 +1597,7 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 ### Storage
 
-Every database and cache publishes a host port, so they can be inspected directly with `psql` or `redis-cli`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+Databases and caches are private implementation details. Guild and Package Registry databases are internal-only in Lab 2; inspect them with `docker compose exec` rather than publishing their ports. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
 
 Data persists in ten named volumes: `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
 
@@ -1580,21 +1605,23 @@ No database needs manual preparation. The C# services apply their ordered SQL mi
 
 ### Mocked Dependencies
 
-Each service mocks the collaborators it cannot reach, so the deployment runs without a gateway or a message broker:
+The Lab 2 deployment resolves synchronous service-to-service calls through the gateway. Mock modes remain useful only when a private service is run in isolation; asynchronous event publishing is still mocked until the shared broker is introduced:
 
 - **User Management** mocks Package Registry validation and package registration.
 - **Battle** mocks User Management, Tamagotchi, Package Registry and queue publishing.
 - **Map** mocks the User Management relationships it reads.
 - **Monster Raid** mocks Guild and Package Registry.
-- **Guild** mocks User Management, Package Registry and queue publishing, keeping invitation events in its transactional outbox.
-- **Package Registry** has no outbound dependency and uses mocked identities and roles.
+- **Guild** calls User Management and Package Registry through the gateway with its service client credentials; its mock flag is reserved for isolated private-repository tests.
+- **Package Registry** has no current outbound dependency, but receives only gateway-derived identities and derives admin access from `ADMIN_USER_IDS`.
 - **Tamagotchi** and **Notification** need no other service running. With no broker deployed, Notification has no events to consume.
 
 ### Postman Collections
 
-Import the JSON files from [`collections`](collections) and keep their default service URLs. Run each collection from top to bottom, because its test scripts hand identifiers to later requests.
+Import the JSON files from [`collections`](collections) and keep their gateway-based default URLs. Run each collection from top to bottom, because its authentication and test scripts hand tokens and identifiers to later requests.
 
-The User Management and Battle collections ship `jwtSigningKey` empty and their token scripts fail until it is set. Give it the same value as `JWT_SIGNING_KEY` in the local `.env`, and never export or commit it. Map and Monster Raid need no token, and Monster Raid identifies the caller with the `X-User-ID` header. Guild uses UUID bearer tokens as mocked identities, and Package Registry uses the same together with the documented `X-User-Role` values.
+For Guild, fill in valid User Management credentials and run the login requests before the business requests. For Package Registry, do the same for administrator and package-developer users, and provide the local client secrets needed by its service-token requests. The administrator's user ID must be in `PACKAGE_REGISTRY_ADMIN_USER_IDS`. User Management's own service token is supplied separately for the two operations restricted to that service. Never put plaintext credentials or tokens in a committed collection.
+
+Postman sends bearer tokens only to the gateway. Neither collection sends `X-Caller-Kind`, `X-User-ID`, `X-Service-Name`, or the removed `X-User-Role`; these trusted identity headers are created by the gateway. Guild's chat flow first runs `Negotiate chat session`, then uses the returned single-use ticket to connect directly to the published WebSocket URL.
 
 [Back to top](#table-of-contents)
 

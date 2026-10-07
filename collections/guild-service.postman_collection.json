@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "956346af-1261-4e0c-8998-93659632bb9f",
     "name": "Tamagotchi Go - Guild Service",
-    "description": "Executable Lab 1 collection for the Guild Service HTTP contract. Start the common Docker Compose deployment, then run the requests in order. Bearer tokens use the mocked UUID identities documented by the service. WebSocket chat can be checked separately at ws://localhost:8081/ws/v1/guilds/{{guildId}}/chat with Authorization: Bearer {{ownerUserId}}.",
+    "description": "Lab 2 collection for Guild Service through the API Gateway. Obtain real user JWTs from the User Management login flow, then set ownerAccessToken/inviteeAccessToken and their matching user IDs. REST uses the /guild prefix. WebSocket chat is negotiated by REST and then connected directly with the returned single-use ticket.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -14,7 +14,17 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{guildBaseUrl}}/healthz"
+            "url": "{{guildBaseUrl}}/healthz",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
           },
           "response": [],
           "event": [
@@ -45,7 +55,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -86,7 +96,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -116,7 +126,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -151,7 +161,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -190,7 +200,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -220,7 +230,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -250,7 +260,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -285,7 +295,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -326,7 +336,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -356,7 +366,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{inviteeUserId}}",
+                  "value": "{{inviteeAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -391,7 +401,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{inviteeUserId}}",
+                  "value": "{{inviteeAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -435,7 +445,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -464,6 +474,40 @@
           ]
         },
         {
+          "name": "Negotiate chat session",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": "{{guildBaseUrl}}/api/v1/guilds/{{guildId}}/chat-sessions"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.ticket).to.match(/^[A-Za-z0-9_-]{43}$/);",
+                  "pm.collectionVariables.set('chatTicket', body.ticket);",
+                  "pm.collectionVariables.set('chatSocketUrl', body.url);"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List message history",
           "request": {
             "method": "GET",
@@ -474,7 +518,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -509,7 +553,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerUserId}}",
+                  "value": "{{ownerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -548,7 +592,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{inviteeUserId}}",
+                  "value": "{{inviteeAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -578,7 +622,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{inviteeUserId}}",
+                  "value": "{{inviteeAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -603,7 +647,7 @@
   "variable": [
     {
       "key": "guildBaseUrl",
-      "value": "http://localhost:8081"
+      "value": "http://localhost:8000/guild"
     },
     {
       "key": "ownerUserId",
@@ -619,6 +663,22 @@
     },
     {
       "key": "invitationId",
+      "value": ""
+    },
+    {
+      "key": "ownerAccessToken",
+      "value": ""
+    },
+    {
+      "key": "inviteeAccessToken",
+      "value": ""
+    },
+    {
+      "key": "chatTicket",
+      "value": ""
+    },
+    {
+      "key": "chatSocketUrl",
       "value": ""
     }
   ]

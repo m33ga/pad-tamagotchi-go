@@ -2,10 +2,295 @@
   "info": {
     "_postman_id": "a269e2ca-46c1-4f04-b01e-8958f7b31368",
     "name": "Tamagotchi Go - Package Registry Service",
-    "description": "Executable Lab 1 collection for the Package Registry Service HTTP contract, including raid configuration and scheduling. Start the common Docker Compose deployment, then run the folders and requests in order. Bearer tokens and X-User-Role headers use the mocked identities and roles documented by the service.",
+    "description": "Lab 2 collection for Package Registry through the API Gateway. Run the authentication folder first with real User Management accounts and service-client secrets. The administrator account ID must also be present in PACKAGE_REGISTRY_ADMIN_USER_IDS. User Management's self-issued service token is supplied separately for its two internal-only operations. No caller-supplied role header is used.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
+    {
+      "name": "0. Gateway authentication",
+      "item": [
+        {
+          "name": "Login administrator",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{userManagementBaseUrl}}/api/v1/auth/sessions"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json().accessToken;",
+                  "pm.collectionVariables.set('adminAccessToken', token);",
+                  "const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "const claims = JSON.parse(atob(encoded));",
+                  "pm.collectionVariables.set('adminUserId', claims.sub);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login package developer",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{developerEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{userManagementBaseUrl}}/api/v1/auth/sessions"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "const token = pm.response.json().accessToken;",
+                  "pm.collectionVariables.set('developerAccessToken', token);",
+                  "const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "const claims = JSON.parse(atob(encoded));",
+                  "pm.collectionVariables.set('developerUserId', claims.sub);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Guild service token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "guild-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{guildClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('guildServiceToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Tamagotchi service token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "tamagotchi-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{tamagotchiClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('tamagotchiServiceToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Battle service token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "battle-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{battleClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('battleServiceToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Monster Raid service token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "monster-raid-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{monsterRaidClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('monsterRaidServiceToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
     {
       "name": "Package Registry Service",
       "item": [
@@ -14,7 +299,17 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{registryBaseUrl}}/healthz"
+            "url": "{{registryBaseUrl}}/healthz",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
           },
           "response": [],
           "event": [
@@ -37,10 +332,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages",
@@ -49,7 +340,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -90,7 +381,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -120,7 +411,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -147,10 +438,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
@@ -159,7 +446,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -195,10 +482,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/moderators",
@@ -207,7 +490,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -245,10 +528,6 @@
                 "value": "application/json"
               },
               {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              },
-              {
                 "key": "Idempotency-Key",
                 "value": "{{$guid}}"
               }
@@ -259,7 +538,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{userManagementServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -291,19 +570,14 @@
           "name": "Get package registration",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/registrations/{{registeredUserId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{guildServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -326,19 +600,14 @@
           "name": "List user's registrations",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/users/{{registeredUserId}}/package-registrations",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{userManagementServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -365,10 +634,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/stat-definitions",
@@ -377,7 +642,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -409,19 +674,14 @@
           "name": "Get stat definitions",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/stat-definitions",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{tamagotchiServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -448,10 +708,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts",
@@ -460,7 +716,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -492,19 +748,14 @@
           "name": "Get battle boosts",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{battleServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -527,19 +778,14 @@
           "name": "Get battle boost by key",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts/power_snack",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{battleServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -562,19 +808,14 @@
           "name": "Remove moderator",
           "request": {
             "method": "DELETE",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/moderators/{{moderatorUserId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -606,10 +847,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations",
@@ -618,7 +855,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -652,19 +889,14 @@
           "name": "List raid configurations",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations?limit=20",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -687,19 +919,14 @@
           "name": "Get raid configuration",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations/{{raidConfigurationId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -726,10 +953,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations/{{raidConfigurationId}}",
@@ -738,7 +961,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -774,10 +997,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules",
@@ -786,7 +1005,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -834,19 +1053,14 @@
           "name": "List raid schedules",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules?status=SCHEDULED",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{monsterRaidServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -869,19 +1083,14 @@
           "name": "Get raid schedule",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{monsterRaidServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -908,10 +1117,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
@@ -920,7 +1125,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -956,10 +1161,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
@@ -968,7 +1169,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -1002,7 +1203,7 @@
   "variable": [
     {
       "key": "registryBaseUrl",
-      "value": "http://localhost:8082"
+      "value": "http://localhost:8000/package-registry"
     },
     {
       "key": "adminUserId",
@@ -1034,6 +1235,66 @@
     },
     {
       "key": "scheduleId",
+      "value": ""
+    },
+    {
+      "key": "userManagementBaseUrl",
+      "value": "http://localhost:8000/user-management"
+    },
+    {
+      "key": "adminEmail",
+      "value": ""
+    },
+    {
+      "key": "developerEmail",
+      "value": ""
+    },
+    {
+      "key": "userPassword",
+      "value": ""
+    },
+    {
+      "key": "adminAccessToken",
+      "value": ""
+    },
+    {
+      "key": "developerAccessToken",
+      "value": ""
+    },
+    {
+      "key": "userManagementServiceToken",
+      "value": ""
+    },
+    {
+      "key": "guildClientSecret",
+      "value": ""
+    },
+    {
+      "key": "guildServiceToken",
+      "value": ""
+    },
+    {
+      "key": "tamagotchiClientSecret",
+      "value": ""
+    },
+    {
+      "key": "tamagotchiServiceToken",
+      "value": ""
+    },
+    {
+      "key": "battleClientSecret",
+      "value": ""
+    },
+    {
+      "key": "battleServiceToken",
+      "value": ""
+    },
+    {
+      "key": "monsterRaidClientSecret",
+      "value": ""
+    },
+    {
+      "key": "monsterRaidServiceToken",
       "value": ""
     }
   ]
