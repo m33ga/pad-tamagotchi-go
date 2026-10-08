@@ -347,7 +347,7 @@
       "post": {
         "operationId": "createRaidAttack",
         "summary": "Attack the raid monster",
-        "description": "Callable only by raid participants. Damage is calculated from the Tamagotchi combat profile, the raid configuration snapshot, and the relevant package statistic definitions; the server rate-limits attacks and never trusts client-provided damage values. Deduplicated by the client-generated actionId.",
+        "description": "Callable only by raid participants. Damage is calculated server side from the attacking Tamagotchi combat profile and the raid configuration snapshot; client-provided damage values are never trusted. Attacks are rate limited per participant. Deduplicated by the client-generated actionId.",
         "tags": ["Attacks"],
         "parameters": [
           {
@@ -402,6 +402,16 @@
           },
           "422": {
             "description": "Rejected domain operation: RAID_NOT_ACTIVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited: ATTACK_RATE_LIMITED",
             "content": {
               "application/json": {
                 "schema": {

@@ -267,7 +267,7 @@ Every event sent through the queue uses the following envelope:
 | User Management Service | Accounts, sessions, relationships, wallets and ledger | PostgreSQL |
 | Tamagotchi Service | Creatures, roster slots, package-local vitals and ownership transfers | PostgreSQL; flexible vitals are stored in a `jsonb` column |
 | Package Registry Service | Packages, moderators, statistic definitions and rules, boosts, monsters, raid schedules and global configuration | PostgreSQL |
-| Map Service | Latest location per user, map settings and encounters | Redis with a TTL per location, so stale positions expire on their own |
+| Map Service | Latest location per user and the proximity markers that deduplicate detection events | Redis with a TTL per location, so stale positions expire on their own |
 | Battle Service | Battle requests, battles, sides, turns and results | PostgreSQL |
 | Guild Service | Guilds, memberships, membership requests and chat messages | PostgreSQL |
 | Monster Raid Service | Raids, participants, attack batches and rewards | PostgreSQL; current monster HP is kept in Redis |
@@ -1072,7 +1072,7 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 #### Map Service
 
-Map Service owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user, in Redis with a TTL, so a position that stops being refreshed disappears from the map on its own.
+Map Service owns current location state and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user, in Redis with a TTL, so a position that stops being refreshed disappears from the map on its own.
 
 ##### Endpoint Catalog
 
@@ -1161,7 +1161,7 @@ Monster Raid Service owns each guild's active cooperative raid, its participants
 | `GET /api/v1/raids/{raidId}` | Guild member | None | `200 RaidResponse` | `403`, `404 RAID_NOT_FOUND` |
 | `POST /api/v1/raids/{raidId}/participants` | Guild member | `JoinRaidRequest` | `201 RaidParticipantResponse` | `400`, `403`, `404`, `409 PARTICIPANT_EXISTS`, `422 RAID_NOT_ACTIVE`, `422 PARTICIPANT_LIMIT_REACHED` |
 | `GET /api/v1/raids/{raidId}/participants?cursor={cursor}&limit={limit}` | Guild member | Query parameters | `200 RaidParticipantPageResponse` | `400`, `403`, `404 RAID_NOT_FOUND` |
-| `POST /api/v1/raids/{raidId}/attacks` | Raid participant | `CreateRaidAttackRequest` | `200 RaidAttackResponse` | `400`, `403`, `404`, `409 ATTACK_ALREADY_PROCESSED`, `422 RAID_NOT_ACTIVE` |
+| `POST /api/v1/raids/{raidId}/attacks` | Raid participant | `CreateRaidAttackRequest` | `200 RaidAttackResponse` | `400`, `403`, `404`, `409 ATTACK_ALREADY_PROCESSED`, `422 RAID_NOT_ACTIVE`, `429 ATTACK_RATE_LIMITED` |
 | `GET /api/v1/raids/{raidId}/result` | Guild member | None | `200 RaidResultResponse` | `403`, `404 RAID_NOT_FOUND`, `409 RAID_NOT_FINISHED` |
 
 Creating a raid is idempotent for the combination of `guildId` and `scheduleId`: if concurrent requests attempt to create the same guild raid, only one active instance is stored.
@@ -1233,7 +1233,17 @@ Creating a raid is idempotent for the combination of `guildId` and `scheduleId`:
 }
 ```
 
-Joining requires an active Guild Service membership and ownership of the submitted primary Tamagotchi. Damage is calculated from the Tamagotchi combat profile, the raid configuration snapshot, and the relevant package statistic definitions. The server rate-limits attacks and never trusts client-provided damage values.
+Joining requires an active Guild Service membership and ownership of the submitted primary Tamagotchi. Damage is calculated server side and client-provided damage values are never trusted.
+
+One attack deals `floor(baseDamage x levelFactor x typeMultiplier)`, with a minimum of 1 whenever the configuration carries any base damage:
+
+| Factor | Value |
+|---|---|
+| `baseDamage` | Base damage of the raid configuration snapshot |
+| `levelFactor` | `1 + (level - 1) / 10`, from the attacking Tamagotchi combat profile |
+| `typeMultiplier` | `1.5` when the attacker combat type is one of the monster weaknesses, `0.5` when it is one of its resistances, otherwise `1.0` |
+
+The snapshot is fixed when the raid starts, so a later configuration change cannot alter a raid in progress. Attacks are rate limited per participant in fixed windows; an attack over the limit is rejected with `429 ATTACK_RATE_LIMITED` and keeps its `actionId`, so it can simply be retried.
 
 ##### Result and Reward Schemas
 
@@ -1264,6 +1274,8 @@ When monster HP reaches zero, the raid enters `SETTLING` and performs idempotent
 3. Mark the raid `COMPLETED` only after all required reward commands succeed.
 
 If a dependency is unavailable, the raid remains `SETTLING` and retries cannot apply a reward twice. If the deadline arrives while monster HP is above zero, the raid becomes `FAILED` and no rewards are distributed. Finished results and rewards are persisted in PostgreSQL; the corresponding current-HP entry is removed from Redis after the raid reaches a terminal state.
+
+Both transitions are evaluated whenever a raid is loaded, so every read and command path observes the terminal state without a background scheduler. Loading a raid that is still `SETTLING` retries only the reward commands that have not succeeded yet, and `GET /api/v1/raids/{raidId}/result` answers `409 RAID_NOT_FINISHED` until the terminal state is stored.
 
 ##### Published Queue Events
 
@@ -1584,8 +1596,8 @@ Each service mocks the collaborators it cannot reach, so the deployment runs wit
 
 - **User Management** mocks Package Registry validation and package registration.
 - **Battle** mocks User Management, Tamagotchi, Package Registry and queue publishing.
-- **Map** mocks the User Management relationships it reads.
-- **Monster Raid** mocks Guild and Package Registry.
+- **Map** mocks the User Management relationships it reads, and logs the proximity events it would publish.
+- **Monster Raid** mocks Guild, Package Registry, Tamagotchi and User Management, and logs the raid lifecycle events it would publish.
 - **Guild** mocks User Management, Package Registry and queue publishing, keeping invitation events in its transactional outbox.
 - **Package Registry** has no outbound dependency and uses mocked identities and roles.
 - **Tamagotchi** and **Notification** need no other service running. With no broker deployed, Notification has no events to consume.
