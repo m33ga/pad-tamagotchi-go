@@ -24,8 +24,14 @@ services:
     url: http://notification-api:8080
   map:
     url: http://map-api:8080
+    public:
+      - GET /docs                             # Swagger UI
+      - GET /openapi.json                     # generated contract
   monster-raid:
     url: http://monster-raid-api:8080
+    public:
+      - GET /docs                             # Swagger UI
+      - GET /openapi.json                     # generated contract
   guild:
     url: http://guild-api:8081
   package-registry:
