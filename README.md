@@ -344,6 +344,7 @@ User Management Service owns user identity, authentication, social relationships
 | `DELETE /api/v1/auth/sessions/current` | Client | None | `204` | `401 INVALID_IDENTITY` |
 | `GET /api/v1/users/{userId}` | Client or internal service | None | `200 UserResponse` | `401`, `403`, `404 USER_NOT_FOUND` |
 | `PATCH /api/v1/users/{userId}` | Account owner | `UpdateUserRequest` | `200 UserResponse` | `400`, `401`, `403`, `404`, `409 EMAIL_TAKEN` |
+| `GET /api/v1/users/{userId}/relationships?cursor={cursor}&limit={limit}&status={status}` | Account owner, Map, or Guild Service | Optional cursor, limit and status query parameters | `200 RelationshipPageResponse` | `400 INVALID_REQUEST`, `401`, `403`, `404 USER_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/relationships/{otherUserId}` | Client, Map, or Guild Service | None | `200 RelationshipResponse` | `401`, `403`, `404 USER_NOT_FOUND` |
 | `POST /api/v1/users/{userId}/friend-requests` | Client | `CreateFriendRequest` | `201 FriendRequestResponse` | `400`, `403`, `404`, `409 RELATIONSHIP_EXISTS` |
 | `POST /api/v1/users/{userId}/friend-requests/{requestId}/responses` | Request recipient | `RespondToFriendRequest` | `200 FriendRequestResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED` |
@@ -370,6 +371,24 @@ client, with `Retry-After: 60` on rejection.
 Logout terminates the session in `X-Session-ID`. Owner checks compare `X-User-ID`
 with the path parameter. Balance commands require a service caller named
 `battle-service` or `monster-raid-service`.
+
+##### Relationship Lists
+
+The bulk relationships endpoint returns only existing `FRIEND` and `ENEMY`
+connections, ordered by `otherUserId`; unrelated users and pending or rejected
+friend requests are absent. `limit` defaults to 50 and must be between 1 and 100.
+Omit `cursor` on the first request, then pass `nextCursor` until it is null.
+An optional `status=FRIEND` or `status=ENEMY` filters the list. Keep the same
+`userId` and status filter when following a cursor; an invalid cursor, limit or
+status yields `400 INVALID_REQUEST`. Pages reflect the current relationships,
+so changes between requests are not a fixed snapshot.
+
+The account owner reads with `X-Caller-Kind: user` and `X-User-ID` equal to the
+path's `userId`. Service callers require `X-Caller-Kind: service` and
+`X-Service-Name: map-service` or `guild-service`; other users and services
+receive `403`. An unknown subject returns `404 USER_NOT_FOUND`.
+Map Service can obtain the classifications for all candidates from this list
+instead of querying each pair; it follows additional pages for larger graphs.
 
 ##### Payload Schemas
 
@@ -449,6 +468,14 @@ with the path parameter. Balance commands require a service caller named
     "email": "Email string; required. Account email, visible only to the owner or authorized services",
     "packageIds": "Array of UUID strings; required. References to registered packages",
     "createdAt": "UTC timestamp; required. Account creation time"
+  },
+  "RelationshipPageResponse": {
+    "items": "Array of UserRelationship; required. Relationships in the current page",
+    "nextCursor": "String or null; required. Cursor for the next page; null on the last page"
+  },
+  "UserRelationship": {
+    "otherUserId": "UUID string; required. The related user",
+    "relationship": "FRIEND or ENEMY; required. Current relationship classification"
   },
   "RelationshipResponse": {
     "userId": "UUID string; required. First user in the relationship query",
