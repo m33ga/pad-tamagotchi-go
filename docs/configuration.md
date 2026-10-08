@@ -10,9 +10,10 @@ port 8082. `GUILD_PUBLIC_WS_URL` is the socket address clients receive.
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
 The published gateway image `grdz/gateway:2.0.1` is pinned directly in Compose.
-The currently published Tamagotchi and Notification images target `linux/amd64`;
-Compose selects that platform explicitly so Docker Desktop can emulate them on
-Apple Silicon. The other images use their native platform.
+`SERVICE_PLATFORM` selects the Tamagotchi and Notification container architecture.
+It defaults to `linux/amd64`, which also works through emulation on Apple Silicon.
+Set `linux/arm64` when the selected service images provide that architecture.
+The other images use their native platform.
 
 `GATEWAY_URL=http://api-gateway:8080` is the address for service-to-service calls;
 client requests use the gateway's published address and the service prefix.
