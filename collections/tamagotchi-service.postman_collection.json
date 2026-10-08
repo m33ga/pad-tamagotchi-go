@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tamagotchi Go - Tamagotchi Service",
-    "description": "Tamagotchi Service endpoints: creature lifecycle, roster and primary selection, combat profile, XP grants and ownership transfers.\n\nRun the folders in order. \"1. Combat Types\" needs no state; \"2. Tamagotchis\" creates a creature and stores its id for the folders that follow.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -17,15 +17,19 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:5030/api/v1"
+      "value": "{{gatewayUrl}}/tamagotchi/api/v1"
     },
     {
       "key": "ownerUserId",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "winnerUserId",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "packageId",
@@ -41,7 +45,9 @@
     },
     {
       "key": "ownerAccessToken",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     },
     {
       "key": "battleReferenceId",
@@ -54,9 +60,201 @@
     {
       "key": "transferReferenceId",
       "value": ""
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
+    },
+    {
+      "key": "ownerEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "ownerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "winnerEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "winnerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "winnerAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "serviceClientId",
+      "value": "battle-service",
+      "type": "string",
+      "description": "Allowed service client for these operations; set locally if needed."
+    },
+    {
+      "key": "serviceClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "Use only the matching private service credential; never export it."
+    },
+    {
+      "key": "serviceAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the client-credentials request; never export."
     }
   ],
   "item": [
+    {
+      "name": "0. Authentication",
+      "item": [
+        {
+          "name": "Login owner through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"ownerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"ownerUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login winner through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{winnerEmail}}\",\n  \"password\": \"{{winnerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"winnerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"winnerUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get service token through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{serviceClientId}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{serviceClientSecret}}"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Client credentials succeed\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set(\"serviceAccessToken\", pm.response.json().access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
     {
       "name": "1. Combat Types",
       "item": [
@@ -606,7 +804,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -662,7 +860,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -712,7 +910,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -774,7 +972,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
