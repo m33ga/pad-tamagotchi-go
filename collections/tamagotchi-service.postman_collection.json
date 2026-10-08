@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tamagotchi Go - Tamagotchi Service",
-    "description": "Tamagotchi Service endpoints: creature lifecycle, roster and primary selection, combat profile, XP grants and ownership transfers.\n\nRun the folders in order. \"1. Combat Types\" needs no state; \"2. Tamagotchis\" creates a creature and stores its id for the folders that follow.",
+    "description": "Tamagotchi Service endpoints through the API Gateway: creature lifecycle, roster and primary selection, combat profile, XP grants, ownership transfers, and who may call each of them.\n\nRun the folders in order. \"0. Authentication\" registers an owner and a second user through User Management and logs both in, and obtains a battle-service token with the client-credentials grant. Owner requests use the owner's token; the combat profile, XP grant and ownership transfer requests use the battle-service token, as only Battle Service and Monster Raid Service may call them.\n\nSet battleClientSecret to BATTLE_CLIENT_SECRET from your local .env before running, and never export or commit it. packageId must name a package whose statistic definitions include hunger, tiredness and happiness once Package Registry is called for real; left empty, a random one is used, which only the mock registry accepts.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -16,8 +16,20 @@
   },
   "variable": [
     {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000"
+    },
+    {
       "key": "baseUrl",
-      "value": "http://localhost:5030/api/v1"
+      "value": "{{gatewayUrl}}/tamagotchi/api/v1"
+    },
+    {
+      "key": "userManagementUrl",
+      "value": "{{gatewayUrl}}/user-management/api/v1"
+    },
+    {
+      "key": "accountPassword",
+      "value": "Collection-Test-Account-1"
     },
     {
       "key": "ownerUserId",
@@ -54,9 +66,288 @@
     {
       "key": "transferReferenceId",
       "value": ""
+    },
+    {
+      "key": "ownerEmail",
+      "value": ""
+    },
+    {
+      "key": "ownerUsername",
+      "value": ""
+    },
+    {
+      "key": "otherUserId",
+      "value": ""
+    },
+    {
+      "key": "otherEmail",
+      "value": ""
+    },
+    {
+      "key": "otherUsername",
+      "value": ""
+    },
+    {
+      "key": "otherAccessToken",
+      "value": ""
+    },
+    {
+      "key": "battleClientId",
+      "value": "battle-service"
+    },
+    {
+      "key": "battleClientSecret",
+      "value": ""
+    },
+    {
+      "key": "battleAccessToken",
+      "value": ""
     }
   ],
   "item": [
+    {
+      "name": "0. Authentication",
+      "item": [
+        {
+          "name": "Register owner account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{userManagementUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ownerUsername}}\",\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{accountPassword}}\",\n  \"initialPackageId\": \"{{packageId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const run = Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);",
+                  "pm.collectionVariables.set('ownerEmail', 'owner-' + run + '@example.com');",
+                  "pm.collectionVariables.set('ownerUsername', 'owner-' + run);",
+                  "if (!pm.collectionVariables.get('packageId')) {",
+                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"ownerUserId\", pm.response.json().userId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{userManagementUrl}}/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{accountPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"ownerAccessToken\", pm.response.json().accessToken);",
+                  "pm.test(\"Issues a bearer token\", () => pm.expect(pm.response.json().accessToken).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register other account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{userManagementUrl}}/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{otherUsername}}\",\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{accountPassword}}\",\n  \"initialPackageId\": \"{{packageId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const run = Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);",
+                  "pm.collectionVariables.set('otherEmail', 'other-' + run + '@example.com');",
+                  "pm.collectionVariables.set('otherUsername', 'other-' + run);",
+                  "if (!pm.collectionVariables.get('packageId')) {",
+                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"otherUserId\", pm.response.json().userId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in other",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{userManagementUrl}}/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{accountPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"otherAccessToken\", pm.response.json().accessToken);",
+                  "pm.test(\"Issues a bearer token\", () => pm.expect(pm.response.json().accessToken).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get battle-service token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": "{{userManagementUrl}}/oauth2/token",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{battleClientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{battleClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('battleClientSecret')) {",
+                  "    console.warn('battleClientSecret is empty: set it to BATTLE_CLIENT_SECRET from your local .env. Never export or commit it.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"battleAccessToken\", pm.response.json().access_token);",
+                  "pm.test(\"Issues a bearer service token\", () => pm.expect(pm.response.json().token_type).to.eql(\"Bearer\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
     {
       "name": "1. Combat Types",
       "item": [
@@ -139,9 +430,6 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (!pm.collectionVariables.get('ownerUserId')) {",
-                  "    pm.collectionVariables.set('ownerUserId', pm.variables.replaceIn('{{$guid}}'));",
-                  "}",
                   "if (!pm.collectionVariables.get('packageId')) {",
                   "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
                   "}"
@@ -560,7 +848,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{battleAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -606,7 +894,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{battleAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -662,7 +950,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{battleAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -694,7 +982,234 @@
       ]
     },
     {
-      "name": "6. Ownership Transfers",
+      "name": "6. Access Rules",
+      "item": [
+        {
+          "name": "Get tamagotchi - no token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"Reports MISSING_TOKEN\", () => pm.expect(pm.response.json().error.code).to.eql(\"MISSING_TOKEN\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get tamagotchi - another user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports NOT_RESOURCE_OWNER\", () => pm.expect(pm.response.json().error.code).to.eql(\"NOT_RESOURCE_OWNER\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List user tamagotchis - another user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/tamagotchis",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports NOT_RESOURCE_OWNER\", () => pm.expect(pm.response.json().error.code).to.eql(\"NOT_RESOURCE_OWNER\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create tamagotchi - for another user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerUserId\": \"{{ownerUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Impostor\",\n  \"combatType\": \"SHADOW\",\n  \"spriteUrl\": \"https://cdn.example.com/sprites/impostor.png\",\n  \"healthStats\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports NOT_RESOURCE_OWNER\", () => pm.expect(pm.response.json().error.code).to.eql(\"NOT_RESOURCE_OWNER\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get combat profile - as the owner",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/combat-profile"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports CALLER_NOT_ALLOWED\", () => pm.expect(pm.response.json().error.code).to.eql(\"CALLER_NOT_ALLOWED\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Grant XP - as the owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/xp-grants",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000,\n  \"source\": \"BATTLE\",\n  \"referenceId\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports CALLER_NOT_ALLOWED\", () => pm.expect(pm.response.json().error.code).to.eql(\"CALLER_NOT_ALLOWED\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transfer ownership - as the owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchi-ownership-transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"fromUserId\": \"{{ownerUserId}}\",\n  \"toUserId\": \"{{otherUserId}}\",\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports CALLER_NOT_ALLOWED\", () => pm.expect(pm.response.json().error.code).to.eql(\"CALLER_NOT_ALLOWED\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Ownership Transfers",
       "item": [
         {
           "name": "Transfer ownership",
@@ -712,7 +1227,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{battleAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -774,7 +1289,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{ownerAccessToken}}",
+                  "value": "{{battleAccessToken}}",
                   "type": "string"
                 }
               ]
