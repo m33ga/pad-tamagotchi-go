@@ -1250,11 +1250,19 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 Map Service owns current location state and map visibility calculations. Clients continuously replace their latest location through the API Gateway. The service keeps only the newest location for each user, in Redis with a TTL, so a position that stops being refreshed disappears from the map on its own.
 
+##### Gateway Identity and Collaborators
+
+Callers reach Map through `/map` with a bearer token. All three operations are
+owner-only: the `userId` in the path is compared with `X-User-ID` and a mismatch
+yields `403`. Map reads friend and enemy relationships from User Management
+through `GATEWAY_URL`, authenticating as the `map-service` client; an
+unreachable User Management yields `503 USER_SERVICE_UNAVAILABLE`.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
-| `PUT /api/v1/users/{userId}/location` | Account owner | `UpdateLocationRequest` | `200 LocationResponse` | `400`, `403`, `404 USER_NOT_FOUND`, `409 STALE_LOCATION_UPDATE` |
+| `PUT /api/v1/users/{userId}/location` | Account owner | `UpdateLocationRequest` | `200 LocationResponse` | `400`, `403`, `409 STALE_LOCATION_UPDATE` |
 | `GET /api/v1/users/{userId}/map` | Account owner | None | `200 MapViewResponse` | `403`, `404 USER_OR_LOCATION_NOT_FOUND`, `503 USER_SERVICE_UNAVAILABLE` |
 | `DELETE /api/v1/users/{userId}/location` | Account owner | None | `204` | `403`, `404 LOCATION_NOT_FOUND` |
 
@@ -1328,17 +1336,28 @@ Map Service records a short-lived proximity marker for the unordered user pair s
 
 Monster Raid Service owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress. Raids, participants, attack batches and rewards are stored in PostgreSQL; only the current monster HP is kept in Redis for fast atomic updates.
 
+##### Gateway Identity and Collaborators
+
+Callers reach Monster Raid through `/monster-raid` with a bearer token. The
+fallback that accepted a client-supplied `X-User-ID` is gone; the gateway sets
+that header and strips what the client sends. Joining and attacking require
+`X-Caller-Kind: user` and yield `403` for a service caller. Monster Raid calls
+Guild, Package Registry, Tamagotchi and User Management through `GATEWAY_URL`,
+authenticating as the `monster-raid-service` client. Each reward command sends
+the raid ID as both its `Idempotency-Key` and business reference, so a
+settlement interrupted by an unreachable peer resumes without crediting twice.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
-| `GET /api/v1/guilds/{guildId}/raids?status={status}&cursor={cursor}&limit={limit}` | Guild member | Query parameters | `200 RaidPageResponse` | `400`, `403`, `404 GUILD_NOT_FOUND` |
-| `POST /api/v1/guilds/{guildId}/raids` | Guild member | `CreateRaidRequest` | `201 RaidResponse` | `400`, `403`, `404 SCHEDULE_OR_GUILD_NOT_FOUND`, `409 ACTIVE_GUILD_RAID_EXISTS`, `422 SCHEDULE_NOT_ACTIVE` |
-| `GET /api/v1/raids/{raidId}` | Guild member | None | `200 RaidResponse` | `403`, `404 RAID_NOT_FOUND` |
-| `POST /api/v1/raids/{raidId}/participants` | Guild member | `JoinRaidRequest` | `201 RaidParticipantResponse` | `400`, `403`, `404`, `409 PARTICIPANT_EXISTS`, `422 RAID_NOT_ACTIVE`, `422 PARTICIPANT_LIMIT_REACHED` |
-| `GET /api/v1/raids/{raidId}/participants?cursor={cursor}&limit={limit}` | Guild member | Query parameters | `200 RaidParticipantPageResponse` | `400`, `403`, `404 RAID_NOT_FOUND` |
-| `POST /api/v1/raids/{raidId}/attacks` | Raid participant | `CreateRaidAttackRequest` | `200 RaidAttackResponse` | `400`, `403`, `404`, `409 ATTACK_ALREADY_PROCESSED`, `422 RAID_NOT_ACTIVE`, `429 ATTACK_RATE_LIMITED` |
-| `GET /api/v1/raids/{raidId}/result` | Guild member | None | `200 RaidResultResponse` | `403`, `404 RAID_NOT_FOUND`, `409 RAID_NOT_FINISHED` |
+| `GET /api/v1/guilds/{guildId}/raids?status={status}&cursor={cursor}&limit={limit}` | Authenticated caller | Query parameters | `200 RaidPageResponse` | `400`, `404 GUILD_NOT_FOUND` |
+| `POST /api/v1/guilds/{guildId}/raids` | Authenticated caller | `CreateRaidRequest` | `201 RaidResponse` | `400`, `404 SCHEDULE_OR_GUILD_NOT_FOUND`, `409 ACTIVE_GUILD_RAID_EXISTS`, `422 SCHEDULE_NOT_ACTIVE` |
+| `GET /api/v1/raids/{raidId}` | Authenticated caller | None | `200 RaidResponse` | `404 RAID_NOT_FOUND` |
+| `POST /api/v1/raids/{raidId}/participants` | Guild member | `JoinRaidRequest` | `201 RaidParticipantResponse` | `400`, `403 NOT_GUILD_MEMBER, USER_CALLER_REQUIRED`, `404`, `409 PARTICIPANT_EXISTS`, `422 RAID_NOT_ACTIVE`, `422 PARTICIPANT_LIMIT_REACHED` |
+| `GET /api/v1/raids/{raidId}/participants?cursor={cursor}&limit={limit}` | Authenticated caller | Query parameters | `200 RaidParticipantPageResponse` | `400`, `404 RAID_NOT_FOUND` |
+| `POST /api/v1/raids/{raidId}/attacks` | Raid participant | `CreateRaidAttackRequest` | `200 RaidAttackResponse` | `400`, `403 NOT_RAID_PARTICIPANT, USER_CALLER_REQUIRED`, `404`, `409 ATTACK_ALREADY_PROCESSED`, `422 RAID_NOT_ACTIVE`, `422 TAMAGOTCHI_UNAVAILABLE`, `429 ATTACK_RATE_LIMITED` |
+| `GET /api/v1/raids/{raidId}/result` | Authenticated caller | None | `200 RaidResultResponse` | `404 RAID_NOT_FOUND`, `409 RAID_NOT_FINISHED` |
 
 Creating a raid is idempotent for the combination of `guildId` and `scheduleId`: if concurrent requests attempt to create the same guild raid, only one active instance is stored.
 
@@ -1801,7 +1820,7 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 
 Every API is reached at `/<service-prefix>/api/v1` through the gateway. Health checks sit outside that prefix and differ by stack: the C# services answer on `/_health`, Map and Monster Raid on `/health`, and Guild and Package Registry on `/healthz`.
 
-Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:8000/monster-raid/docs](http://localhost:8000/monster-raid/docs). Upstream health and documentation routes require a gateway bearer token. The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
+Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:8000/monster-raid/docs](http://localhost:8000/monster-raid/docs). Both are public routes on the gateway and need no token. Upstream health routes still require one. The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
 
 ### Storage
 
@@ -1818,7 +1837,7 @@ The deployed images differ in which collaborators they currently mock. The gatew
 - **User Management** calls Package Registry through the gateway for validation and registration.
 - **Battle** calls User Management, Tamagotchi and Package Registry through the gateway; queue publishing remains mocked.
 - **Map** reads User Management relationships through the gateway and logs the proximity events it would publish.
-- **Monster Raid** mocks Guild, Package Registry, Tamagotchi and User Management, and logs the raid lifecycle events it would publish.
+- **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
 - **Guild** calls User Management and Package Registry through the gateway with its service credentials; invitation events remain in its transactional outbox without a deployed broker.
 - **Package Registry** has no outbound dependency, receives gateway-derived identities, and derives administrator access from `ADMIN_USER_IDS`.
 - **Tamagotchi** and **Notification** need no other service running. With no broker deployed, Notification has no events to consume.
@@ -1827,7 +1846,7 @@ The deployed images differ in which collaborators they currently mock. The gatew
 
 Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. The User Management collection also supports registration with an existing active package.
 
-Service-only requests use the client-credentials endpoint and the allowed service's private credential. The Package Registry collection registers a user's package through User Management, which supplies its own service identity for the nested call. Business requests still require the referenced packages, pets and other resources to exist. Never export or commit credentials, Firebase tokens or populated access tokens.
+Service-only requests use the client-credentials endpoint and the allowed service's private credential. The Map collection needs two accounts that are friends in User Management, and the Monster Raid collection needs an account with a Tamagotchi, an active raid schedule, and the `monster-raid-service` secret in `serviceClientSecret` to read that schedule. The Package Registry collection registers a user's package through User Management, which supplies its own service identity for the nested call. Business requests still require the referenced packages, pets and other resources to exist. Never export or commit credentials, Firebase tokens or populated access tokens.
 
 The Registry administrator's UMS ID must be in `PACKAGE_REGISTRY_ADMIN_USER_IDS`. The Registry collection uses separate Guild, Tamagotchi, Battle, and Monster Raid client credentials for their allowed operations; set these only in private local values. Guild's `Negotiate chat session` request returns a short-lived, single-use ticket for a direct WebSocket connection. REST collection runs do not themselves send or receive WebSocket frames.
 
