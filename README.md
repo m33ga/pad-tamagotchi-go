@@ -41,7 +41,7 @@ The service defines six predefined combat types with a cyclic type-advantage sys
 Flame → Nature → Earth → Electric → Water → Shadow → Flame
 ```
 
-It provides combat type, level, and health information to the **Battle Service** and **Monster Raid Service** when computing damage, and owner/reference resolution to the **User Management Service**.
+It provides combat type, level, and health information to the **Battle Service** and **Monster Raid Service** when computing damage, and settles battles by granting XP and transferring ownership for the **Battle Service**.
 
 ### Battle Service
 
@@ -317,13 +317,13 @@ Every event sent through the queue uses the following envelope:
 | Service | Authoritative data | Store |
 |---|---|---|
 | User Management Service | Accounts, sessions, relationships, wallets and ledger | PostgreSQL |
-| Tamagotchi Service | Creatures, roster slots, package-local vitals and ownership transfers | PostgreSQL; flexible vitals are stored in a `jsonb` column |
+| Tamagotchi Service | Creatures, package-local vitals, XP grants and ownership transfers | PostgreSQL; flexible vitals are stored in a `jsonb` column |
 | Package Registry Service | Packages, moderators, statistic definitions and rules, boosts, monsters, raid schedules and global configuration | PostgreSQL |
 | Map Service | Latest location per user and the proximity markers that deduplicate detection events | Redis with a TTL per location, so stale positions expire on their own |
 | Battle Service | Battle requests, battles, sides, turns and results | PostgreSQL |
 | Guild Service | Guilds, memberships, membership requests and chat messages | PostgreSQL |
 | Monster Raid Service | Raids, participants, attack batches and rewards | PostgreSQL; current monster HP is kept in Redis |
-| Notification Service | Devices, preferences, notification history and templates | PostgreSQL for the per-user notification preferences and registered devices; Redis for the notifications themselves |
+| Notification Service | Devices, preferences, notification history and dead-lettered events | PostgreSQL; Redis keeps short-lived delivery deduplication keys and cached preferences |
 
 MongoDB is not part of the selected architecture. An S3-compatible object store keeps blobs, images and large JSON documents. Services store only the corresponding object key or URL in their own database; Package Registry Service owns shared package and monster assets, while Tamagotchi Service stores references to creature assets.
 
@@ -919,17 +919,17 @@ Tamagotchi Service owns every Tamagotchi and its current owner, role, combat typ
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
-| `GET /api/v1/tamagotchi-combat-types` | Client or internal service | None | `200 CombatTypeResponse[]` | None |
-| `POST /api/v1/tamagotchis` | Account owner or package client | `CreateTamagotchiRequest` | `201 TamagotchiResponse` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `409 PRIMARY_TAMAGOTCHI_EXISTS`, `422 INVALID_LOCAL_STATS` |
-| `GET /api/v1/tamagotchis/{tamagotchiId}` | Account owner or internal service | None | `200 TamagotchiResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
+| `GET /api/v1/tamagotchi-combat-types` | Any authenticated caller | None | `200 CombatTypeResponse[]` | None |
+| `POST /api/v1/tamagotchis` | The user named in `ownerUserId` | `CreateTamagotchiRequest` | `201 TamagotchiResponse` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `409 PRIMARY_TAMAGOTCHI_EXISTS`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `GET /api/v1/tamagotchis/{tamagotchiId}` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
 | `PATCH /api/v1/tamagotchis/{tamagotchiId}` | Account owner | `UpdateTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404` |
-| `GET /api/v1/users/{userId}/tamagotchis?role={role}` | Account owner or internal service | Query parameter | `200 TamagotchiResponse[]` | `400 INVALID_ROLE`, `403`, `404 USER_TAMAGOTCHIS_NOT_FOUND` |
+| `GET /api/v1/users/{userId}/tamagotchis?role={role}` | Account owner, Battle, or Monster Raid Service | Query parameter | `200 TamagotchiResponse[]`, empty when the user has none | `400 INVALID_ROLE`, `403` |
 | `GET /api/v1/users/{userId}/primary-tamagotchi` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 PRIMARY_TAMAGOTCHI_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/primary-tamagotchi` | Account owner | `SetPrimaryTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `409 TAMAGOTCHI_NOT_OWNED` |
-| `PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats` | Account owner or package client | `UpdateHealthStatsRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
-| `GET /api/v1/tamagotchis/{tamagotchiId}/combat-profile` | Battle or Monster Raid Service | None | `200 CombatProfileResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND`, `422 TAMAGOTCHI_UNAVAILABLE` |
+| `PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats` | Account owner | `UpdateHealthStatsRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `GET /api/v1/tamagotchis/{tamagotchiId}/combat-profile` | Battle or Monster Raid Service | None | `200 CombatProfileResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
 | `POST /api/v1/tamagotchis/{tamagotchiId}/xp-grants` | Battle or Monster Raid Service | `GrantXpRequest` | `200 GrantXpResponse` | `400`, `403`, `404`, `409 XP_ALREADY_GRANTED` |
-| `POST /api/v1/tamagotchi-ownership-transfers` | Battle Service | `TransferTamagotchiRequest` | `200 OwnershipTransferResponse` | `400`, `403`, `404`, `409 OWNERSHIP_ALREADY_TRANSFERRED`, `422 INVALID_TRANSFER` |
+| `POST /api/v1/tamagotchi-ownership-transfers` | Battle Service | `TransferTamagotchiRequest` | `200 OwnershipTransferResponse` | `400`, `403`, `404`, `409 OWNERSHIP_ALREADY_TRANSFERRED`, `409 TAMAGOTCHI_NOT_OWNED`, `422 INVALID_TRANSFER` |
 
 ##### Tamagotchi Schemas
 
@@ -1033,7 +1033,7 @@ The transfer updates the existing Tamagotchi instead of creating a new entry. Th
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | Package Registry Service | Read package and statistic definitions | Validate package-local health statistics |
+| Outbound | Package Registry Service through the gateway | Read statistic definitions as the `tamagotchi-service` client | Validate package-local health statistics |
 | Inbound | Battle Service | Read combat profile, grant XP, and transfer ownership | Execute and settle PvP combat |
 | Inbound | Monster Raid Service | Read combat profile and grant XP | Calculate raid damage and distribute rewards |
 
@@ -1510,12 +1510,15 @@ Notification Service owns Firebase device registrations, user notification prefe
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
 | `GET /api/v1/users/{userId}/notification-devices` | Account owner | None | `200 NotificationDeviceResponse[]` | `403` |
-| `PUT /api/v1/users/{userId}/notification-devices/{deviceId}` | Account owner | `RegisterNotificationDeviceRequest` | `200 NotificationDeviceResponse` | `400`, `403`, `422 INVALID_FCM_TOKEN` |
+| `PUT /api/v1/users/{userId}/notification-devices/{deviceId}` | Account owner | `RegisterNotificationDeviceRequest` | `200 NotificationDeviceResponse` | `400`, `403` |
 | `DELETE /api/v1/users/{userId}/notification-devices/{deviceId}` | Account owner | None | `204` | `403`, `404 DEVICE_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/notification-preferences` | Account owner | None | `200 NotificationPreferencesResponse` | `403` |
 | `PUT /api/v1/users/{userId}/notification-preferences` | Account owner | `UpdateNotificationPreferencesRequest` | `200 NotificationPreferencesResponse` | `400`, `403`, `422 UNKNOWN_CATEGORY` |
+| `POST /api/v1/internal/events` | User Management, Map, Guild, Battle, or Monster Raid Service | Event envelope | `202` | `400`, `403 CALLER_NOT_ALLOWED`, `422 UNSUPPORTED_EVENT`, `422 MALFORMED_EVENT` |
 
-Device registration uses `PUT` because the same application installation may safely submit its current Firebase token multiple times. The authenticated JWT subject must equal `userId`; Notification Service does not accept a user identifier supplied only in the request body.
+Device registration uses `PUT` because the same application installation may safely submit its current Firebase token multiple times. `X-User-ID` must equal `userId`; Notification Service does not accept a user identifier supplied only in the request body.
+
+Until a message broker is deployed, producers deliver the same event envelope to `POST /api/v1/internal/events` with their service token. It runs the identical processing path as a queue consumer would: deduplication, preferences, delivery and dead-lettering. Only the five producing services may call it.
 
 ##### Device and Preference Schemas
 
@@ -1542,7 +1545,7 @@ Device registration uses `PUT` because the same application installation may saf
   "NotificationPreferencesResponse": {
     "userId": "UUID string; required. Preference owner",
     "categories": "Object mapping category to Boolean; required. Effective category settings",
-    "updatedAt": "UTC timestamp; required. Last preference update"
+    "updatedAt": "UTC timestamp; required. Last preference update; the current time while the defaults were never replaced"
   }
 }
 ```
@@ -1587,7 +1590,7 @@ For each enabled recipient device, Notification Service sends an HTTPS request t
 }
 ```
 
-All Firebase `data` values are encoded as strings. Provider-specific message identifiers and delivery attempts are stored internally but are not exposed to producing services.
+All Firebase `data` values are encoded as strings. Delivery attempts are stored internally and are not exposed to producing services.
 
 ##### Delivery and Retry Rules
 
@@ -1599,7 +1602,7 @@ Queue delivery is at least once. Before contacting Firebase, Notification Servic
 - A permanently invalid Firebase token disables that device registration.
 - A malformed event, unsupported version, or exhausted retry sequence is moved to a dead-letter flow with its `correlationId`.
 
-PostgreSQL stores device registrations, preferences, notification history, templates and delivery-attempt state. Event identifiers are protected by a unique constraint so that redelivery cannot create duplicate notifications.
+PostgreSQL stores device registrations, preferences, notification history with delivery-attempt state, and dead-lettered events. A unique constraint on `eventId`, recipient and device means redelivery cannot create duplicate notifications. Redis keeps the short-lived deduplication keys checked before Firebase is contacted and a cache of preferences. Notification texts are built from templates in the service code.
 
 ##### Service Dependencies
 
@@ -1610,6 +1613,7 @@ PostgreSQL stores device registrations, preferences, notification history, templ
 | Inbound | Guild Service through Queue | Consume invitation events | Deliver guild-invitation notifications |
 | Inbound | Battle Service through Queue | Consume battle request and result events | Deliver battle notifications |
 | Inbound | Monster Raid Service through Queue | Consume raid lifecycle events | Deliver raid notifications |
+| Inbound | Producing services through the gateway | `POST /api/v1/internal/events` until a broker is deployed | Deliver the same events without a queue |
 | Outbound | Firebase Cloud Messaging | Send push messages over the provider HTTPS API | Deliver notifications to registered client devices |
 
 [Back to top](#table-of-contents)
@@ -1832,7 +1836,8 @@ The deployed images differ in which collaborators they currently mock. The gatew
 - **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
 - **Guild** is configured with real HTTP collaborators; invitation events are kept in its transactional outbox without a deployed broker.
 - **Package Registry** has no outbound dependency and receives verified caller identity from the gateway.
-- **Tamagotchi** and **Notification** need no other service running. With no broker deployed, Notification has no events to consume.
+- **Tamagotchi** calls Package Registry through the gateway to validate health statistics when `USE_MOCK_PACKAGE_REGISTRY=false`; `true` keeps its built-in registry mock.
+- **Notification** calls no other service. Firebase is mocked. With no broker deployed, producers can deliver events through its internal event endpoint.
 
 ### Postman Collections
 
@@ -1877,7 +1882,7 @@ The Tamagotchi Service maintains the globally relevant state of Tamagotchis, inc
 
 The Notification Service handles asynchronous notifications sent to users through Firebase Cloud Messaging. It consumes events generated by other services and delivers notifications to clients.
 
-**PostgreSQL** is used for the per-user notification preferences and the registered devices, which must survive restarts. **Redis** is used for the notifications themselves, where low latency matters more than durability.
+**PostgreSQL** is used for the registered devices, preferences and notification history, which must survive restarts. **Redis** is used for the deduplication keys and cached preferences that every delivery reads, where low latency matters more than durability.
 
 ### Map Service
 
