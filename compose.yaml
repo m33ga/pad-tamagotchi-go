@@ -1,11 +1,29 @@
 services:
+  api-gateway:
+    image: ${GATEWAY_IMAGE:?Set GATEWAY_IMAGE to the published gateway image}
+    pull_policy: always
+    ports:
+      - "${GATEWAY_PORT:-8000}:8080"
+    volumes:
+      - ./config/gateway.yaml:/app/config/gateway.yaml:ro
+    depends_on:
+      user-management-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   user-management-api:
-    image: sanda2004/user-management-service:1.0.3
+    image: sanda2004/user-management-service:2.0.0
     pull_policy: always
     env_file:
       - .env
-    ports:
-      - "${USER_MANAGEMENT_API_PORT:-5010}:8080"
+    volumes:
+      - ./secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+      - ./config/service-clients.yaml:/app/config/service-clients.yaml:ro
     depends_on:
       user-management-db:
         condition: service_healthy
@@ -22,8 +40,6 @@ services:
       POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME}
       POSTGRES_USER: ${USER_MANAGEMENT_DB_USER}
       POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD}
-    ports:
-      - "${USER_MANAGEMENT_DB_PUBLISHED_PORT:-5433}:5432"
     volumes:
       - user-management-data:/var/lib/postgresql/data
     healthcheck:
@@ -33,12 +49,11 @@ services:
       retries: 10
 
   battle-api:
-    image: sanda2004/battle-service:1.0.2
+    image: sanda2004/battle-service:2.0.0
     pull_policy: always
     env_file:
       - .env
-    ports:
-      - "${BATTLE_API_PORT:-5020}:8080"
+      - ./secrets/battle-service.env
     depends_on:
       battle-db:
         condition: service_healthy
@@ -160,20 +175,19 @@ services:
   guild-api:
     image: cosmak47/pad-guild-service:2.0.0
     pull_policy: always
+    env_file:
+      - ./secrets/guild-service.env
     environment:
       PORT: ${GUILD_API_PORT}
       WS_PORT: ${GUILD_WS_PORT:-8082}
       DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
       GATEWAY_URL: ${GATEWAY_URL:-http://api-gateway:8080}
-      CLIENT_ID: guild-service
-      CLIENT_SECRET: ${GUILD_CLIENT_SECRET:?Set GUILD_CLIENT_SECRET in your local .env file}
-      PUBLIC_WS_URL: ws://localhost:${GUILD_WS_PUBLISHED_PORT:-8081}
+      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL:?Set GUILD_PUBLIC_WS_URL to the client-reachable WebSocket base URL}
       MOCK_EXTERNAL_SERVICES: "false"
-      REQUEST_TIMEOUT: ${GUILD_REQUEST_TIMEOUT:-10s}
+      REQUEST_TIMEOUT: ${GUILD_REQUEST_TIMEOUT:-4s}
       MAX_CONCURRENCY: ${GUILD_MAX_CONCURRENCY:-64}
     ports:
       - "${GUILD_WS_PUBLISHED_PORT:-8081}:${GUILD_WS_PORT:-8082}"
-    networks: [internal]
     depends_on:
       guild-db:
         condition: service_healthy
@@ -192,7 +206,6 @@ services:
       POSTGRES_PASSWORD: ${GUILD_DB_PASSWORD}
     volumes:
       - guild-data:/var/lib/postgresql/data
-    networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -202,16 +215,15 @@ services:
   package-registry-api:
     image: cosmak47/pad-package-registry-service:2.0.0
     pull_policy: always
+    env_file:
+      - ./secrets/package-registry-service.env
     environment:
       PORT: ${PACKAGE_REGISTRY_API_PORT}
       DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
       GATEWAY_URL: ${GATEWAY_URL:-http://api-gateway:8080}
-      CLIENT_ID: package-registry-service
-      CLIENT_SECRET: ${PACKAGE_REGISTRY_CLIENT_SECRET:?Set PACKAGE_REGISTRY_CLIENT_SECRET in your local .env file}
       ADMIN_USER_IDS: ${PACKAGE_REGISTRY_ADMIN_USER_IDS:-}
-      REQUEST_TIMEOUT: ${PACKAGE_REGISTRY_REQUEST_TIMEOUT:-10s}
+      REQUEST_TIMEOUT: ${PACKAGE_REGISTRY_REQUEST_TIMEOUT:-4s}
       MAX_CONCURRENCY: ${PACKAGE_REGISTRY_MAX_CONCURRENCY:-64}
-    networks: [internal]
     depends_on:
       package-registry-db:
         condition: service_healthy
@@ -230,7 +242,6 @@ services:
       POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD}
     volumes:
       - package-registry-data:/var/lib/postgresql/data
-    networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -343,7 +354,3 @@ volumes:
   tamagotchi-data:
   notification-data:
   notification-redis-data:
-
-networks:
-  internal:
-    internal: true

@@ -3,7 +3,7 @@
   "info": {
     "title": "Map Service API",
     "version": "1.0.0",
-    "description": "Owns current location state, map settings, encounters and map visibility calculations. Clients continuously replace their latest location. The service keeps only the newest location for each user in Redis with a TTL and stores durable settings and encounters in PostgreSQL.\n\nThe service publishes the `map.proximity.detected.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "description": "Owns current location state and map visibility calculations. Clients continuously replace their latest location. The service keeps only the newest location for each user in Redis with a TTL, so a position that stops being refreshed disappears from the map on its own. Proximity markers, which keep continuous location updates from producing duplicate detection events, are kept in Redis as well.\n\nThe service publishes the `map.proximity.detected.v1` queue event. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
