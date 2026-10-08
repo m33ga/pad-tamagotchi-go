@@ -15,14 +15,14 @@ when testing local images. Keep existing database passwords when reusing volumes
 The template groups settings by service and shared purpose. Service settings are
 loaded from `.env`; Compose `environment` entries adapt values where an image uses
 different names or a container-specific address. The User Management API and
-database publish no host ports. Other published development ports are listed in
-the README.
+database, and the Battle API, publish no host ports. Other published development
+ports are listed in the README.
 
-`REQUEST_TIMEOUT_SECONDS` and `MAX_CONCURRENCY` configure the issuer's request
-deadline and admission budget, defaulting to 10 seconds and 64 requests. Other
-services may expose their own settings for the same request handling contract.
-`JWT_SIGNING_KEY` is retained for the current Battle image and its direct-call
-collection. It is not used to issue system tokens; those use asymmetric signing.
+`REQUEST_TIMEOUT_SECONDS` and `MAX_CONCURRENCY` configure User Management and
+Battle request deadlines and admission budgets, defaulting to 10 seconds and
+64 requests. `USE_MOCK_SERVICES=false` enables Battle's HTTP collaborators through
+`GATEWAY_URL`; true is reserved for isolated fixture tests. Battle trusts gateway
+identity headers and has no signing key or token verification configuration.
 
 ## Service Authentication
 
@@ -45,6 +45,9 @@ never receive the private key.
 Each `secrets/<client-id>.env` belongs in the corresponding service's private
 configuration. It contains `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET` and
 `OAUTH_TOKEN_URL`; adapt these names to that service's configuration interface.
+Compose loads only `secrets/battle-service.env` into the Battle API, after the
+shared `.env`. Battle derives the token endpoint from `GATEWAY_URL` and reads
+`OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET`; it does not use `OAUTH_TOKEN_URL`.
 Do not load every client's plaintext secret into a shared environment. Clients
 request a token through the gateway, cache it and refresh it when fewer than
 30 seconds remain. Claims, scopes and identity headers are defined in the

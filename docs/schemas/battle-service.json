@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Battle Service API",
-    "version": "1.0.0",
-    "description": "Owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns, and results in PostgreSQL.\n\nThe service publishes the `battle.request.created.v1` and `battle.completed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "version": "2.0.0",
+    "description": "Owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns, and results in PostgreSQL.\n\nThe service publishes the `battle.request.created.v1` and `battle.completed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.\n\nExternal requests use bearer tokens through the gateway. The internal container trusts only gateway-generated identity headers and does not parse or verify tokens. X-Caller-Kind is required internally; user routes require X-User-ID. A valid service caller is authenticated but cannot perform player operations. Sessions and scopes are optional. Missing or malformed identity returns 401 INVALID_IDENTITY. Handlers have a configurable deadline (default 10 seconds) and concurrency budget (default 64), yielding 504 REQUEST_TIMEOUT or immediate 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -11,8 +11,8 @@
   },
   "servers": [
     {
-      "url": "/api/v1",
-      "description": "Base path"
+      "url": "http://localhost:8000/battle/api/v1",
+      "description": "Gateway; external callers send bearer tokens. Trusted headers are injected by the gateway."
     }
   ],
   "security": [
@@ -36,13 +36,30 @@
         "operationId": "createBattleRequest",
         "summary": "Challenge another user to a battle",
         "description": "Callable only by the challenger. Publishes `battle.request.created.v1` after the challenge is stored successfully.",
-        "tags": ["Battle Requests"],
+        "tags": [
+          "Battle Requests"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/CorrelationId"
           },
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "requestBody": {
@@ -94,6 +111,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -103,13 +129,30 @@
         "operationId": "getBattleRequest",
         "summary": "Retrieve a battle request",
         "description": "Callable only by the challenger or the challenged opponent.",
-        "tags": ["Battle Requests"],
+        "tags": [
+          "Battle Requests"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/BattleRequestId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "responses": {
@@ -135,6 +178,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -144,7 +196,9 @@
         "operationId": "listUserBattleRequests",
         "summary": "List a user's battle requests",
         "description": "Callable only by the account owner.",
-        "tags": ["Battle Requests"],
+        "tags": [
+          "Battle Requests"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/UserId"
@@ -156,7 +210,10 @@
             "description": "Restricts results to requests sent or received by the user",
             "schema": {
               "type": "string",
-              "enum": ["SENT", "RECEIVED"]
+              "enum": [
+                "SENT",
+                "RECEIVED"
+              ]
             }
           },
           {
@@ -166,11 +223,31 @@
             "description": "Restricts results to requests in the given state",
             "schema": {
               "type": "string",
-              "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED"]
+              "enum": [
+                "PENDING",
+                "ACCEPTED",
+                "REJECTED",
+                "EXPIRED"
+              ]
             }
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "responses": {
@@ -199,6 +276,15 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -208,13 +294,30 @@
         "operationId": "respondToBattleRequest",
         "summary": "Accept or reject a battle request",
         "description": "Callable only by the challenged opponent. Accepting creates the battle returned in the decision response.",
-        "tags": ["Battle Requests"],
+        "tags": [
+          "Battle Requests"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/BattleRequestId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "requestBody": {
@@ -266,6 +369,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -275,13 +387,30 @@
         "operationId": "getBattle",
         "summary": "Retrieve a battle",
         "description": "Callable only by battle participants.",
-        "tags": ["Battles"],
+        "tags": [
+          "Battles"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/BattleId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "responses": {
@@ -307,6 +436,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -316,7 +454,9 @@
         "operationId": "listUserBattles",
         "summary": "List a user's battles",
         "description": "Callable only by the account owner.",
-        "tags": ["Battles"],
+        "tags": [
+          "Battles"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/UserId"
@@ -328,7 +468,12 @@
             "description": "Restricts results to battles in the given lifecycle state",
             "schema": {
               "type": "string",
-              "enum": ["ACTIVE", "SETTLING", "COMPLETED", "FORFEITED"]
+              "enum": [
+                "ACTIVE",
+                "SETTLING",
+                "COMPLETED",
+                "FORFEITED"
+              ]
             }
           },
           {
@@ -353,6 +498,21 @@
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "responses": {
@@ -378,6 +538,15 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -387,7 +556,9 @@
         "operationId": "createBattleAction",
         "summary": "Perform a battle action",
         "description": "Callable only by the participant whose turn it is. Deduplicated by the client-generated actionId.",
-        "tags": ["Battles"],
+        "tags": [
+          "Battles"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/BattleId"
@@ -397,6 +568,21 @@
           },
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "requestBody": {
@@ -448,6 +634,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -457,13 +652,30 @@
         "operationId": "forfeitBattle",
         "summary": "Forfeit an active battle",
         "description": "Callable only by battle participants. The forfeiting participant loses the battle.",
-        "tags": ["Battles"],
+        "tags": [
+          "Battles"
+        ],
         "parameters": [
           {
             "$ref": "#/components/parameters/BattleId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/X-Caller-Kind"
+          },
+          {
+            "$ref": "#/components/parameters/X-User-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Session-ID"
+          },
+          {
+            "$ref": "#/components/parameters/X-Service-Name"
+          },
+          {
+            "$ref": "#/components/parameters/X-Scopes"
           }
         ],
         "responses": {
@@ -492,6 +704,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/GatewayIdentityRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -511,10 +732,9 @@
         "name": "X-Correlation-ID",
         "in": "header",
         "required": false,
-        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "description": "Propagated unchanged on every outbound call; generated only when absent",
         "schema": {
-          "type": "string",
-          "format": "uuid"
+          "type": "string"
         }
       },
       "IdempotencyKey": {
@@ -556,6 +776,58 @@
           "type": "string",
           "format": "uuid"
         }
+      },
+      "X-Caller-Kind": {
+        "name": "X-Caller-Kind",
+        "in": "header",
+        "required": false,
+        "description": "Required on internal requests: user, service or anonymous. Injected by the gateway; never supplied as identity by external clients.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "user",
+            "service",
+            "anonymous"
+          ]
+        }
+      },
+      "X-User-ID": {
+        "name": "X-User-ID",
+        "in": "header",
+        "required": false,
+        "description": "Authenticated user UUID, required for user callers. Ownership and participant checks use this value, not path parameters.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "X-Session-ID": {
+        "name": "X-Session-ID",
+        "in": "header",
+        "required": false,
+        "description": "Optional session UUID for user callers.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "X-Service-Name": {
+        "name": "X-Service-Name",
+        "in": "header",
+        "required": false,
+        "description": "Required service identity for service callers. Player routes require user identity and reject service callers with 403.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "X-Scopes": {
+        "name": "X-Scopes",
+        "in": "header",
+        "required": false,
+        "description": "Optional space-separated scopes for service callers.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "responses": {
@@ -588,21 +860,68 @@
             }
           }
         }
+      },
+      "GatewayIdentityRequired": {
+        "description": "Missing or malformed gateway identity: INVALID_IDENTITY (or gateway MISSING_TOKEN / INVALID_TOKEN for external calls)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "DEPENDENCY_UNAVAILABLE, or fail-fast CONCURRENCY_LIMIT_REACHED when the service is saturated",
+        "headers": {
+          "Retry-After": {
+            "description": "1 on CONCURRENCY_LIMIT_REACHED",
+            "schema": {
+              "type": "string",
+              "const": "1"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "RequestTimeout": {
+        "description": "Request deadline expired: REQUEST_TIMEOUT",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
       }
     },
     "schemas": {
       "ErrorResponse": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message", "correlationId"],
+            "required": [
+              "code",
+              "message",
+              "correlationId"
+            ],
             "properties": {
               "code": {
                 "type": "string",
                 "description": "Stable machine-readable error code",
-                "examples": ["RESOURCE_NOT_FOUND"]
+                "examples": [
+                  "RESOURCE_NOT_FOUND"
+                ]
               },
               "message": {
                 "type": "string",
@@ -610,8 +929,7 @@
               },
               "correlationId": {
                 "type": "string",
-                "format": "uuid",
-                "description": "Correlation identifier of the failed operation"
+                "description": "Propagated unchanged; generated only when absent"
               },
               "details": {
                 "type": "array",
@@ -626,7 +944,12 @@
       },
       "CreateBattleRequest": {
         "type": "object",
-        "required": ["opponentUserId", "primaryTamagotchiId", "secondaryTamagotchiId", "equippedBoosts"],
+        "required": [
+          "opponentUserId",
+          "primaryTamagotchiId",
+          "secondaryTamagotchiId",
+          "equippedBoosts"
+        ],
         "properties": {
           "opponentUserId": {
             "type": "string",
@@ -654,11 +977,16 @@
       },
       "RespondToBattleRequest": {
         "type": "object",
-        "required": ["decision"],
+        "required": [
+          "decision"
+        ],
         "properties": {
           "decision": {
             "type": "string",
-            "enum": ["ACCEPT", "REJECT"],
+            "enum": [
+              "ACCEPT",
+              "REJECT"
+            ],
             "description": "Opponent's decision"
           },
           "primaryTamagotchiId": {
@@ -682,7 +1010,10 @@
       },
       "BattleRequestDecisionResponse": {
         "type": "object",
-        "required": ["battleRequest", "battle"],
+        "required": [
+          "battleRequest",
+          "battle"
+        ],
         "properties": {
           "battleRequest": {
             "$ref": "#/components/schemas/BattleRequestResponse",
@@ -704,7 +1035,15 @@
       "BattleRequestResponse": {
         "type": "object",
         "description": "State of a PvP challenge. The opponent's selection is not part of the request; it is submitted when the opponent accepts and appears only on the created battle.",
-        "required": ["battleRequestId", "challengerUserId", "opponentUserId", "challengerSelection", "status", "createdAt", "expiresAt"],
+        "required": [
+          "battleRequestId",
+          "challengerUserId",
+          "opponentUserId",
+          "challengerSelection",
+          "status",
+          "createdAt",
+          "expiresAt"
+        ],
         "properties": {
           "battleRequestId": {
             "type": "string",
@@ -727,7 +1066,12 @@
           },
           "status": {
             "type": "string",
-            "enum": ["PENDING", "ACCEPTED", "REJECTED", "EXPIRED"],
+            "enum": [
+              "PENDING",
+              "ACCEPTED",
+              "REJECTED",
+              "EXPIRED"
+            ],
             "description": "Current request state"
           },
           "createdAt": {
@@ -744,7 +1088,11 @@
       },
       "BattleSelection": {
         "type": "object",
-        "required": ["primaryTamagotchiId", "secondaryTamagotchiId", "equippedBoosts"],
+        "required": [
+          "primaryTamagotchiId",
+          "secondaryTamagotchiId",
+          "equippedBoosts"
+        ],
         "properties": {
           "primaryTamagotchiId": {
             "type": "string",
@@ -767,7 +1115,10 @@
       },
       "BattleBoostSelection": {
         "type": "object",
-        "required": ["packageId", "boostKey"],
+        "required": [
+          "packageId",
+          "boostKey"
+        ],
         "properties": {
           "packageId": {
             "type": "string",
@@ -782,7 +1133,19 @@
       },
       "BattleResponse": {
         "type": "object",
-        "required": ["battleId", "battleRequestId", "status", "participants", "currentTurnUserId", "turnNumber", "winnerUserId", "loserUserId", "result", "createdAt", "updatedAt"],
+        "required": [
+          "battleId",
+          "battleRequestId",
+          "status",
+          "participants",
+          "currentTurnUserId",
+          "turnNumber",
+          "winnerUserId",
+          "loserUserId",
+          "result",
+          "createdAt",
+          "updatedAt"
+        ],
         "properties": {
           "battleId": {
             "type": "string",
@@ -796,7 +1159,12 @@
           },
           "status": {
             "type": "string",
-            "enum": ["ACTIVE", "SETTLING", "COMPLETED", "FORFEITED"],
+            "enum": [
+              "ACTIVE",
+              "SETTLING",
+              "COMPLETED",
+              "FORFEITED"
+            ],
             "description": "Battle lifecycle state. When combat ends the battle enters SETTLING and performs idempotent settlement commands keyed by battleId: currency credit and debit through User Management Service, XP grants and the ownership transfer through Tamagotchi Service. The battle becomes COMPLETED only after every required command succeeds; if a dependency is unavailable it remains SETTLING and failed commands are retried without applying a reward twice"
           },
           "participants": {
@@ -809,7 +1177,10 @@
             }
           },
           "currentTurnUserId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
             "description": "User allowed to act, or null after the battle ends"
           },
@@ -819,12 +1190,18 @@
             "description": "Current turn number"
           },
           "winnerUserId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
             "description": "Winner after completion"
           },
           "loserUserId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
             "description": "Loser after completion"
           },
@@ -853,7 +1230,10 @@
       },
       "BattlePageResponse": {
         "type": "object",
-        "required": ["items", "nextCursor"],
+        "required": [
+          "items",
+          "nextCursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -863,14 +1243,21 @@
             }
           },
           "nextCursor": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Cursor for the next page"
           }
         }
       },
       "BattleParticipant": {
         "type": "object",
-        "required": ["userId", "combatants", "equippedBoosts"],
+        "required": [
+          "userId",
+          "combatants",
+          "equippedBoosts"
+        ],
         "properties": {
           "userId": {
             "type": "string",
@@ -897,7 +1284,12 @@
       },
       "BattleCombatant": {
         "type": "object",
-        "required": ["tamagotchiId", "role", "currentHealth", "defeated"],
+        "required": [
+          "tamagotchiId",
+          "role",
+          "currentHealth",
+          "defeated"
+        ],
         "properties": {
           "tamagotchiId": {
             "type": "string",
@@ -906,7 +1298,10 @@
           },
           "role": {
             "type": "string",
-            "enum": ["PRIMARY", "SECONDARY"],
+            "enum": [
+              "PRIMARY",
+              "SECONDARY"
+            ],
             "description": "Selection role"
           },
           "currentHealth": {
@@ -922,7 +1317,11 @@
       },
       "CreateBattleActionRequest": {
         "type": "object",
-        "required": ["actionId", "type", "actorTamagotchiId"],
+        "required": [
+          "actionId",
+          "type",
+          "actorTamagotchiId"
+        ],
         "properties": {
           "actionId": {
             "type": "string",
@@ -931,7 +1330,11 @@
           },
           "type": {
             "type": "string",
-            "enum": ["ATTACK", "SWITCH_ACTIVE", "USE_BOOST"],
+            "enum": [
+              "ATTACK",
+              "SWITCH_ACTIVE",
+              "USE_BOOST"
+            ],
             "description": "Requested turn action"
           },
           "actorTamagotchiId": {
@@ -957,7 +1360,12 @@
       },
       "BattleActionResponse": {
         "type": "object",
-        "required": ["actionId", "type", "damage", "battle"],
+        "required": [
+          "actionId",
+          "type",
+          "damage",
+          "battle"
+        ],
         "properties": {
           "actionId": {
             "type": "string",
@@ -966,7 +1374,11 @@
           },
           "type": {
             "type": "string",
-            "enum": ["ATTACK", "SWITCH_ACTIVE", "USE_BOOST"],
+            "enum": [
+              "ATTACK",
+              "SWITCH_ACTIVE",
+              "USE_BOOST"
+            ],
             "description": "Processed action type"
           },
           "damage": {
@@ -982,7 +1394,15 @@
       },
       "BattleResult": {
         "type": "object",
-        "required": ["winnerUserId", "loserUserId", "winnerGlobalCurrency", "loserGlobalCurrencyLoss", "xpAwards", "transferredTamagotchiId", "settledAt"],
+        "required": [
+          "winnerUserId",
+          "loserUserId",
+          "winnerGlobalCurrency",
+          "loserGlobalCurrencyLoss",
+          "xpAwards",
+          "transferredTamagotchiId",
+          "settledAt"
+        ],
         "properties": {
           "winnerUserId": {
             "type": "string",
@@ -1025,7 +1445,11 @@
       },
       "BattleXpAward": {
         "type": "object",
-        "required": ["userId", "tamagotchiId", "amount"],
+        "required": [
+          "userId",
+          "tamagotchiId",
+          "amount"
+        ],
         "properties": {
           "userId": {
             "type": "string",
@@ -1047,7 +1471,15 @@
       "EventEnvelope": {
         "type": "object",
         "description": "Common envelope for every event sent through the message queue. Not delivered over HTTP.",
-        "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "correlationId", "data"],
+        "required": [
+          "eventId",
+          "eventType",
+          "eventVersion",
+          "occurredAt",
+          "producer",
+          "correlationId",
+          "data"
+        ],
         "properties": {
           "eventId": {
             "type": "string",
@@ -1057,7 +1489,9 @@
           "eventType": {
             "type": "string",
             "description": "Stable event name including the version suffix",
-            "examples": ["battle.request.created.v1"]
+            "examples": [
+              "battle.request.created.v1"
+            ]
           },
           "eventVersion": {
             "type": "integer",
@@ -1071,12 +1505,13 @@
           "producer": {
             "type": "string",
             "description": "Service that published the event",
-            "examples": ["battle-service"]
+            "examples": [
+              "battle-service"
+            ]
           },
           "correlationId": {
             "type": "string",
-            "format": "uuid",
-            "description": "Identifier connecting the event to the originating operation"
+            "description": "Propagated unchanged; generated only when absent"
           },
           "data": {
             "description": "Event payload",
@@ -1094,7 +1529,12 @@
       "BattleRequestCreatedEventV1": {
         "type": "object",
         "description": "Payload of `battle.request.created.v1`, published after a challenge is stored successfully. Notification Service consumes it to notify the opponent.",
-        "required": ["battleRequestId", "challengerUserId", "opponentUserId", "expiresAt"],
+        "required": [
+          "battleRequestId",
+          "challengerUserId",
+          "opponentUserId",
+          "expiresAt"
+        ],
         "properties": {
           "battleRequestId": {
             "type": "string",
@@ -1121,7 +1561,15 @@
       "BattleCompletedEventV1": {
         "type": "object",
         "description": "Payload of `battle.completed.v1`, published after currency, XP, and ownership settlement finishes. Notification Service consumes it to notify both players.",
-        "required": ["battleId", "winnerUserId", "loserUserId", "winnerGlobalCurrency", "loserGlobalCurrencyLoss", "transferredTamagotchiId", "settledAt"],
+        "required": [
+          "battleId",
+          "winnerUserId",
+          "loserUserId",
+          "winnerGlobalCurrency",
+          "loserGlobalCurrencyLoss",
+          "transferredTamagotchiId",
+          "settledAt"
+        ],
         "properties": {
           "battleId": {
             "type": "string",

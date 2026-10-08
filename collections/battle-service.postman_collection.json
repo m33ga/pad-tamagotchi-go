@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "2548694d-5793-4818-843d-b4e8688d009c",
     "name": "Tamagotchi Go - Battle Service",
-    "description": "Executable Lab 1 collection for all Battle Service contract endpoints. Start the Docker Compose stack, set jwtSigningKey to the same local development key used by Battle Service, then run the collection in order. The scripts create short-lived fixture-user JWTs and capture request and battle identifiers.",
+    "description": "Battle routes through the gateway. Supply real UMS-issued user tokens and matching existing user/Tamagotchi IDs in local variables. No signing key is needed; never export credentials or access tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -21,14 +21,6 @@
       "script": {
         "type": "text/javascript",
         "exec": [
-          "const secret = pm.variables.get('jwtSigningKey');",
-          "if (!secret || secret.length < 32) throw new Error('Set jwtSigningKey to the Battle Service local JWT key.');",
-          "const expires = Math.floor(Date.now() / 1000) + 300;",
-          "const Crypto = require('crypto-js');",
-          "const encode = value => Crypto.enc.Base64.stringify(Crypto.enc.Utf8.parse(JSON.stringify(value))).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
-          "const signUser = (sub, sid) => { const unsigned = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: 'tamagotchi-go', aud: 'tamagotchi-go', kind: 'user', sub, sid, exp: expires })}`; const signature = Crypto.enc.Base64.stringify(Crypto.HmacSHA256(unsigned, secret)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_'); return `${unsigned}.${signature}`; };",
-          "pm.collectionVariables.set('challengerAccessToken', signUser(pm.collectionVariables.get('challengerUserId'), '30000000-0000-4000-8000-000000000001'));",
-          "pm.collectionVariables.set('opponentAccessToken', signUser(pm.collectionVariables.get('opponentUserId'), '30000000-0000-4000-8000-000000000002'));",
           "pm.request.headers.upsert({ key: 'X-Correlation-ID', value: pm.variables.replaceIn('{{$guid}}') });"
         ]
       }
@@ -362,14 +354,8 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:5020/api/v1",
+      "value": "http://localhost:8000/battle/api/v1",
       "type": "string"
-    },
-    {
-      "key": "jwtSigningKey",
-      "value": "",
-      "type": "string",
-      "description": "Set locally to the same development key used by Battle Service. Never commit a real key."
     },
     {
       "key": "challengerUserId",
@@ -404,12 +390,14 @@
     {
       "key": "challengerAccessToken",
       "value": "",
-      "type": "string"
+      "type": "string",
+      "description": "Set locally to the real user access token returned by UMS login. Never export a token."
     },
     {
       "key": "opponentAccessToken",
       "value": "",
-      "type": "string"
+      "type": "string",
+      "description": "Set locally to the real user access token returned by UMS login. Never export a token."
     },
     {
       "key": "battleRequestId",

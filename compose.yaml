@@ -49,12 +49,11 @@ services:
       retries: 10
 
   battle-api:
-    image: sanda2004/battle-service:1.0.2
+    image: sanda2004/battle-service:2.0.0
     pull_policy: always
     env_file:
       - .env
-    ports:
-      - "${BATTLE_API_PORT:-5020}:8080"
+      - ./secrets/battle-service.env
     depends_on:
       battle-db:
         condition: service_healthy
