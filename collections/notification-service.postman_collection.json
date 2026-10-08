@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tamagotchi Go - Notification Service",
-    "description": "Notification Service endpoints: Firebase device registrations and per-category notification preferences.\n\nRun the folders in order. \"1. Devices\" registers an installation and stores its identifiers for the requests that follow.\n\nFirebase registration tokens are confidential: they are sent when registering a device and are deliberately never returned in a response, which the tests assert.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. The Access Rules folder checks who may call each operation: no token and a second user's token are refused.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -17,11 +17,13 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:5060/api/v1"
+      "value": "{{gatewayUrl}}/notification/api/v1"
     },
     {
       "key": "ownerUserId",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "deviceId",
@@ -33,14 +35,153 @@
     },
     {
       "key": "ownerAccessToken",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     },
     {
       "key": "fcmToken",
       "value": ""
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
+    },
+    {
+      "key": "ownerEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "ownerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "otherEmail",
+      "value": "",
+      "type": "string",
+      "description": "Second existing UMS account email; set locally."
+    },
+    {
+      "key": "otherPassword",
+      "value": "",
+      "type": "string",
+      "description": "Second existing UMS password; keep local and never export."
+    },
+    {
+      "key": "otherUserId",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the second login."
+    },
+    {
+      "key": "otherAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     }
   ],
   "item": [
+    {
+      "name": "0. Authentication",
+      "item": [
+        {
+          "name": "Login owner through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"ownerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"ownerUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login other user through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{otherPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"otherAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"otherUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
     {
       "name": "1. Devices",
       "item": [
@@ -409,7 +550,157 @@
       ]
     },
     {
-      "name": "3. Device Removal",
+      "name": "3. Access Rules",
+      "item": [
+        {
+          "name": "List devices - no token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"Reports MISSING_TOKEN\", () => pm.expect(pm.response.json().error.code).to.eql(\"MISSING_TOKEN\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List devices - another user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports NOT_RESOURCE_OWNER\", () => pm.expect(pm.response.json().error.code).to.eql(\"NOT_RESOURCE_OWNER\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register device - on another account",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-devices/{{$guid}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmRegistrationToken\": \"stolen-token\",\n  \"platform\": \"ANDROID\",\n  \"packageId\": \"{{packageId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports NOT_RESOURCE_OWNER\", () => pm.expect(pm.response.json().error.code).to.eql(\"NOT_RESOURCE_OWNER\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update preferences - another user",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/users/{{ownerUserId}}/notification-preferences",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categories\": {\n    \"BATTLE_REQUEST\": false\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"Reports NOT_RESOURCE_OWNER\", () => pm.expect(pm.response.json().error.code).to.eql(\"NOT_RESOURCE_OWNER\"));",
+                  "pm.test(\"Error carries the correlation id\", () => pm.expect(pm.response.json().error.correlationId).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Device Removal",
       "item": [
         {
           "name": "Delete device",

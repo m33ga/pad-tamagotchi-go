@@ -48,6 +48,12 @@ This is a progress report, not confirmation that either issue is complete.
   ownership transfer and deleted-guild socket shutdown. The issuer image digest
   was sha256:18e357c00973b6a6ea68b5cc7f8e940d0654e462afdd346f947d1be4f4ce857d.
   Gateway and owned-service images were built locally, not downloaded releases.
+- After reconciling with the shared deployment on main, the same disposable
+  end-to-end scenario passed again with published `grdz/gateway:2.0.1`
+  (digest `sha256:bc60b8e85d4c9b3e8b135b8403d73be0774db7691cbdfff76bf08bcb7db4ac3b`).
+  Owned services were still local audit builds, not published release evidence.
+- GitHub Actions on both private-service PRs passed unit/race tests, the 80%
+  coverage gate, PostgreSQL integration tests, vet, executable and Docker builds.
 - Configuration accepts the shared setup script's OAUTH_CLIENT_ID and
   OAUTH_CLIENT_SECRET. Compose loads each service's own private credential file.
   Neither REST listener nor either database publishes a host port; only the
@@ -94,6 +100,12 @@ This checks deployment behavior separately from unit coverage.
 In the CPR, run `python3 scripts/test_owned_gateway_deployment.py`.
 This validates the Compose model using placeholder values without loading private
 credential files or starting the deployment.
+
+Run `node --test scripts/test_owned_collections.cjs` for the collection
+regressions. These validate operation-specific token selection, gateway URLs,
+unpopulated credential variables, and script/ID capture across two iterations in
+a shared JavaScript context using synthetic responses. They do not send HTTP
+requests or replace a full Postman run.
 
 ## Remaining before claiming completion
 

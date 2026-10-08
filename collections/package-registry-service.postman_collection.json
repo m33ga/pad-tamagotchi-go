@@ -2,15 +2,15 @@
   "info": {
     "_postman_id": "a269e2ca-46c1-4f04-b01e-8958f7b31368",
     "name": "Tamagotchi Go - Package Registry Service",
-    "description": "Lab 2 collection for Package Registry through the API Gateway. Run the authentication folder first with real User Management accounts and service-client secrets. The administrator account ID must also be present in PACKAGE_REGISTRY_ADMIN_USER_IDS. User Management's self-issued service token is supplied separately for its two internal-only operations. No caller-supplied role header is used.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. The administrator's UMS UUID must be allowlisted in PACKAGE_REGISTRY_ADMIN_USER_IDS. Separate service tokens are required for service-specific read operations.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
-      "name": "0. Gateway authentication",
+      "name": "0. Authentication",
       "item": [
         {
-          "name": "Login administrator",
+          "name": "Login admin through gateway",
           "request": {
             "method": "POST",
             "auth": {
@@ -22,16 +22,16 @@
                 "value": "application/json"
               }
             ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "url": "{{userManagementBaseUrl}}/api/v1/auth/sessions"
+            }
           },
           "response": [],
           "event": [
@@ -40,19 +40,22 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "const token = pm.response.json().accessToken;",
-                  "pm.collectionVariables.set('adminAccessToken', token);",
-                  "const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
-                  "const claims = JSON.parse(atob(encoded));",
-                  "pm.collectionVariables.set('adminUserId', claims.sub);"
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"adminAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"adminUserId\", claims.sub);",
+                  "}"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Login package developer",
+          "name": "Login developer through gateway",
           "request": {
             "method": "POST",
             "auth": {
@@ -64,16 +67,16 @@
                 "value": "application/json"
               }
             ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{developerEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{developerEmail}}\",\n  \"password\": \"{{developerPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "url": "{{userManagementBaseUrl}}/api/v1/auth/sessions"
+            }
           },
           "response": [],
           "event": [
@@ -82,12 +85,105 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "const token = pm.response.json().accessToken;",
-                  "pm.collectionVariables.set('developerAccessToken', token);",
-                  "const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
-                  "const claims = JSON.parse(atob(encoded));",
-                  "pm.collectionVariables.set('developerUserId', claims.sub);"
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"developerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"developerUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login moderator through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{moderatorEmail}}\",\n  \"password\": \"{{moderatorPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"moderatorAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"moderatorUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login registered through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{registeredEmail}}\",\n  \"password\": \"{{registeredPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"registeredAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"registeredUserId\", claims.sub);",
+                  "}"
                 ]
               }
             }
@@ -126,7 +222,7 @@
                 }
               ]
             },
-            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
           },
           "response": [],
           "event": [
@@ -136,7 +232,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set('guildServiceToken', pm.response.json().access_token);"
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('guildServiceToken', pm.response.json().access_token);",
+                  "}"
                 ]
               }
             }
@@ -175,7 +273,7 @@
                 }
               ]
             },
-            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
           },
           "response": [],
           "event": [
@@ -185,7 +283,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set('tamagotchiServiceToken', pm.response.json().access_token);"
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('tamagotchiServiceToken', pm.response.json().access_token);",
+                  "}"
                 ]
               }
             }
@@ -224,7 +324,7 @@
                 }
               ]
             },
-            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
           },
           "response": [],
           "event": [
@@ -234,7 +334,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set('battleServiceToken', pm.response.json().access_token);"
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('battleServiceToken', pm.response.json().access_token);",
+                  "}"
                 ]
               }
             }
@@ -273,7 +375,7 @@
                 }
               ]
             },
-            "url": "{{userManagementBaseUrl}}/api/v1/oauth2/token"
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
           },
           "response": [],
           "event": [
@@ -283,7 +385,9 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set('monsterRaidServiceToken', pm.response.json().access_token);"
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('monsterRaidServiceToken', pm.response.json().access_token);",
+                  "}"
                 ]
               }
             }
@@ -521,7 +625,7 @@
         {
           "name": "Register user for package",
           "request": {
-            "method": "POST",
+            "method": "PUT",
             "header": [
               {
                 "key": "Content-Type",
@@ -532,26 +636,18 @@
                 "value": "{{$guid}}"
               }
             ],
-            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/registrations",
+            "url": "{{gatewayUrl}}/user-management/api/v1/users/{{registeredUserId}}/packages/{{packageId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{userManagementServiceToken}}",
+                  "value": "{{registeredAccessToken}}",
                   "type": "string"
                 }
               ]
             },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"userId\": \"{{registeredUserId}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
+            "description": "The account owner requests registration through UMS, which calls Package Registry with its own service identity."
           },
           "response": [],
           "event": [
@@ -560,7 +656,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });"
+                  "pm.test(\"Registration succeeds through User Management\", () => pm.response.to.have.status(201));"
                 ]
               }
             }
@@ -597,21 +693,22 @@
           ]
         },
         {
-          "name": "List user's registrations",
+          "name": "List user's packages through User Management",
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{registryBaseUrl}}/api/v1/users/{{registeredUserId}}/package-registrations",
+            "url": "{{gatewayUrl}}/user-management/api/v1/users/{{registeredUserId}}/packages",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{userManagementServiceToken}}",
+                  "value": "{{registeredAccessToken}}",
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Read the user's packages through the authorized User Management API; direct Registry registration listing is restricted to User Management."
           },
           "response": [],
           "event": [
@@ -1203,27 +1300,31 @@
   "variable": [
     {
       "key": "registryBaseUrl",
-      "value": "http://localhost:8000/package-registry"
+      "value": "{{gatewayUrl}}/package-registry"
     },
     {
       "key": "adminUserId",
-      "value": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "developerUserId",
-      "value": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "moderatorUserId",
-      "value": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
-    },
-    {
-      "key": "serviceUserId",
-      "value": "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "registeredUserId",
-      "value": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "packageId",
@@ -1238,32 +1339,82 @@
       "value": ""
     },
     {
-      "key": "userManagementBaseUrl",
-      "value": "http://localhost:8000/user-management"
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
     },
     {
       "key": "adminEmail",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
     },
     {
-      "key": "developerEmail",
-      "value": ""
-    },
-    {
-      "key": "userPassword",
-      "value": ""
+      "key": "adminPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
     },
     {
       "key": "adminAccessToken",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "developerEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "developerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
     },
     {
       "key": "developerAccessToken",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     },
     {
-      "key": "userManagementServiceToken",
-      "value": ""
+      "key": "moderatorEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "moderatorPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "moderatorAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "registeredEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "registeredPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "registeredAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     },
     {
       "key": "guildClientSecret",

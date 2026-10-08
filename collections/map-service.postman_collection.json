@@ -2,10 +2,105 @@
 	"info": {
 		"_postman_id": "15abb00b-7ae2-4948-a8e3-955f79bd4cb0",
 		"name": "Tamagotchi Go - Map Service",
-		"description": "Generated from the Map Service OpenAPI 3.1 document (`docs/openapi/openapi.json` in the service repository).\n\nStart the common Docker Compose deployment, then run the requests in order. The `userId` and `friendUserId` variables use the identifiers the mocked User Management Service knows, so the map view returns a friend.",
+		"description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
+		{
+			"name": "0. Authentication",
+			"item": [
+				{
+					"name": "Login user through gateway",
+					"request": {
+						"method": "POST",
+						"auth": {
+							"type": "noauth"
+						},
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+									"if (pm.response.code === 200) {",
+									"  const body = pm.response.json();",
+									"  pm.collectionVariables.set(\"accessToken\", body.accessToken);",
+									"  // Read the subject returned by UMS; token verification is done by the gateway.",
+									"  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+									"  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+									"  pm.collectionVariables.set(\"userId\", claims.sub);",
+									"}"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login friend through gateway",
+					"request": {
+						"method": "POST",
+						"auth": {
+							"type": "noauth"
+						},
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{friendEmail}}\",\n  \"password\": \"{{friendPassword}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+									"if (pm.response.code === 200) {",
+									"  const body = pm.response.json();",
+									"  pm.collectionVariables.set(\"friendAccessToken\", body.accessToken);",
+									"  // Read the subject returned by UMS; token verification is done by the gateway.",
+									"  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+									"  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+									"  pm.collectionVariables.set(\"friendUserId\", claims.sub);",
+									"}"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
 		{
 			"name": "Locations",
 			"item": [
@@ -225,7 +320,8 @@
 							"cookie": [],
 							"body": "{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"The request is invalid.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": [\n      \"Key: 'updateLocationRequest.Latitude' Error:Field validation for 'Latitude' failed on the 'lte' tag\"\n    ]\n  }\n}"
 						}
-					]
+					],
+					"event": []
 				},
 				{
 					"name": "Update a friend's location",
@@ -272,9 +368,20 @@
 								}
 							]
 						},
-						"description": "Places a second user on the map. The mocked User Management Service reports this user as a friend of `userId`, so the next request returns them regardless of distance."
+						"description": "Places a second user on the map. The mocked User Management Service reports this user as a friend of `userId`, so the next request returns them regardless of distance.",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{friendAccessToken}}",
+									"type": "string"
+								}
+							]
+						}
 					},
-					"response": []
+					"response": [],
+					"event": []
 				},
 				{
 					"name": "Delete the user's location",
@@ -386,7 +493,8 @@
 							"cookie": [],
 							"body": "{\n  \"error\": {\n    \"code\": \"LOCATION_NOT_FOUND\",\n    \"message\": \"The user has no stored location.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
 						}
-					]
+					],
+					"event": []
 				}
 			]
 		},
@@ -553,7 +661,8 @@
 							"cookie": [],
 							"body": "{\n  \"error\": {\n    \"code\": \"USER_SERVICE_UNAVAILABLE\",\n    \"message\": \"User Management Service could not be reached.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
 						}
-					]
+					],
+					"event": []
 				}
 			]
 		}
@@ -561,18 +670,72 @@
 	"variable": [
 		{
 			"key": "baseUrl",
-			"value": "http://localhost:5030/api/v1",
+			"value": "{{gatewayUrl}}/map/api/v1",
 			"type": "string"
 		},
 		{
 			"key": "userId",
-			"value": "00000000-0000-0000-0000-000000000001",
-			"type": "string"
+			"value": "",
+			"type": "string",
+			"description": "Populated from the UMS-issued login token."
 		},
 		{
 			"key": "friendUserId",
-			"value": "00000000-0000-0000-0000-000000000002",
-			"type": "string"
+			"value": "",
+			"type": "string",
+			"description": "Populated from the UMS-issued login token."
+		},
+		{
+			"key": "gatewayUrl",
+			"value": "http://localhost:8000",
+			"type": "string",
+			"description": "Single HTTP entry point; adjust the gateway host port here."
+		},
+		{
+			"key": "userEmail",
+			"value": "",
+			"type": "string",
+			"description": "Existing UMS account email; set locally."
+		},
+		{
+			"key": "userPassword",
+			"value": "",
+			"type": "string",
+			"description": "Existing UMS password; keep local and never export."
+		},
+		{
+			"key": "accessToken",
+			"value": "",
+			"type": "string",
+			"description": "Populated by the login request; never export an access token."
+		},
+		{
+			"key": "friendEmail",
+			"value": "",
+			"type": "string",
+			"description": "Existing UMS account email; set locally."
+		},
+		{
+			"key": "friendPassword",
+			"value": "",
+			"type": "string",
+			"description": "Existing UMS password; keep local and never export."
+		},
+		{
+			"key": "friendAccessToken",
+			"value": "",
+			"type": "string",
+			"description": "Populated by the login request; never export an access token."
 		}
-	]
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{accessToken}}",
+				"type": "string"
+			}
+		]
+	}
 }

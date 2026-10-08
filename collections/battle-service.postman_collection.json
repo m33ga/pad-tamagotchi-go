@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "2548694d-5793-4818-843d-b4e8688d009c",
     "name": "Tamagotchi Go - Battle Service",
-    "description": "Battle routes through the gateway. Supply real UMS-issued user tokens and matching existing user/Tamagotchi IDs in local variables. No signing key is needed; never export credentials or access tokens.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -27,6 +27,101 @@
     }
   ],
   "item": [
+    {
+      "name": "0. Authentication",
+      "item": [
+        {
+          "name": "Login challenger through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{challengerEmail}}\",\n  \"password\": \"{{challengerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"challengerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"challengerUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login opponent through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{opponentEmail}}\",\n  \"password\": \"{{opponentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"opponentAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"opponentUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
     {
       "name": "1. Battle Requests",
       "item": [
@@ -354,18 +449,20 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8000/battle/api/v1",
+      "value": "{{gatewayUrl}}/battle/api/v1",
       "type": "string"
     },
     {
       "key": "challengerUserId",
-      "value": "00000000-0000-4000-8000-000000000003",
-      "type": "string"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "opponentUserId",
-      "value": "00000000-0000-4000-8000-000000000004",
-      "type": "string"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "challengerPrimaryTamagotchiId",
@@ -391,13 +488,13 @@
       "key": "challengerAccessToken",
       "value": "",
       "type": "string",
-      "description": "Set locally to the real user access token returned by UMS login. Never export a token."
+      "description": "Populated by the login request; never export an access token."
     },
     {
       "key": "opponentAccessToken",
       "value": "",
       "type": "string",
-      "description": "Set locally to the real user access token returned by UMS login. Never export a token."
+      "description": "Populated by the login request; never export an access token."
     },
     {
       "key": "battleRequestId",
@@ -423,6 +520,36 @@
       "key": "battleActionIdempotencyKey",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
+    },
+    {
+      "key": "challengerEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "challengerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "opponentEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "opponentPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
     }
   ]
 }
