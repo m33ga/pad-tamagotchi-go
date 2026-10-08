@@ -1782,7 +1782,7 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | API Gateway | 8000 |
 | Guild chat socket | 8081 |
 
-`GATEWAY_PORT` and `GUILD_CHAT_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. The Guild socket listener uses container port 8082, separately from its REST listener on 8081; `GUILD_PUBLIC_WS_URL` must match the client-facing socket address.
+`GATEWAY_PORT` and `GUILD_CHAT_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. The Guild socket listener uses container port 8082, separately from its REST listener on 8081. Its advertised URL defaults to `ws://localhost:8081`; set `GUILD_PUBLIC_WS_URL` in `.env` when clients use another host or you change `GUILD_CHAT_PORT`.
 
 ### Run the Services
 

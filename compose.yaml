@@ -168,14 +168,8 @@ services:
     env_file:
       - ./secrets/guild-service.env
     environment:
-      PORT: "8081"
-      WS_PORT: "8082"
       DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
-      GATEWAY_URL: ${GATEWAY_URL:-http://api-gateway:8080}
-      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL:?Set GUILD_PUBLIC_WS_URL to the client-reachable WebSocket base URL}
-      MOCK_EXTERNAL_SERVICES: "false"
-      REQUEST_TIMEOUT: ${GUILD_REQUEST_TIMEOUT:-4s}
-      MAX_CONCURRENCY: ${GUILD_MAX_CONCURRENCY:-64}
+      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL:-ws://localhost:8081}
     ports:
       - "${GUILD_CHAT_PORT:-8081}:8082"
     depends_on:
@@ -209,12 +203,8 @@ services:
     env_file:
       - ./secrets/package-registry-service.env
     environment:
-      PORT: "8082"
       DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
-      GATEWAY_URL: ${GATEWAY_URL:-http://api-gateway:8080}
       ADMIN_USER_IDS: ${PACKAGE_REGISTRY_ADMIN_USER_IDS:-}
-      REQUEST_TIMEOUT: ${PACKAGE_REGISTRY_REQUEST_TIMEOUT:-4s}
-      MAX_CONCURRENCY: ${PACKAGE_REGISTRY_MAX_CONCURRENCY:-64}
     depends_on:
       package-registry-db:
         condition: service_healthy
