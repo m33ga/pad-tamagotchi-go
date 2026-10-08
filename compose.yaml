@@ -238,6 +238,8 @@ services:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
     image: johnnyc05/pad-tamagotchi-service:v2.0.1
     pull_policy: always
+    # Reachable only through the gateway: no published port. The client
+    # credentials come from this service's own secrets file.
     env_file:
       - .env
       - ./secrets/tamagotchi-service.env
@@ -246,6 +248,10 @@ services:
       POSTGRES_DB: ${TAMAGOTCHI_DB_NAME}
       POSTGRES_USER: ${TAMAGOTCHI_DB_USER}
       POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD}
+      # Below the gateway's 5 second upstream timeout, so a slow request ends
+      # with this service's own REQUEST_TIMEOUT rather than the gateway's.
+      REQUEST_TIMEOUT_SECONDS: ${TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS:-4}
+      PackageRegistry__UseMock: ${USE_MOCK_PACKAGE_REGISTRY:-false}
     depends_on:
       tamagotchi-db:
         condition: service_healthy
@@ -274,6 +280,8 @@ services:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
     image: johnnyc05/pad-notification-service:v2.0.1
     pull_policy: always
+    # Reachable only through the gateway: no published port. The client
+    # credentials come from this service's own secrets file.
     env_file:
       - .env
       - ./secrets/notification-service.env
@@ -284,6 +292,7 @@ services:
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
       REDIS_ADDR: notification-redis:6379
       REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
+      REQUEST_TIMEOUT_SECONDS: ${NOTIFICATION_REQUEST_TIMEOUT_SECONDS:-4}
     depends_on:
       notification-db:
         condition: service_healthy

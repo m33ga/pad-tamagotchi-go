@@ -28,6 +28,13 @@ keys through JWKS.
 `REQUEST_TIMEOUT_SECONDS` and `MAX_CONCURRENCY` configure service admission and
 deadlines. Gateway budgets and upstream timeouts are configured separately in
 `config/gateway.yaml`, along with route URLs and the public-operation allowlist.
+Tamagotchi and Notification override the shared deadline with
+`TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS` and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS`,
+4 seconds by default, below the gateway's 5 second upstream timeout so a slow
+request ends with the service's own `504 REQUEST_TIMEOUT`. Tamagotchi follows
+`USE_MOCK_PACKAGE_REGISTRY` like User Management: `true` keeps its built-in
+registry mock, `false` validates health statistics against Package Registry
+through the gateway.
 
 ## Generate Client Credentials
 

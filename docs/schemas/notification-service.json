@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Notification Service API",
-    "version": "1.0.0",
-    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.",
+    "version": "2.0.0",
+    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/notification` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received, echoed on every response and forwarded on the calls the request causes.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -12,7 +12,11 @@
   "servers": [
     {
       "url": "/api/v1",
-      "description": "Base path"
+      "description": "Service base path, as the API Gateway forwards requests to it"
+    },
+    {
+      "url": "http://localhost:8000/notification/api/v1",
+      "description": "Through the API Gateway, the only entry point of the deployment"
     }
   ],
   "security": [
@@ -35,11 +39,20 @@
       "get": {
         "operationId": "getNotificationDevices",
         "summary": "List a user's registered notification devices",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId.",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Allowed callers: the account owner.",
         "tags": ["Devices"],
         "parameters": [
           {
             "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerKind"
+          },
+          {
+            "$ref": "#/components/parameters/CallerUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerSessionId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
@@ -59,17 +72,27 @@
               }
             }
           },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "$ref": "#/components/responses/NotResourceOwner"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
-        }
+        },
+        "x-allowed-callers": ["owner"]
       }
     },
     "/users/{userId}/notification-devices/{deviceId}": {
       "put": {
         "operationId": "registerNotificationDevice",
         "summary": "Register or refresh a notification device",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Uses PUT because the same application installation may safely submit its current Firebase token multiple times.",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Uses PUT because the same application installation may safely submit its current Firebase token multiple times. Allowed callers: the account owner.",
         "tags": ["Devices"],
         "parameters": [
           {
@@ -77,6 +100,15 @@
           },
           {
             "$ref": "#/components/parameters/DeviceId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerKind"
+          },
+          {
+            "$ref": "#/components/parameters/CallerUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerSessionId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
@@ -106,8 +138,11 @@
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "$ref": "#/components/responses/NotResourceOwner"
           },
           "422": {
             "description": "Rejected domain operation: INVALID_FCM_TOKEN",
@@ -118,13 +153,20 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
-        }
+        },
+        "x-allowed-callers": ["owner"]
       },
       "delete": {
         "operationId": "deleteNotificationDevice",
         "summary": "Remove a notification device registration",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId.",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Allowed callers: the account owner.",
         "tags": ["Devices"],
         "parameters": [
           {
@@ -134,6 +176,15 @@
             "$ref": "#/components/parameters/DeviceId"
           },
           {
+            "$ref": "#/components/parameters/CallerKind"
+          },
+          {
+            "$ref": "#/components/parameters/CallerUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerSessionId"
+          },
+          {
             "$ref": "#/components/parameters/CorrelationId"
           }
         ],
@@ -141,8 +192,11 @@
           "204": {
             "description": "Device registration removed"
           },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "$ref": "#/components/responses/NotResourceOwner"
           },
           "404": {
             "description": "Not found: DEVICE_NOT_FOUND",
@@ -153,19 +207,35 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
-        }
+        },
+        "x-allowed-callers": ["owner"]
       }
     },
     "/users/{userId}/notification-preferences": {
       "get": {
         "operationId": "getNotificationPreferences",
         "summary": "Retrieve a user's notification preferences",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. A missing preference record means that all categories are enabled by default.",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. A missing preference record means that all categories are enabled by default. Allowed callers: the account owner.",
         "tags": ["Preferences"],
         "parameters": [
           {
             "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerKind"
+          },
+          {
+            "$ref": "#/components/parameters/CallerUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerSessionId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
@@ -182,19 +252,38 @@
               }
             }
           },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "$ref": "#/components/responses/NotResourceOwner"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
-        }
+        },
+        "x-allowed-callers": ["owner"]
       },
       "put": {
         "operationId": "updateNotificationPreferences",
         "summary": "Replace a user's notification preferences",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. The request carries the complete category selection.",
+        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. The request carries the complete category selection. Allowed callers: the account owner.",
         "tags": ["Preferences"],
         "parameters": [
           {
             "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerKind"
+          },
+          {
+            "$ref": "#/components/parameters/CallerUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerSessionId"
           },
           {
             "$ref": "#/components/parameters/CorrelationId"
@@ -224,8 +313,11 @@
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "$ref": "#/components/responses/NotResourceOwner"
           },
           "422": {
             "description": "Rejected domain operation: UNKNOWN_CATEGORY",
@@ -236,8 +328,15 @@
                 }
               }
             }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
-        }
+        },
+        "x-allowed-callers": ["owner"]
       }
     }
   },
@@ -247,7 +346,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Bearer JWT issued by the authentication endpoints"
+        "description": "Bearer JWT issued by User Management and verified by the API Gateway. The gateway removes the Authorization header and states the caller in the X-Caller-* headers, so the service never sees the token."
       }
     },
     "parameters": {
@@ -255,10 +354,9 @@
         "name": "X-Correlation-ID",
         "in": "header",
         "required": false,
-        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "description": "Traces one operation across services and events. Generated by the gateway when absent, kept as received, echoed on every response and forwarded on the calls the request causes",
         "schema": {
-          "type": "string",
-          "format": "uuid"
+          "type": "string"
         }
       },
       "UserId": {
@@ -280,6 +378,54 @@
           "type": "string",
           "format": "uuid"
         }
+      },
+      "CallerKind": {
+        "name": "X-Caller-Kind",
+        "in": "header",
+        "required": true,
+        "description": "Who the gateway verified the caller to be. Set by the API Gateway from the verified token. Clients never send it: the gateway removes any value a caller supplies and sets its own. A request without it is refused with 401 MISSING_IDENTITY, so a request that bypassed the gateway fails closed.",
+        "schema": {
+          "type": "string",
+          "enum": ["user", "service", "anonymous"]
+        }
+      },
+      "CallerUserId": {
+        "name": "X-User-ID",
+        "in": "header",
+        "required": false,
+        "description": "Authenticated user id, present for user callers. A user id in the path is a parameter, not an identity: ownership is decided by comparing it with this header. Set by the API Gateway from the verified token. Clients never send it: the gateway removes any value a caller supplies and sets its own.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "CallerSessionId": {
+        "name": "X-Session-ID",
+        "in": "header",
+        "required": false,
+        "description": "Session id of a user caller, when the token carries one. Set by the API Gateway from the verified token. Clients never send it: the gateway removes any value a caller supplies and sets its own.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "CallerServiceName": {
+        "name": "X-Service-Name",
+        "in": "header",
+        "required": false,
+        "description": "Name of a calling service, present for service callers and compared with each operation's allowlist. Set by the API Gateway from the verified token. Clients never send it: the gateway removes any value a caller supplies and sets its own.",
+        "schema": {
+          "type": "string",
+          "examples": ["battle-service"]
+        }
+      },
+      "CallerScopes": {
+        "name": "X-Scopes",
+        "in": "header",
+        "required": false,
+        "description": "Space-separated scopes of a service caller, when its token carries any. Set by the API Gateway from the verified token. Clients never send it: the gateway removes any value a caller supplies and sets its own.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "responses": {
@@ -294,7 +440,66 @@
         }
       },
       "Forbidden": {
-        "description": "Insufficient permissions",
+        "description": "NOT_RESOURCE_OWNER for another user, or CALLER_NOT_ALLOWED for a service not on the operation's allowlist",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "MISSING_IDENTITY: the request reached the service without a complete caller identity from the gateway, or an anonymous caller reached an operation that needs one. Through the gateway, a missing or invalid token is answered by the gateway itself with MISSING_TOKEN or INVALID_TOKEN.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotResourceOwner": {
+        "description": "NOT_RESOURCE_OWNER: the caller is not the user who owns the resource",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "CallerNotAllowed": {
+        "description": "CALLER_NOT_ALLOWED: the operation is reserved for the listed services; users, the owner included, are refused",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ConcurrencyLimitReached": {
+        "description": "CONCURRENCY_LIMIT_REACHED: the service is already serving its maximum number of requests and rejects the request at once instead of queueing it",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying",
+            "schema": {
+              "type": "integer",
+              "examples": [1]
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "RequestTimeout": {
+        "description": "REQUEST_TIMEOUT: the request did not finish within the service's deadline (REQUEST_TIMEOUT_SECONDS, 4 seconds by default)",
         "content": {
           "application/json": {
             "schema": {
@@ -324,12 +529,11 @@
               },
               "correlationId": {
                 "type": "string",
-                "format": "uuid",
-                "description": "Correlation identifier of the failed operation"
+                "description": "Correlation identifier of the failed operation, as received in X-Correlation-ID or generated for the request"
               },
               "details": {
                 "type": "array",
-                "description": "Optional structured validation details",
+                "description": "Optional structured details; for VALIDATION_FAILED one entry per field with its field name and message",
                 "items": {
                   "type": "object"
                 }
