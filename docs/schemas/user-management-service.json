@@ -91,7 +91,7 @@
             }
           },
           "503": {
-            "description": "Dependency unavailable: PACKAGE_REGISTRY_UNAVAILABLE",
+            "description": "Dependency unavailable: PACKAGE_REGISTRY_UNAVAILABLE; applies only when initialPackageId is supplied.",
             "content": {
               "application/json": {
                 "schema": {
@@ -110,7 +110,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Register with or without an initial package. Omitted or null initialPackageId creates an account with no package memberships and only a global wallet, without calling Package Registry. A supplied package must exist and be ACTIVE."
       }
     },
     "/api/v1/auth/sessions": {
@@ -1630,8 +1631,7 @@
         "required": [
           "username",
           "email",
-          "password",
-          "initialPackageId"
+          "password"
         ],
         "properties": {
           "username": {
@@ -1652,9 +1652,12 @@
             "description": "Plain password transported only over HTTPS"
           },
           "initialPackageId": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid",
-            "description": "Package selected during registration"
+            "description": "Optional ACTIVE package selected during registration. Omit or use null to create an account without package membership."
           }
         }
       },
@@ -1753,7 +1756,7 @@
           },
           "packageIds": {
             "type": "array",
-            "description": "References to registered packages",
+            "description": "Registered package identifiers; empty when the user has no package memberships.",
             "items": {
               "type": "string",
               "format": "uuid"
