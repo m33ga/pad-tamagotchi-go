@@ -3,7 +3,7 @@
   "info": {
     "title": "Notification Service API",
     "version": "2.0.0",
-    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/notification` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received, echoed on every response and forwarded on the calls the request causes.",
+    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/notification` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received and echoed on every response; for an event, the envelope's correlationId is kept on the notifications it produces.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -32,6 +32,10 @@
     {
       "name": "Preferences",
       "description": "Per-user notification category preferences"
+    },
+    {
+      "name": "Events",
+      "description": "Domain events delivered by producing services until a broker is deployed"
     }
   ],
   "paths": {
@@ -39,7 +43,7 @@
       "get": {
         "operationId": "getNotificationDevices",
         "summary": "List a user's registered notification devices",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Allowed callers: the account owner.",
+        "description": "Callable only by the account owner; X-User-ID must equal userId. Allowed callers: the account owner.",
         "tags": ["Devices"],
         "parameters": [
           {
@@ -92,7 +96,7 @@
       "put": {
         "operationId": "registerNotificationDevice",
         "summary": "Register or refresh a notification device",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Uses PUT because the same application installation may safely submit its current Firebase token multiple times. Allowed callers: the account owner.",
+        "description": "Callable only by the account owner; X-User-ID must equal userId. Uses PUT because the same application installation may safely submit its current Firebase token multiple times. Allowed callers: the account owner.",
         "tags": ["Devices"],
         "parameters": [
           {
@@ -144,16 +148,6 @@
           "403": {
             "$ref": "#/components/responses/NotResourceOwner"
           },
-          "422": {
-            "description": "Rejected domain operation: INVALID_FCM_TOKEN",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "503": {
             "$ref": "#/components/responses/ConcurrencyLimitReached"
           },
@@ -166,7 +160,7 @@
       "delete": {
         "operationId": "deleteNotificationDevice",
         "summary": "Remove a notification device registration",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. Allowed callers: the account owner.",
+        "description": "Callable only by the account owner; X-User-ID must equal userId. Allowed callers: the account owner.",
         "tags": ["Devices"],
         "parameters": [
           {
@@ -222,7 +216,7 @@
       "get": {
         "operationId": "getNotificationPreferences",
         "summary": "Retrieve a user's notification preferences",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. A missing preference record means that all categories are enabled by default. Allowed callers: the account owner.",
+        "description": "Callable only by the account owner; X-User-ID must equal userId. A missing preference record means that all categories are enabled by default. Allowed callers: the account owner.",
         "tags": ["Preferences"],
         "parameters": [
           {
@@ -270,7 +264,7 @@
       "put": {
         "operationId": "updateNotificationPreferences",
         "summary": "Replace a user's notification preferences",
-        "description": "Callable only by the account owner; the authenticated JWT subject must equal userId. The request carries the complete category selection. Allowed callers: the account owner.",
+        "description": "Callable only by the account owner; X-User-ID must equal userId. The request carries the complete category selection. Allowed callers: the account owner.",
         "tags": ["Preferences"],
         "parameters": [
           {
@@ -338,6 +332,77 @@
         },
         "x-allowed-callers": ["owner"]
       }
+    },
+    "/internal/events": {
+      "post": {
+        "operationId": "deliverEvent",
+        "summary": "Deliver a domain event without a message broker",
+        "description": "Callable only by the producing services with their service token. Runs the same processing path a queue consumer would: deduplication by eventId, recipient and device, preferences, delivery and dead-lettering. Unknown event types or versions and events naming no recipients are dead-lettered. Allowed callers: User Management, Map, Guild, Battle or Monster Raid Service only.",
+        "tags": [
+          "Events"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CallerKind"
+          },
+          {
+            "$ref": "#/components/parameters/CallerServiceName"
+          },
+          {
+            "$ref": "#/components/parameters/CallerScopes"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventEnvelope"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Event accepted and processed"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CallerNotAllowed"
+          },
+          "422": {
+            "description": "Rejected domain operation: UNSUPPORTED_EVENT or MALFORMED_EVENT; the event is dead-lettered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
+          }
+        },
+        "x-allowed-callers": [
+          "user-management-service",
+          "map-service",
+          "guild-service",
+          "battle-service",
+          "monster-raid-service"
+        ]
+      }
     }
   },
   "components": {
@@ -354,7 +419,7 @@
         "name": "X-Correlation-ID",
         "in": "header",
         "required": false,
-        "description": "Traces one operation across services and events. Generated by the gateway when absent, kept as received, echoed on every response and forwarded on the calls the request causes",
+        "description": "Traces one operation across services and events. Generated by the gateway when absent, kept as received and echoed on every response; for an event, the envelope's correlationId is kept on the notifications it produces",
         "schema": {
           "type": "string"
         }
@@ -638,7 +703,52 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time",
-            "description": "Last preference update"
+            "description": "Last preference update; the current time while the defaults were never replaced"
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "required": [
+          "eventId",
+          "eventType",
+          "eventVersion",
+          "producer",
+          "correlationId",
+          "data"
+        ],
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique event identifier used for deduplication"
+          },
+          "eventType": {
+            "type": "string",
+            "description": "Stable event name including the version suffix",
+            "example": "battle.request.created.v1"
+          },
+          "eventVersion": {
+            "type": "integer",
+            "description": "Schema version of the event"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time at which the business event occurred; the processing time when absent"
+          },
+          "producer": {
+            "type": "string",
+            "description": "Service that published the event"
+          },
+          "correlationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifier connecting the event to the originating operation"
+          },
+          "data": {
+            "type": "object",
+            "description": "Event-specific payload carrying the recipient fields"
           }
         }
       }

@@ -36,6 +36,26 @@ request ends with the service's own `504 REQUEST_TIMEOUT`. Tamagotchi follows
 registry mock, `false` validates health statistics against Package Registry
 through the gateway.
 
+## Package Registry Admins
+
+Only a Package Registry admin can create the first package, and User Management
+registers a user only with an existing package. On a fresh deployment, create
+the first admin once:
+
+1. Start with `USE_MOCK_PACKAGE_REGISTRY=true` and register the admin's account;
+   the mock registry accepts the package
+   `11111111-1111-4111-8111-111111111111`.
+2. Set `ADMIN_USER_IDS` in `.env` to that account's `userId`, set
+   `USE_MOCK_PACKAGE_REGISTRY=false`, and recreate `user-management-api`,
+   `tamagotchi-api` and `package-registry-api`.
+3. Log in as the admin and create a package through
+   `POST /package-registry/api/v1/packages`, listing the admin in `developerIds`.
+   Then activate it with a `PATCH` and define its statistics with
+   `PUT .../stat-definitions`.
+
+New accounts can then register with that package, and the Postman collections
+can run against it.
+
 ## Generate Client Credentials
 
 Generate a 32-byte random base64url secret and its SHA-256 hash in one command:

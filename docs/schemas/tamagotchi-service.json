@@ -47,7 +47,7 @@
       "get": {
         "operationId": "listCombatTypes",
         "summary": "List the predefined combat types",
-        "description": "Callable by clients and internal services. The type-advantage cycle is FLAME > NATURE > EARTH > ELECTRIC > WATER > SHADOW > FLAME. Allowed callers: any authenticated caller, user or service.",
+        "description": "Callable by any authenticated caller. The type-advantage cycle is FLAME > NATURE > EARTH > ELECTRIC > WATER > SHADOW > FLAME. Allowed callers: any authenticated caller, user or service.",
         "tags": ["Combat Types"],
         "parameters": [
           {
@@ -100,7 +100,7 @@
       "post": {
         "operationId": "createTamagotchi",
         "summary": "Create a Tamagotchi",
-        "description": "Callable by the account owner or a package client. Health statistics are validated against the Package Registry definitions of the selected package. Allowed callers: the account owner.",
+        "description": "Callable only by the user named in ownerUserId. Health statistics are validated against the Package Registry definitions of the selected package. Allowed callers: the account owner.",
         "tags": ["Tamagotchis"],
         "parameters": [
           {
@@ -206,7 +206,7 @@
       "get": {
         "operationId": "getTamagotchi",
         "summary": "Retrieve a Tamagotchi",
-        "description": "Callable by the account owner or internal services. Allowed callers: the account owner, Battle Service or Monster Raid Service.",
+        "description": "Callable by the account owner, Battle Service or Monster Raid Service. Allowed callers: the account owner, Battle Service or Monster Raid Service.",
         "tags": ["Tamagotchis"],
         "parameters": [
           {
@@ -336,7 +336,7 @@
       "get": {
         "operationId": "getUserTamagotchis",
         "summary": "List a user's Tamagotchis",
-        "description": "Callable by the account owner or internal services. The optional role filter narrows the result to primary or secondary Tamagotchis. Allowed callers: the account owner, Battle Service or Monster Raid Service.",
+        "description": "Callable by the account owner, Battle Service or Monster Raid Service. The optional role filter narrows the result to primary or secondary Tamagotchis. A user without Tamagotchis gets an empty array. Allowed callers: the account owner, Battle Service or Monster Raid Service.",
         "tags": ["Tamagotchis"],
         "parameters": [
           {
@@ -400,16 +400,6 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "description": "Not found: USER_TAMAGOTCHIS_NOT_FOUND",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
           },
           "503": {
             "$ref": "#/components/responses/ConcurrencyLimitReached"
@@ -565,7 +555,7 @@
       "patch": {
         "operationId": "updateHealthStats",
         "summary": "Update a Tamagotchi's health statistics",
-        "description": "Callable by the account owner or a package client. New values are validated against the Package Registry statistic definitions of the originating package. Allowed callers: the account owner.",
+        "description": "Callable only by the account owner. New values are validated against the Package Registry statistic definitions of the originating package. Allowed callers: the account owner.",
         "tags": ["Tamagotchis"],
         "parameters": [
           {
@@ -703,16 +693,6 @@
               }
             }
           },
-          "422": {
-            "description": "Rejected domain operation: TAMAGOTCHI_UNAVAILABLE",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "503": {
             "$ref": "#/components/responses/ConcurrencyLimitReached"
           },
@@ -727,7 +707,7 @@
       "post": {
         "operationId": "grantXp",
         "summary": "Grant XP to a Tamagotchi",
-        "description": "Callable only by Battle Service or Monster Raid Service. Idempotent for a given Idempotency-Key and referenceId. Allowed callers: Battle Service or Monster Raid Service only.",
+        "description": "Callable only by Battle Service or Monster Raid Service. A referenceId is granted once per Tamagotchi; a replay answers 409 XP_ALREADY_GRANTED, which the caller treats as already done. Allowed callers: Battle Service or Monster Raid Service only.",
         "tags": ["Progression"],
         "parameters": [
           {
@@ -806,7 +786,7 @@
       "post": {
         "operationId": "transferTamagotchiOwnership",
         "summary": "Transfer a Tamagotchi to a new owner",
-        "description": "Callable only by Battle Service. The transfer updates the existing Tamagotchi instead of creating a new entry; the winner receives it as a secondary Tamagotchi. Idempotent for a given Idempotency-Key and referenceId. Allowed callers: Battle Service only.",
+        "description": "Callable only by Battle Service. The transfer updates the existing Tamagotchi instead of creating a new entry; the winner receives it as a secondary Tamagotchi. A referenceId transfers once per Tamagotchi; a replay answers 409 OWNERSHIP_ALREADY_TRANSFERRED, which the caller treats as already done, and 409 TAMAGOTCHI_NOT_OWNED means fromUserId no longer owns it. Allowed callers: Battle Service only.",
         "tags": ["Ownership"],
         "parameters": [
           {
@@ -859,7 +839,7 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Conflict: OWNERSHIP_ALREADY_TRANSFERRED",
+            "description": "Conflict: OWNERSHIP_ALREADY_TRANSFERRED or TAMAGOTCHI_NOT_OWNED",
             "content": {
               "application/json": {
                 "schema": {
