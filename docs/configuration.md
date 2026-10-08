@@ -85,6 +85,21 @@ Services request their tokens at
 `GATEWAY_URL/user-management/api/v1/oauth2/token` using form-body client credentials.
 They cache tokens and refresh them before expiry; callers never sign tokens locally.
 
+## Guild and Package Registry
+
+Guild and Package Registry load only their own `secrets/<client-id>.env` file,
+not the shared `.env`. Both accept the generated `OAUTH_CLIENT_ID` and
+`OAUTH_CLIENT_SECRET` aliases. Compose maps other required settings explicitly.
+Their REST APIs and databases have no published host ports. Only Guild's separate
+WebSocket listener is published; set `GUILD_PUBLIC_WS_URL` to a client-reachable
+`ws://` or `wss://` base URL.
+
+`GUILD_REQUEST_TIMEOUT` and `PACKAGE_REGISTRY_REQUEST_TIMEOUT` default to
+`4s`, below the gateway's default `5s` upstream timeout. Their independent
+`*_MAX_CONCURRENCY` limits default to 64; timed-out work retains its slot until
+it stops. `PACKAGE_REGISTRY_ADMIN_USER_IDS` is a comma-separated allowlist of
+existing UMS user UUIDs. An empty value grants no administrator access.
+
 ## Storage and Rotation
 
 Keep `.env` and `secrets/` outside Git. Back them up in encrypted storage or a

@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a269e2ca-46c1-4f04-b01e-8958f7b31368",
     "name": "Tamagotchi Go - Package Registry Service",
-    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. The administrator's UMS UUID must be allowlisted in PACKAGE_REGISTRY_ADMIN_USER_IDS. Separate service tokens are required for service-specific read operations.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -190,31 +190,39 @@
           ]
         },
         {
-          "name": "Get service token through gateway",
+          "name": "Get Guild service token",
           "request": {
             "method": "POST",
             "auth": {
               "type": "noauth"
             },
-            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
             "body": {
               "mode": "urlencoded",
               "urlencoded": [
                 {
                   "key": "grant_type",
-                  "value": "client_credentials"
+                  "value": "client_credentials",
+                  "type": "text"
                 },
                 {
                   "key": "client_id",
-                  "value": "{{serviceClientId}}"
+                  "value": "guild-service",
+                  "type": "text"
                 },
                 {
                   "key": "client_secret",
-                  "value": "{{serviceClientSecret}}"
+                  "value": "{{guildClientSecret}}",
+                  "type": "text"
                 }
               ]
-            }
+            },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
           },
           "response": [],
           "event": [
@@ -223,9 +231,162 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Client credentials succeed\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
                   "if (pm.response.code === 200) {",
-                  "  pm.collectionVariables.set(\"serviceAccessToken\", pm.response.json().access_token);",
+                  "  pm.collectionVariables.set('guildServiceToken', pm.response.json().access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Tamagotchi service token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "tamagotchi-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{tamagotchiClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('tamagotchiServiceToken', pm.response.json().access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Battle service token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "battle-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{battleClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('battleServiceToken', pm.response.json().access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Monster Raid service token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "monster-raid-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{monsterRaidClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('monsterRaidServiceToken', pm.response.json().access_token);",
                   "}"
                 ]
               }
@@ -512,7 +673,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceAccessToken}}",
+                  "value": "{{guildServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -532,21 +693,22 @@
           ]
         },
         {
-          "name": "List user's registrations",
+          "name": "List user's packages through User Management",
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{registryBaseUrl}}/api/v1/users/{{registeredUserId}}/package-registrations",
+            "url": "{{gatewayUrl}}/user-management/api/v1/users/{{registeredUserId}}/packages",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceAccessToken}}",
+                  "value": "{{registeredAccessToken}}",
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Read the user's packages through the authorized User Management API; direct Registry registration listing is restricted to User Management."
           },
           "response": [],
           "event": [
@@ -616,7 +778,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceAccessToken}}",
+                  "value": "{{tamagotchiServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -690,7 +852,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceAccessToken}}",
+                  "value": "{{battleServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -720,7 +882,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceAccessToken}}",
+                  "value": "{{battleServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -995,7 +1157,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminAccessToken}}",
+                  "value": "{{monsterRaidServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -1025,7 +1187,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminAccessToken}}",
+                  "value": "{{monsterRaidServiceToken}}",
                   "type": "string"
                 }
               ]
@@ -1159,10 +1321,6 @@
       "description": "Populated from the UMS-issued login token."
     },
     {
-      "key": "serviceUserId",
-      "value": "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-    },
-    {
       "key": "registeredUserId",
       "value": "",
       "type": "string",
@@ -1259,22 +1417,36 @@
       "description": "Populated by the login request; never export an access token."
     },
     {
-      "key": "serviceClientId",
-      "value": "guild-service",
-      "type": "string",
-      "description": "Allowed service client for these operations; set locally if needed."
+      "key": "guildClientSecret",
+      "value": ""
     },
     {
-      "key": "serviceClientSecret",
-      "value": "",
-      "type": "string",
-      "description": "Use only the matching private service credential; never export it."
+      "key": "guildServiceToken",
+      "value": ""
     },
     {
-      "key": "serviceAccessToken",
-      "value": "",
-      "type": "string",
-      "description": "Populated by the client-credentials request; never export."
+      "key": "tamagotchiClientSecret",
+      "value": ""
+    },
+    {
+      "key": "tamagotchiServiceToken",
+      "value": ""
+    },
+    {
+      "key": "battleClientSecret",
+      "value": ""
+    },
+    {
+      "key": "battleServiceToken",
+      "value": ""
+    },
+    {
+      "key": "monsterRaidClientSecret",
+      "value": ""
+    },
+    {
+      "key": "monsterRaidServiceToken",
+      "value": ""
     }
   ]
 }

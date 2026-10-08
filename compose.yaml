@@ -163,17 +163,13 @@ services:
       retries: 10
 
   guild-api:
-    image: cosmak47/pad-guild-service:2.0.0
+    image: cosmak47/pad-guild-service:2.0.1
     pull_policy: always
     env_file:
-      - .env
       - ./secrets/guild-service.env
     environment:
-      PORT: "8081"
-      WS_PORT: "8082"
-      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL:-ws://localhost:8081}
       DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
-      MOCK_EXTERNAL_SERVICES: "false"
+      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL:-ws://localhost:8081}
     ports:
       - "${GUILD_CHAT_PORT:-8081}:8082"
     depends_on:
@@ -202,14 +198,13 @@ services:
       retries: 10
 
   package-registry-api:
-    image: cosmak47/pad-package-registry-service:2.0.0
+    image: cosmak47/pad-package-registry-service:2.0.1
     pull_policy: always
     env_file:
-      - .env
       - ./secrets/package-registry-service.env
     environment:
-      PORT: "8082"
       DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
+      ADMIN_USER_IDS: ${PACKAGE_REGISTRY_ADMIN_USER_IDS:-}
     depends_on:
       package-registry-db:
         condition: service_healthy

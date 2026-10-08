@@ -307,7 +307,7 @@ Every event sent through the queue uses the following envelope:
   "eventVersion": "Integer. Schema version of the event",
   "occurredAt": "UTC timestamp. Time at which the business event occurred",
   "producer": "String. Service that published the event",
-  "correlationId": "UUID string. Identifier connecting the event to the originating operation",
+  "correlationId": "String. Opaque identifier connecting the event to the originating operation",
   "data": "Object. Event-specific payload defined in the event catalog"
 }
 ```
@@ -548,7 +548,9 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 #### Package Registry Service
 
-Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. Package moderators manage their own package configuration, while globally privileged admins manage raid configuration and scheduling.
+Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS`—the former caller-supplied role header is not accepted.
+
+`POST /packages/{packageId}/registrations` and `GET /users/{userId}/package-registrations` require `X-Service-Name: user-management-service`. Raid schedule reads accept `X-Service-Name: monster-raid-service` or a configured administrator. Every handler has a bounded deadline and fail-fast concurrency limit, returning `504 REQUEST_TIMEOUT` or `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
 
 ##### Endpoint Catalog
 
@@ -769,6 +771,7 @@ Guild Service owns guild identity, membership, roles, permissions, and Guild Cha
 | `GET /api/v1/users/{userId}/guild-invitations?status={status}` | Invitation recipient | Query parameter | `200 GuildInvitationResponse[]` | `400`, `403`, `404 USER_NOT_FOUND` |
 | `POST /api/v1/guilds/{guildId}/invitations/{invitationId}/responses` | Invitation recipient | `RespondToGuildInvitationRequest` | `200 GuildInvitationResponse` | `400`, `403`, `404`, `409 INVITATION_ALREADY_RESOLVED`, `422 MEMBERSHIP_RULE_NOT_SATISFIED` |
 | `GET /api/v1/guilds/{guildId}/messages?before={messageId}&limit={limit}` | Guild member | Query parameters | `200 GuildMessagePageResponse` | `400`, `403`, `404 GUILD_NOT_FOUND` |
+| `POST /api/v1/guilds/{guildId}/chat-sessions` | Active guild member | None | `201 ChatSessionResponse` | `403 NOT_A_MEMBER`, `404 GUILD_NOT_FOUND`, `503`, `504` |
 
 ##### Guild and Membership Schemas
 
@@ -853,13 +856,20 @@ Guild Service owns guild identity, membership, roles, permissions, and Guild Cha
   "GuildMessagePageResponse": {
     "items": "Array of GuildMessageResponse; required. Messages ordered from newest to oldest",
     "nextCursor": "String or null; required. Cursor for older messages"
+  },
+  "ChatSessionResponse": {
+    "url": "ws:// or wss:// URL; required. Public direct WebSocket address",
+    "ticket": "43-character base64url string; required. Single-use encoding of 32 random bytes",
+    "expiresAt": "UTC timestamp; required. Exactly 60 seconds after ticket issue"
   }
 }
 ```
 
 ##### Guild Chat WebSocket Contract
 
-Guild members connect to `/ws/v1/guilds/{guildId}/chat` using a bearer JWT during the connection handshake. The service rejects unauthenticated users and users who are not active members of the guild.
+Guild members first make the authenticated REST call `POST /guild/api/v1/guilds/{guildId}/chat-sessions` through the gateway. The service verifies the trusted `X-User-ID` membership and returns `url`, `ticket`, and `expiresAt`. The ticket contains 32 random bytes encoded base64url, is bound to the guild and user, expires after 60 seconds, and is stored only as a hash.
+
+The client then connects directly to `{url}?ticket={ticket}`. The dedicated WebSocket listener atomically deletes a matching ticket before upgrading; missing, expired, reused, or wrong-guild tickets return `401`. Connection identity comes only from the stored ticket, and the handshake does not accept a bearer token. REST remains on the internal listener; only the separate socket listener is published, so public clients cannot forge trusted gateway headers against REST.
 
 The client sends:
 
@@ -1778,7 +1788,7 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | API Gateway | 8000 |
 | Guild chat socket | 8081 |
 
-`GATEWAY_PORT` and `GUILD_CHAT_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. The Guild socket listener uses container port 8082, separately from its REST listener on 8081; `GUILD_PUBLIC_WS_URL` must match the client-facing socket address.
+`GATEWAY_PORT` and `GUILD_CHAT_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. The Guild socket listener uses container port 8082, separately from its REST listener on 8081. Its advertised URL defaults to `ws://localhost:8081`; set `GUILD_PUBLIC_WS_URL` in `.env` when clients use another host or you change `GUILD_CHAT_PORT`.
 
 ### Run the Services
 
@@ -1834,8 +1844,8 @@ The deployed images differ in which collaborators they currently mock. The gatew
 - **Battle** calls User Management, Tamagotchi and Package Registry through the gateway; queue publishing remains mocked.
 - **Map** reads User Management relationships through the gateway and logs the proximity events it would publish.
 - **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
-- **Guild** is configured with real HTTP collaborators; invitation events are kept in its transactional outbox without a deployed broker.
-- **Package Registry** has no outbound dependency and receives verified caller identity from the gateway.
+- **Guild** calls User Management and Package Registry through the gateway with its service credentials; invitation events remain in its transactional outbox without a deployed broker.
+- **Package Registry** has no outbound dependency, receives gateway-derived identities, and derives administrator access from `ADMIN_USER_IDS`.
 - **Tamagotchi** calls Package Registry through the gateway to validate health statistics when `USE_MOCK_PACKAGE_REGISTRY=false`; `true` keeps its built-in registry mock.
 - **Notification** calls no other service. Firebase is mocked. With no broker deployed, producers can deliver events through its internal event endpoint.
 
@@ -1844,6 +1854,8 @@ The deployed images differ in which collaborators they currently mock. The gatew
 Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. The User Management collection also supports registration with an existing active package.
 
 Service-only requests use the client-credentials endpoint and the allowed service's private credential. The Map collection needs two accounts that are friends in User Management, and the Monster Raid collection needs an account with a Tamagotchi, an active raid schedule, and the `monster-raid-service` secret in `serviceClientSecret` to read that schedule. The Package Registry collection registers a user's package through User Management, which supplies its own service identity for the nested call. Business requests still require the referenced packages, pets and other resources to exist. Never export or commit credentials, Firebase tokens or populated access tokens.
+
+The Registry administrator's UMS ID must be in `PACKAGE_REGISTRY_ADMIN_USER_IDS`. The Registry collection uses separate Guild, Tamagotchi, Battle, and Monster Raid client credentials for their allowed operations; set these only in private local values. Guild's `Negotiate chat session` request returns a short-lived, single-use ticket for a direct WebSocket connection. REST collection runs do not themselves send or receive WebSocket frames.
 
 [Back to top](#table-of-contents)
 

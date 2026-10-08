@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Package Registry Service API",
-    "version": "1.0.0",
-    "description": "Owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. Package moderators manage their own package configuration, while globally privileged admins manage raid configuration and scheduling.",
+    "version": "2.0.0",
+    "description": "Owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External clients authenticate at the API Gateway with a bearer token. The gateway removes Authorization and supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers to this internal service; direct requests without X-Caller-Kind are rejected.\n\nPackage developer and moderator permissions come from the service database. Administrators are authenticated user IDs selected by the runtime ADMIN_USER_IDS allowlist, never by a caller-supplied role header. Registration writes and per-user registration listing allow only user-management-service; raid schedule reads allow monster-raid-service or an administrator. Every handler has a request deadline and fail-fast concurrency limit, producing 504 REQUEST_TIMEOUT or 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -116,6 +116,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -167,6 +176,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -207,6 +225,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -264,6 +291,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -320,6 +356,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -359,6 +404,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -367,7 +421,7 @@
       "post": {
         "operationId": "createPackageRegistration",
         "summary": "Register a user with a package",
-        "description": "Callable only by User Management Service. Idempotent for a given Idempotency-Key.",
+        "description": "Internal-only operation. Requires X-Caller-Kind: service and X-Service-Name: user-management-service after gateway verification. Ordinary user callers receive 403. Idempotent for a given Idempotency-Key.",
         "tags": [
           "Registrations"
         ],
@@ -421,6 +475,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -467,6 +530,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -475,7 +547,7 @@
       "get": {
         "operationId": "getUserPackageRegistrations",
         "summary": "List a user's package registrations",
-        "description": "Callable only by User Management Service.",
+        "description": "Internal-only operation. Requires X-Caller-Kind: service and X-Service-Name: user-management-service after gateway verification. Ordinary user callers receive 403.",
         "tags": [
           "Registrations"
         ],
@@ -503,6 +575,15 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -572,6 +653,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -616,6 +706,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -685,6 +784,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -729,6 +837,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -781,6 +898,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -836,6 +962,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -887,6 +1022,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -927,6 +1071,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -984,6 +1137,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -1040,13 +1202,22 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
       "get": {
         "operationId": "listRaidSchedules",
         "summary": "List raid schedules",
-        "description": "Callable by Monster Raid Service and admins.",
+        "description": "Callable by X-Service-Name: monster-raid-service or by an authenticated user listed in ADMIN_USER_IDS. No caller-supplied role header is accepted.",
         "tags": [
           "Raid Schedules"
         ],
@@ -1107,6 +1278,15 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -1150,6 +1330,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       },
@@ -1207,6 +1396,15 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ConcurrencyLimitReached"
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
           }
         }
       }
@@ -1226,10 +1424,9 @@
         "name": "X-Correlation-ID",
         "in": "header",
         "required": false,
-        "description": "Traces one operation across services and events; generated by the gateway when absent",
+        "description": "Opaque trace identifier, preserved across services and events; generated only when absent",
         "schema": {
-          "type": "string",
-          "format": "uuid"
+          "type": "string"
         }
       },
       "IdempotencyKey": {
@@ -1294,6 +1491,16 @@
           }
         }
       },
+      "Unauthorized": {
+        "description": "Missing or invalid gateway identity; direct requests without X-Caller-Kind are rejected",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
       "Forbidden": {
         "description": "Insufficient permissions",
         "content": {
@@ -1306,6 +1513,34 @@
       },
       "NotFound": {
         "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ConcurrencyLimitReached": {
+        "description": "The fail-fast in-flight request limit was reached. Retry-After is 1 second and the error code is CONCURRENCY_LIMIT_REACHED.",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "const": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "RequestTimeout": {
+        "description": "The request deadline expired. The error code is REQUEST_TIMEOUT.",
         "content": {
           "application/json": {
             "schema": {
@@ -1341,9 +1576,8 @@
                 "type": "string",
                 "description": "Human-readable error description"
               },
-              "correlationId": {
+"correlationId": {
                 "type": "string",
-                "format": "uuid",
                 "description": "Correlation identifier of the failed operation"
               },
               "details": {
