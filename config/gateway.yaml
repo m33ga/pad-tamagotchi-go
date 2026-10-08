@@ -1,0 +1,32 @@
+# Gateway configuration for the Tamagotchi Go compose deployment.
+# Reference: docs/spec.md, section 12. Every key not present here has a default.
+
+auth:
+  jwks_url: http://user-management-api:8080/.well-known/jwks.json
+  issuer: tamagotchi-go
+  audience: tamagotchi-go
+  algorithms: [RS256]
+
+services:
+  user-management:
+    url: http://user-management-api:8080
+    public:
+      - GET /.well-known/jwks.json            # public key discovery
+      - POST /api/v1/users                    # register
+      - POST /api/v1/auth/sessions            # login
+      - POST /api/v1/auth/session-refreshes   # refresh
+      - POST /api/v1/oauth2/token             # service client credentials
+  battle:
+    url: http://battle-api:8080
+  tamagotchi:
+    url: http://tamagotchi-api:8080
+  notification:
+    url: http://notification-api:8080
+  map:
+    url: http://map-api:8080
+  monster-raid:
+    url: http://monster-raid-api:8080
+  guild:
+    url: http://guild-api:8081
+  package-registry:
+    url: http://package-registry-api:8082

@@ -1,11 +1,29 @@
 services:
+  api-gateway:
+    image: ${GATEWAY_IMAGE:?Set GATEWAY_IMAGE to the published gateway image}
+    pull_policy: always
+    ports:
+      - "${GATEWAY_PORT:-8000}:8080"
+    volumes:
+      - ./config/gateway.yaml:/app/config/gateway.yaml:ro
+    depends_on:
+      user-management-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   user-management-api:
-    image: sanda2004/user-management-service:1.0.3
+    image: sanda2004/user-management-service:2.0.0
     pull_policy: always
     env_file:
       - .env
-    ports:
-      - "${USER_MANAGEMENT_API_PORT:-5010}:8080"
+    volumes:
+      - ./secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+      - ./config/service-clients.yaml:/app/config/service-clients.yaml:ro
     depends_on:
       user-management-db:
         condition: service_healthy
@@ -22,8 +40,6 @@ services:
       POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME}
       POSTGRES_USER: ${USER_MANAGEMENT_DB_USER}
       POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD}
-    ports:
-      - "${USER_MANAGEMENT_DB_PUBLISHED_PORT:-5433}:5432"
     volumes:
       - user-management-data:/var/lib/postgresql/data
     healthcheck:

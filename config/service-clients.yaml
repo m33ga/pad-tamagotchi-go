@@ -1,0 +1,22 @@
+clients:
+  - client_id: battle-service
+    secret_hashes: ["${BATTLE_CLIENT_SECRET_HASH}"]
+    scopes: [tamagotchis:read, users.balances:write, packages:read]
+  - client_id: monster-raid-service
+    secret_hashes: ["${MONSTER_RAID_CLIENT_SECRET_HASH}"]
+    scopes: [tamagotchis:read, users.balances:write, guilds:read, packages:read]
+  - client_id: map-service
+    secret_hashes: ["${MAP_CLIENT_SECRET_HASH}"]
+    scopes: [users:read]
+  - client_id: guild-service
+    secret_hashes: ["${GUILD_CLIENT_SECRET_HASH}"]
+    scopes: [users:read, packages:read]
+  - client_id: tamagotchi-service
+    secret_hashes: ["${TAMAGOTCHI_CLIENT_SECRET_HASH}"]
+    scopes: [packages:read]
+  - client_id: package-registry-service
+    secret_hashes: ["${PACKAGE_REGISTRY_CLIENT_SECRET_HASH}"]
+    scopes: []
+  - client_id: notification-service
+    secret_hashes: ["${NOTIFICATION_CLIENT_SECRET_HASH}"]
+    scopes: []
