@@ -1810,7 +1810,7 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 
 Every API is reached at `/<service-prefix>/api/v1` through the gateway. Health checks sit outside that prefix and differ by stack: the C# services answer on `/_health`, Map and Monster Raid on `/health`, and Guild and Package Registry on `/healthz`.
 
-Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:8000/monster-raid/docs](http://localhost:8000/monster-raid/docs). Upstream health and documentation routes require a gateway bearer token. The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
+Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:8000/monster-raid/docs](http://localhost:8000/monster-raid/docs). Both are public routes on the gateway and need no token. Upstream health routes still require one. The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
 
 ### Storage
 
