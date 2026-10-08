@@ -184,7 +184,7 @@ The following interactions correspond to the arrows in the architecture diagram 
 - Event names include a version suffix, for example `guild.invitation.created.v1`.
 - Resource and event identifiers use UUID strings.
 - Timestamps use UTC ISO 8601 strings.
-- Clients and service callers present bearer JWTs to the gateway. UMS receives trusted identity headers.
+- Clients and service callers present bearer JWTs to the gateway. Services receive trusted identity headers.
 - `X-Correlation-ID` traces one operation across services and events.
 - Commands that can be submitted more than once accept an `Idempotency-Key`.
 - Services return consistent JSON error objects containing `code`, `message`, and `correlationId`.
@@ -201,7 +201,7 @@ The communication contract defines the data that callers and services exchange. 
 |---|---|
 | Base path | `/api/v1` |
 | Content type | `application/json`, except OAuth token requests use `application/x-www-form-urlencoded` |
-| Authentication | Bearer JWT at the gateway; trusted `X-Caller-Kind` and identity headers at UMS |
+| Authentication | Bearer JWT at the gateway; trusted `X-Caller-Kind` and identity headers at each service |
 | Correlation | Nonempty `X-Correlation-ID` preserved across calls; UUID generated when absent |
 | Idempotency | `Idempotency-Key: <uuid>` on retriable commands that create side effects |
 | Identifier type | UUID encoded as a JSON string |
@@ -231,6 +231,55 @@ Errors use an appropriate `4xx` or `5xx` status and the following common body. O
 ```
 
 Common error statuses are `400` for an invalid request, `401` for missing or invalid authentication, `403` for insufficient permissions, `404` for a missing resource, `409` for a state conflict, `422` for a rejected domain operation, `429` for rate limiting, and `503` when a required dependency is unavailable.
+
+### Authentication and Request Flow
+
+User Management is the only token issuer. Clients log in to obtain a user token.
+Services obtain a service token using OAuth2 client credentials, cache it and
+refresh it when fewer than 30 seconds remain. The issuer signs its own outbound
+service tokens with `sub: user-management-service` and needs no client secret.
+
+All API calls go through the gateway at `/<service>/api/v1/...`. The gateway
+validates the signature and claims against the public JWKS, removes caller-supplied
+identity headers and `Authorization`, then sets the verified identity below.
+Services authorize these headers rather than verifying JWTs themselves. Missing
+`X-Caller-Kind` is rejected with 401; bearer tokens alone grant no direct access.
+
+| Header | Caller | Value |
+|---|---|---|
+| `X-Caller-Kind` | Every forwarded request | `user`, `service` or `anonymous` |
+| `X-User-ID` | User | Authenticated user UUID |
+| `X-Session-ID` | User, when present | Session UUID |
+| `X-Service-Name` | Service | Authenticated service name |
+| `X-Scopes` | Service, when present | Space-separated scopes |
+
+Public operations are explicitly listed in [`config/gateway.yaml`](config/gateway.yaml).
+The gateway ignores bearer tokens on those operations and forwards anonymous
+identity. Registration, login, session refresh and client credentials are public
+POST operations; `GET /user-management/.well-known/jwks.json` is public key
+discovery. Health checks are internal probe endpoints and need no identity.
+
+All JWTs use RS256, `kid`, issuer and audience `tamagotchi-go`. User claims: `sub` user UUID, `sid` session UUID, `kind: user`, `iat`, `nbf`, `exp` after 900 seconds. Service claims: `sub` client ID, `kind: service`, optional/empty `scope`, `iat`, `nbf`, `exp` after 300 seconds, UUID `jti`. JWKS contains public RSA `kty`, `kid`, `use: sig`, `alg: RS256`, `n`, `e`, and can expose old and current keys concurrently. No symmetric keys or private parameters are published.
+
+| Client ID | Scopes |
+|---|---|
+| battle-service | tamagotchis:read, users.balances:write, packages:read |
+| monster-raid-service | tamagotchis:read, users.balances:write, guilds:read, packages:read |
+| map-service | users:read |
+| guild-service | users:read, packages:read |
+| tamagotchi-service | packages:read |
+| package-registry-service | none |
+| notification-service | none |
+
+Scopes follow `<resource>:<action>` and are advisory; callees authorize by service name. Each client authenticates with its own secret; disabled clients are rejected.
+
+Outbound service calls follow the same gateway authentication flow and preserve
+`X-Correlation-ID`. An identifier is generated only when absent. Retriable commands
+keep their `Idempotency-Key` across attempts. Each service bounds handlers with a
+configurable deadline and passes the remaining time to outbound calls. Deadline
+expiry returns 504 `REQUEST_TIMEOUT` in the common error envelope. Concurrency
+admission is bounded and immediate: saturation returns 503
+`CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1` instead of queueing.
 
 ### Asynchronous Event Contract
 
@@ -305,34 +354,22 @@ User Management Service owns user identity, authentication, social relationships
 | `GET /api/v1/users/{userId}/packages` | Account owner or internal service | None | `200 PackageReference[]` | `403`, `404 USER_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
 
-##### Token issuance and gateway identity (Lab 2)
+##### Token Issuance
 
-User Management is the only issuer. Clients present bearer tokens to the gateway; UMS receives gateway identity headers and contains no JWT verification middleware. API calls without `X-Caller-Kind` return 401 `INVALID_IDENTITY`. Public POST operations are `/api/v1/users`, `/api/v1/auth/sessions`, `/api/v1/auth/session-refreshes`, `/api/v1/oauth2/token`; the gateway sends anonymous identity for them. Key discovery and container health checks need no identity.
+Token request fields: `grant_type=client_credentials`, `client_id`, `client_secret`,
+and optional `scope` as a space-separated subset of the client's configured scopes.
+Credentials are sent as URL-encoded form fields. Missing credentials yield
+`invalid_client`; a missing grant type or malformed/non-form body yields
+`invalid_request`. `invalid_client` includes
+`WWW-Authenticate: Basic realm="tamagotchi-go"`. Errors use
+`{"error":"<OAuth2 code>"}`. Success uses
+`{"access_token":"<JWT>","token_type":"Bearer","expires_in":300,"scope":"<space-separated scopes>"}`
+with `Cache-Control: no-store`. The endpoint allows 60 requests per minute per
+client, with `Retry-After: 60` on rejection.
 
-| Method and path | Caller | Request | Success | Errors |
-|---|---|---|---|---|
-| `GET /.well-known/jwks.json` | Public discovery | None | `200 {keys: [...]}`, `Cache-Control: public, max-age=300` | Standard service limits |
-| `POST /api/v1/oauth2/token` | Public client credentials | URL-encoded form | `200 OAuthTokenResponse`, `Cache-Control: no-store` | `400 invalid_request`, `400 unsupported_grant_type`, `400 invalid_scope`, `401 invalid_client`, `429 temporarily_unavailable` |
-
-Token request fields: `grant_type=client_credentials`, `client_id`, `client_secret`, optional `scope` as a space-separated subset. Missing credentials yield `invalid_client`; missing grant type or malformed/non-form body yields `invalid_request`. Credentials go in the form, never Basic. `invalid_client` includes `WWW-Authenticate: Basic realm="tamagotchi-go"`. Errors use `{"error":"<OAuth2 code>"}`. Success uses `{"access_token":"<JWT>","token_type":"Bearer","expires_in":300,"scope":"<space-separated scopes>"}`. Limit: 60 requests/minute/client, with `Retry-After: 60` on rejection.
-
-All JWTs use RS256, `kid`, issuer and audience `tamagotchi-go`. User claims: `sub` user UUID, `sid` session UUID, `kind: user`, `iat`, `nbf`, `exp` after 900 seconds. Service claims: `sub` client ID, `kind: service`, optional/empty `scope`, `iat`, `nbf`, `exp` after 300 seconds, UUID `jti`. JWKS contains public RSA `kty`, `kid`, `use: sig`, `alg: RS256`, `n`, `e`, and can expose old and current keys concurrently. No symmetric keys or private parameters are published.
-
-| Client ID | Scopes |
-|---|---|
-| battle-service | tamagotchis:read, users.balances:write, packages:read |
-| monster-raid-service | tamagotchis:read, users.balances:write, guilds:read, packages:read |
-| map-service | users:read |
-| guild-service | users:read, packages:read |
-| tamagotchi-service | packages:read |
-| package-registry-service | none |
-| notification-service | none |
-
-Scopes follow `<resource>:<action>` and are advisory; callees authorize by service name. Registry secrets are 32 random bytes encoded base64url; only SHA-256 hex hashes are persisted. Multiple hashes permit rotation; `enabled: false` rejects a client.
-
-Trusted headers: `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name`, `X-Scopes`. Owner checks compare `X-User-ID` with the path. Logout uses `X-Session-ID`. Balance commands require a service caller named battle-service or monster-raid-service. Bearer headers alone grant no access. Public routes require anonymous gateway identity; JWKS and health probes are exceptions.
-
-UMS calls Package Registry through the gateway with its own locally signed service token (`sub: user-management-service`), without a client secret. `X-Correlation-ID` is propagated unchanged, generated only when absent. Idempotency headers remain supported. The request deadline defaults to 10 seconds (`REQUEST_TIMEOUT_SECONDS`); in-flight admission defaults to 64 (`MAX_CONCURRENCY`), without queueing. Errors use the existing envelope with 504 `REQUEST_TIMEOUT` or 503 `CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`.
+Logout terminates the session in `X-Session-ID`. Owner checks compare `X-User-ID`
+with the path parameter. Balance commands require a service caller named
+`battle-service` or `monster-raid-service`.
 
 ##### Payload Schemas
 
@@ -1572,11 +1609,11 @@ Lab release process:
 
 ## Deployment
 
-Docker Compose runs all eight services together from their public DockerHub images. It never builds from a private service repository, so a machine only needs Docker and the image tags pinned in [`compose.yaml`](compose.yaml).
+Docker Compose runs the gateway and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. Set the gateway image in `.env`; the service image versions are pinned in Compose. All containers share the default Compose network. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Service | Image | API | Collection |
 |---|---|---|---|
-| User Management | [`sanda2004/user-management-service`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:5010` | [user-management](collections/user-management-service.postman_collection.json) |
+| User Management | [`sanda2004/user-management-service`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:8000/user-management` | [user-management](collections/user-management-service.postman_collection.json) |
 | Battle | [`sanda2004/battle-service`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | [battle](collections/battle-service.postman_collection.json) |
 | Map | [`grdz/map-service`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | [map](collections/map-service.postman_collection.json) |
 | Monster Raid | [`grdz/monster-raid-service`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | [monster-raid](collections/monster-raid-service.postman_collection.json) |
@@ -1593,7 +1630,8 @@ Docker Compose runs all eight services together from their public DockerHub imag
 
 | Service | API | PostgreSQL | Redis |
 |---|---:|---:|---:|
-| User Management | Via gateway on 8000 | Internal only | |
+| API Gateway | 8000 | | |
+| User Management | Via gateway | Internal only | |
 | Battle | 5020 | 5434 | |
 | Map | 5030 | | 6380 |
 | Monster Raid | 5040 | 5435 | 6381 |
@@ -1609,21 +1647,22 @@ Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PA
 1. Copy the committed environment template:
 
    ```bash
-   cp .env.example .env
+   test -f .env || cp .env.example .env
    ```
 
-2. Replace every `change_me` value in `.env`. `JWT_SIGNING_KEY` is one private key of at least 32 UTF-8 characters, used only by remaining Lab 1 services awaiting migration; UMS uses a private RSA key and never receives this shared setting. Never commit this file.
+2. Replace the placeholder values in `.env` and choose `GATEWAY_IMAGE`. Preserve the passwords of existing database volumes. Follow [Configuration](docs/configuration.md) for service settings and private credentials.
 
-3. Prepare the private UMS key and registry with `python3 scripts/configure-user-management-oauth.py`, set `GATEWAY_IMAGE`, then pull and start the deployment:
+3. Run `python3 scripts/configure_services_auth.py`, then pull and start the deployment:
 
    ```bash
-   docker compose -f compose.yaml -f compose.gateway.yaml pull
-   docker compose -f compose.yaml -f compose.gateway.yaml up -d --wait
+   docker compose pull
+   docker compose up -d --wait
    ```
 
 4. Verify that every service answers:
 
    ```bash
+   curl --fail http://localhost:8000/readyz
    docker compose exec user-management-api curl --fail http://localhost:8080/_health
    curl http://localhost:5020/_health
    curl http://localhost:5030/health
@@ -1638,7 +1677,7 @@ Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PA
 5. Stop the containers, keeping the stored data:
 
    ```bash
-   docker compose -f compose.yaml -f compose.gateway.yaml down
+   docker compose down
    ```
 
 ### Endpoints
@@ -1649,7 +1688,7 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 ### Storage
 
-Every database and cache publishes a host port, so they can be inspected directly with `psql` or `redis-cli`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+The User Management database has no host port; inspect it with `docker compose exec user-management-db psql`. The other databases and caches expose the ports listed above for local inspection with `psql` or `redis-cli`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
 
 Data persists in ten named volumes: `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
 
@@ -1657,9 +1696,9 @@ No database needs manual preparation. The C# services apply their ordered SQL mi
 
 ### Mocked Dependencies
 
-Each service mocks the collaborators it cannot reach, so the deployment runs without a gateway or a message broker:
+The deployed images differ in which collaborators they currently mock. The gateway routes real API calls; no message broker is deployed:
 
-- **User Management** mocks Package Registry validation and package registration.
+- **User Management** calls Package Registry through the gateway for validation and registration.
 - **Battle** mocks User Management, Tamagotchi, Package Registry and queue publishing.
 - **Map** mocks the User Management relationships it reads.
 - **Monster Raid** mocks Guild and Package Registry.
@@ -1671,7 +1710,7 @@ Each service mocks the collaborators it cannot reach, so the deployment runs wit
 
 Import the JSON files from [`collections`](collections) and keep their default service URLs. Run each collection from top to bottom, because its test scripts hand identifiers to later requests.
 
-The legacy Lab 1 User Management collection still generates HS256 tokens and must not be used against Lab 2 UMS; use login and client credentials through the gateway instead. The Battle collection retains its Lab 1 `jwtSigningKey` setting until migration. Give it the same value as `JWT_SIGNING_KEY` in the local `.env`, and never export or commit it. Map and Monster Raid need no token, and Monster Raid identifies the caller with the `X-User-ID` header. Guild uses UUID bearer tokens as mocked identities, and Package Registry uses the same together with the documented `X-User-Role` values.
+The User Management collection currently generates HS256 fixture tokens and is incompatible with gateway authentication; obtain tokens through login or client credentials instead. The Battle collection uses its `jwtSigningKey` fixture setting. Give it the same value as `JWT_SIGNING_KEY` in the local `.env`, and never export or commit it. Map and Monster Raid need no token, and Monster Raid identifies the caller with the `X-User-ID` header. Guild uses UUID bearer tokens as mocked identities, and Package Registry uses the same together with the documented `X-User-Role` values.
 
 [Back to top](#table-of-contents)
 

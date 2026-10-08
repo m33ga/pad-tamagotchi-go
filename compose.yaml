@@ -1,32 +1,29 @@
 services:
+  api-gateway:
+    image: ${GATEWAY_IMAGE:?Set GATEWAY_IMAGE to the published gateway image}
+    pull_policy: always
+    ports:
+      - "${GATEWAY_PORT:-8000}:8080"
+    volumes:
+      - ./config/gateway.yaml:/app/config/gateway.yaml:ro
+    depends_on:
+      user-management-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   user-management-api:
     image: sanda2004/user-management-service:2.0.0
     pull_policy: always
-    environment:
-      ASPNETCORE_URLS: http://+:8080
-      USER_MANAGEMENT_DB_HOST: user-management-db
-      USER_MANAGEMENT_DB_PORT: 5432
-      USER_MANAGEMENT_DB_NAME: ${USER_MANAGEMENT_DB_NAME}
-      USER_MANAGEMENT_DB_USER: ${USER_MANAGEMENT_DB_USER}
-      USER_MANAGEMENT_DB_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD}
-      JWT_KEY_ID: ${USER_MANAGEMENT_JWT_KEY_ID:-ums-lab2-1}
-      JWT_PRIVATE_KEY_PATH: /run/secrets/jwt-private.pem
-      SERVICE_CLIENTS_PATH: /app/config/service-clients.yaml
-      GATEWAY_URL: http://api-gateway:8080
-      REQUEST_TIMEOUT_SECONDS: ${USER_MANAGEMENT_REQUEST_TIMEOUT_SECONDS:-10}
-      MAX_CONCURRENCY: ${USER_MANAGEMENT_MAX_CONCURRENCY:-64}
-      USE_MOCK_PACKAGE_REGISTRY: "false"
-      BATTLE_CLIENT_SECRET_HASH: ${BATTLE_CLIENT_SECRET_HASH}
-      MONSTER_RAID_CLIENT_SECRET_HASH: ${MONSTER_RAID_CLIENT_SECRET_HASH}
-      MAP_CLIENT_SECRET_HASH: ${MAP_CLIENT_SECRET_HASH}
-      GUILD_CLIENT_SECRET_HASH: ${GUILD_CLIENT_SECRET_HASH}
-      TAMAGOTCHI_CLIENT_SECRET_HASH: ${TAMAGOTCHI_CLIENT_SECRET_HASH}
-      PACKAGE_REGISTRY_CLIENT_SECRET_HASH: ${PACKAGE_REGISTRY_CLIENT_SECRET_HASH}
-      NOTIFICATION_CLIENT_SECRET_HASH: ${NOTIFICATION_CLIENT_SECRET_HASH}
+    env_file:
+      - .env
     volumes:
       - ./secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
       - ./config/service-clients.yaml:/app/config/service-clients.yaml:ro
-    networks: [issuer]
     depends_on:
       user-management-db:
         condition: service_healthy
@@ -43,7 +40,6 @@ services:
       POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME}
       POSTGRES_USER: ${USER_MANAGEMENT_DB_USER}
       POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD}
-    networks: [issuer]
     volumes:
       - user-management-data:/var/lib/postgresql/data
     healthcheck:
@@ -352,8 +348,3 @@ volumes:
   tamagotchi-data:
   notification-data:
   notification-redis-data:
-
-networks:
-  issuer:
-    name: ${GATEWAY_ISSUER_NETWORK:-tamagotchi-issuer}
-    internal: true

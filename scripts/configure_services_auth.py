@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure private local issuer credentials without printing their values."""
+"""Configure private local service authentication without printing credentials."""
 import hashlib
 import os
 from pathlib import Path
@@ -67,7 +67,14 @@ def main():
         secret = read_env(path)['OAUTH_CLIENT_SECRET']
         prefix = client.removesuffix('-service').replace('-', '_').upper()
         values[prefix + '_CLIENT_SECRET_HASH'] = hashlib.sha256(secret.encode()).hexdigest()
-    values.setdefault('USER_MANAGEMENT_JWT_KEY_ID', 'ums-lab2-1')
+    values.setdefault('JWT_KEY_ID', values.pop('USER_MANAGEMENT_JWT_KEY_ID', 'ums-key-1'))
+    values.setdefault('JWT_PRIVATE_KEY_PATH', '/run/secrets/jwt-private.pem')
+    values.setdefault('SERVICE_CLIENTS_PATH', '/app/config/service-clients.yaml')
+    values.setdefault('GATEWAY_URL', 'http://api-gateway:8080')
+    values.setdefault('REQUEST_TIMEOUT_SECONDS', values.pop('USER_MANAGEMENT_REQUEST_TIMEOUT_SECONDS', '10'))
+    values.setdefault('MAX_CONCURRENCY', values.pop('USER_MANAGEMENT_MAX_CONCURRENCY', '64'))
+    values.setdefault('USE_MOCK_PACKAGE_REGISTRY', 'false')
+    values.pop('GATEWAY_ISSUER_NETWORK', None)
     private_write(env, ''.join(f'{name}={value}\n' for name, value in values.items()))
     print('Configured private RSA key and seven clients; existing credentials preserved.')
 
