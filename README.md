@@ -14,6 +14,7 @@ Developed for the PAD (Distributed Applications Programming) course at FAF, Tech
 - [Communication Contract](#communication-contract)
 - [Project Management](#project-management)
 - [Development Guidelines](#development-guidelines)
+- [Gateway](#gateway)
 - [Deployment](#deployment)
 - [Service Ownership and Technology Stack](#service-ownership-and-technology-stack)
 - [Technology Stack Rationale](#technology-stack-rationale)
@@ -1670,110 +1671,147 @@ Lab release process:
 
 [Back to top](#table-of-contents)
 
+## Gateway
+
+The API Gateway is the single HTTP entry point for clients and synchronous service calls. It verifies UMS-issued bearer tokens with the public JWKS, removes the service prefix, and forwards the remaining path and query string unchanged. For example, `POST http://localhost:8000/battle/api/v1/battle-requests` reaches Battle as `POST /api/v1/battle-requests`. The root `/` has no service route; use `/readyz` to check gateway readiness.
+
+| Service | Prefix | Collection |
+|---|---|---|
+| User Management | `/user-management` | [user-management](collections/user-management-service.postman_collection.json) |
+| Battle | `/battle` | [battle](collections/battle-service.postman_collection.json) |
+| Tamagotchi | `/tamagotchi` | [tamagotchi](collections/tamagotchi-service.postman_collection.json) |
+| Notification | `/notification` | [notification](collections/notification-service.postman_collection.json) |
+| Map | `/map` | [map](collections/map-service.postman_collection.json) |
+| Monster Raid | `/monster-raid` | [monster-raid](collections/monster-raid-service.postman_collection.json) |
+| Guild | `/guild` | [guild](collections/guild-service.postman_collection.json) |
+| Package Registry | `/package-registry` | [package-registry](collections/package-registry-service.postman_collection.json) |
+
+### Identity Headers
+
+Clients send `Authorization: Bearer <access-token>`. The gateway removes `Authorization` and caller-supplied identity headers before forwarding. Public operations receive `X-Caller-Kind: anonymous`, even if the client supplied a token. Protected operations receive:
+
+| Caller | Verified identity headers |
+|---|---|
+| User | `X-Caller-Kind: user`, `X-User-ID`, `X-Session-ID` |
+| Service | `X-Caller-Kind: service`, `X-Service-Name`, `X-Scopes` |
+
+The gateway sets `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`, propagates or generates `X-Correlation-ID`, and passes `Idempotency-Key` unchanged. Services authorize operations using the verified identity. A service obtains its token by sending client credentials in the form body to `/user-management/api/v1/oauth2/token`, then calls its peer through `GATEWAY_URL/<prefix>/...`.
+
+### Public Operations
+
+Only these configured operations are callable without a token:
+
+| Method | Gateway path | Purpose |
+|---|---|---|
+| GET | `/user-management/.well-known/jwks.json` | Public signing-key discovery |
+| POST | `/user-management/api/v1/users` | Account registration |
+| POST | `/user-management/api/v1/auth/sessions` | Login |
+| POST | `/user-management/api/v1/auth/session-refreshes` | Session refresh |
+| POST | `/user-management/api/v1/oauth2/token` | Service client credentials |
+
+The gateway also owns the unauthenticated `/healthz` and `/readyz` probes. Upstream health and documentation paths remain protected unless explicitly configured otherwise.
+
+### Gateway Errors
+
+Gateway failures use the shared `error` envelope with `code`, `message`, `correlationId` and optional `details`. Upstream response statuses and bodies pass through unchanged.
+
+| HTTP status | Code | Meaning |
+|---|---|---|
+| 401 | `MISSING_TOKEN` | A protected operation has no bearer token |
+| 401 | `INVALID_TOKEN` | Invalid scheme, token, signature, expiry or claims |
+| 404 | `ROUTE_NOT_FOUND` | No configured service prefix matches |
+| 405 | `METHOD_NOT_ALLOWED` | Unsupported forwarding method |
+| 502 | `UPSTREAM_UNAVAILABLE` | The upstream cannot be reached |
+| 503 | `CONCURRENCY_LIMIT_REACHED` | Caller or service budget exhausted; `Retry-After: 1` |
+| 503 | `NOT_READY` | JWKS have not been loaded successfully |
+| 504 | `UPSTREAM_TIMEOUT` | The upstream request timed out |
+| 504 | `REQUEST_TIMEOUT` | The gateway request deadline expired |
+| 500 | `GATEWAY_ERROR` | Unexpected gateway failure |
+
+See the [gateway specification](gateway/docs/spec.md) for routing, token claims, header filtering and concurrency error details. Gateway development and image publishing are documented in its [README](gateway/README.md).
+
+[Back to top](#table-of-contents)
+
 ## Deployment
 
-Docker Compose runs the gateway and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. Set the gateway image in `.env`; the service image versions are pinned in Compose. All containers share the default Compose network. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+A single [`compose.yaml`](compose.yaml) runs the published gateway and all eight services. The gateway joins `edge` and `internal`; all API services, databases and caches join only `internal`, which is declared `internal: true`. Only the gateway publishes an HTTP API port. The `guild-chat` relay publishes the separate Guild WebSocket listener; Guild itself stays exclusively on `internal`, including its REST listener. The relay forwards only `/ws/v1/guilds/{guildId}/chat` and logs no ticket URLs.
 
-| Service | Image | API | Collection |
-|---|---|---|---|
-| User Management | [`sanda2004/user-management-service`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:8000/user-management` | [user-management](collections/user-management-service.postman_collection.json) |
-| Battle | [`sanda2004/battle-service`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:8000/battle` | [battle](collections/battle-service.postman_collection.json) |
-| Map | [`grdz/map-service`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | [map](collections/map-service.postman_collection.json) |
-| Monster Raid | [`grdz/monster-raid-service`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | [monster-raid](collections/monster-raid-service.postman_collection.json) |
-| Tamagotchi | [`johnnyc05/pad-tamagotchi-service`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:5050` | [tamagotchi](collections/tamagotchi-service.postman_collection.json) |
-| Notification | [`johnnyc05/pad-notification-service`](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `http://localhost:5060` | [notification](collections/notification-service.postman_collection.json) |
-| Guild | [`cosmak47/pad-guild-service`](https://hub.docker.com/r/cosmak47/pad-guild-service) | `http://localhost:8081` | [guild](collections/guild-service.postman_collection.json) |
-| Package Registry | [`cosmak47/pad-package-registry-service`](https://hub.docker.com/r/cosmak47/pad-package-registry-service) | `http://localhost:8082` | [package-registry](collections/package-registry-service.postman_collection.json) |
+| Entry point | Default address | Purpose |
+|---|---|---|
+| API Gateway | `http://localhost:8000` | Every client and synchronous service HTTP request |
+| Guild chat socket | `ws://localhost:8081/ws/v1/guilds/{guildId}/chat` | Direct connection using a Guild-issued chat ticket |
 
-### Requirements
-
-- Docker Engine or Docker Desktop with Docker Compose v2
-- Internet access for the first image pull
-- The host ports below free, or replacement values set in `.env`
-
-| Service | API | PostgreSQL | Redis |
-|---|---:|---:|---:|
-| API Gateway | 8000 | | |
-| User Management | Via gateway | Internal only | |
-| Battle | Gateway `/battle` | 5434 | API port is internal |
-| Map | 5030 | | 6380 |
-| Monster Raid | 5040 | 5435 | 6381 |
-| Tamagotchi | 5050 | 5438 | |
-| Notification | 5060 | 5439 | 6382 |
-| Guild | 8081 | 5436 | |
-| Package Registry | 8082 | 5437 | |
-
-Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PACKAGE_REGISTRY_API_PORT` are the only two without a built-in fallback, so they must be present in `.env` or the deployment refuses to start.
+`GATEWAY_PORT` and `GUILD_CHAT_PORT` select the two host ports. `GUILD_PUBLIC_WS_URL` must match the address clients use for chat. Image versions are pinned in Compose; `GATEWAY_IMAGE` defaults to `grdz/gateway:2.0.0`. The gateway is a private Git submodule alongside the service submodules. Team members and the professor need repository access to initialize it.
 
 ### Run the Services
 
-1. Copy the committed environment template:
+Requirements: Docker Engine or Docker Desktop with Compose v2, Python 3.9 or newer, OpenSSL, Git, and access to the private service repositories.
+
+1. Initialize the submodules at their recorded revisions:
+
+   ```bash
+   git submodule update --init --recursive
+   ```
+
+2. Copy the configuration template if needed and replace the database and cache placeholders. Preserve existing passwords when reusing database volumes:
 
    ```bash
    test -f .env || cp .env.example .env
+   python3 scripts/configure_services_auth.py
    ```
 
-2. Replace the placeholder values in `.env` and choose `GATEWAY_IMAGE`. Preserve the passwords of existing database volumes. Follow [Configuration](docs/configuration.md) for service settings and private credentials.
+   The script generates the private signing key and service credentials, preserves existing values, and stores them only in ignored local files. See [Configuration](docs/configuration.md) for destinations and rotation.
 
-3. Run `python3 scripts/configure_services_auth.py`, then pull and start the deployment:
+3. Pull and start the complete deployment:
 
    ```bash
    docker compose pull
    docker compose up -d --wait
    ```
 
-4. Verify that every service answers:
+   Compose waits for databases and caches, then their APIs. The gateway waits for User Management to be healthy. Its own healthcheck calls `/readyz`, so a process that cannot obtain JWKS is unhealthy.
+
+4. Check readiness and container health:
 
    ```bash
    curl --fail http://localhost:8000/readyz
-   docker compose exec user-management-api curl --fail http://localhost:8080/_health
-   docker compose exec battle-api curl --fail http://localhost:8080/_health
-   curl http://localhost:5030/health
-   curl http://localhost:5040/health
-   curl http://localhost:5050/_health
-   curl http://localhost:5060/_health
-   curl http://localhost:8081/healthz
-   curl http://localhost:8082/healthz
    docker compose ps
    ```
 
-5. Stop the containers, keeping the stored data:
+   For authenticated requests, obtain a token through login and call the corresponding prefix. For example, with `ACCESS_TOKEN` set locally:
+
+   ```bash
+   curl --fail -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8000/map/api/v1/users/YOUR_USER_ID/map
+   ```
+
+5. Stop the containers while keeping stored data:
 
    ```bash
    docker compose down
    ```
 
-### Endpoints
+### Storage and Network Isolation
 
-Every API is served under `/api/v1`. Health checks sit outside that prefix and differ by stack: the C# services answer on `/_health`, Map and Monster Raid on `/health`, and Guild and Package Registry on `/healthz`.
+Databases and caches publish no host ports. Inspect them through `docker compose exec`, for example `docker compose exec user-management-db psql -U YOUR_DB_USER -d user_management`. Services communicate through the gateway using `http://api-gateway:8080`; the internal network permits container communication without publishing upstream listeners.
 
-Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:5040/docs](http://localhost:5040/docs). The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
+Data persists in ten named volumes. `docker compose down` keeps them; `docker compose down --volumes` deletes them. Database migrations run automatically at startup. Existing volumes do not acquire a new password just because `.env` changes.
 
-### Storage
+### Verification
 
-The User Management database has no host port; inspect it with `docker compose exec user-management-db psql`. The other databases and caches expose the ports listed above for local inspection with `psql` or `redis-cli`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+```bash
+just check
+just integration
+```
 
-Data persists in ten named volumes: `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
-
-No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, and Guild and Package Registry ship idempotent migrations inside their images.
-
-### Mocked Dependencies
-
-The deployed images differ in which collaborators they currently mock. The gateway routes real API calls; no message broker is deployed:
-
-- **User Management** calls Package Registry through the gateway for validation and registration.
-- **Battle** mocks User Management, Tamagotchi, Package Registry and queue publishing.
-- **Map** mocks the User Management relationships it reads, and logs the proximity events it would publish.
-- **Monster Raid** mocks Guild, Package Registry, Tamagotchi and User Management, and logs the raid lifecycle events it would publish.
-- **Guild** mocks User Management, Package Registry and queue publishing, keeping invitation events in its transactional outbox.
-- **Package Registry** has no outbound dependency and uses mocked identities and roles.
-- **Tamagotchi** and **Notification** need no other service running. With no broker deployed, Notification has no events to consume.
+The integration command uses the committed Compose file in an isolated temporary project, generates disposable credentials and volumes, waits for the complete stack, and checks readiness, all prefixes, issuer tokens, internal-only ports and the separate Guild chat listener. It removes only its own test containers and volumes. Service business features have their own tests; this deployment check does not claim those features are complete.
 
 ### Postman Collections
 
-Import the JSON files from [`collections`](collections) and keep their default service URLs. Run each collection from top to bottom, because its test scripts hand identifiers to later requests.
+Import the JSON files in [`collections`](collections). Each collection has one `gatewayUrl`, defaulting to `http://localhost:8000`, and login requests against User Management. Set existing account emails and passwords locally, then run Authentication before business requests. User Management additionally supports registering test accounts with an existing active package.
 
-The User Management collection currently generates HS256 fixture tokens and is incompatible with gateway authentication; obtain tokens through login or client credentials instead. The Battle collection calls the gateway and requires real UMS-issued user tokens in `challengerAccessToken` and `opponentAccessToken`, with matching existing user and Tamagotchi IDs. Keep these values local and never export or commit tokens. Map and Monster Raid need no token, and Monster Raid identifies the caller with the `X-User-ID` header. Guild uses UUID bearer tokens as mocked identities, and Package Registry uses the same together with the documented `X-User-Role` values.
+Tokens and user IDs are populated from login responses; no collection signs tokens locally or impersonates an identity header. Service-only examples obtain tokens using the form-body client-credentials request and the endpoint's allowed service identity. A successful login does not grant administrative roles or service permissions. The Package Registry collection registers packages through User Management with the account owner’s login token; UMS supplies its own service identity for the nested call. Business scenarios require existing packages, pets and related resources.
+
+Keep passwords, client secrets, Firebase tokens and populated access tokens out of exported collections and Git. Service implementations that have not yet adopted gateway identity remain their owners' work.
 
 [Back to top](#table-of-contents)
 

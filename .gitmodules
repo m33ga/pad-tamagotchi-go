@@ -22,3 +22,6 @@
 [submodule "battle-service"]
 	path = battle-service
 	url = https://github.com/crudualexandra/battle-service.git
+[submodule "gateway"]
+	path = gateway
+	url = https://github.com/m33ga/gateway.git

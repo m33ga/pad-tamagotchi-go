@@ -1,70 +1,98 @@
 # Configuration
 
-The deployment uses `compose.yaml` for the gateway and all services. Containers
-communicate by service name on the default Compose network. The gateway's host
-port and image are selected with `GATEWAY_PORT` and `GATEWAY_IMAGE`. Route URLs and
-public operations are configured in `config/gateway.yaml`.
+The deployment uses one `compose.yaml`. The gateway joins `edge` and `internal`;
+all other services join only `internal`, which is marked `internal: true`.
+Only `GATEWAY_PORT` and the separate `GUILD_CHAT_PORT` are published to the host.
+Guild's REST listener stays on port 8081 inside its container; its socket listener
+uses port 8082. The `guild-chat` Nginx relay joins both networks and publishes only
+the socket path; other paths return 404. This is necessary because Docker does not
+publish ports for containers connected only to an internal network. Guild itself
+never joins `edge`. `GUILD_PUBLIC_WS_URL` is the public socket address clients receive.
 
 ## Environment
 
-Copy `.env.example` to `.env` only if `.env` does not already exist. Replace the
-placeholder database and cache credentials, and select the gateway image supplied
-by its owner. A prebuilt local image tag can also be used; start with `--pull never`
-when testing local images. Keep existing database passwords when reusing volumes.
+Copy `.env.example` to `.env` if it does not exist, then replace the database and
+cache placeholders. Preserve passwords belonging to existing volumes.
+`GATEWAY_IMAGE` defaults to the published `grdz/gateway:2.0.0` image.
+The currently published Tamagotchi and Notification images target `linux/amd64`;
+Compose selects that platform explicitly so Docker Desktop can emulate them on
+Apple Silicon. The other images use their native platform.
 
-The template groups settings by service and shared purpose. Service settings are
-loaded from `.env`; Compose `environment` entries adapt values where an image uses
-different names or a container-specific address. The User Management API and
-database, and the Battle API, publish no host ports. Other published development
-ports are listed in the README.
+`GATEWAY_URL=http://api-gateway:8080` is the address for service-to-service calls;
+client requests use the gateway's published address and the service prefix.
 
-`REQUEST_TIMEOUT_SECONDS` and `MAX_CONCURRENCY` configure User Management and
-Battle request deadlines and admission budgets, defaulting to 10 seconds and
-64 requests. `USE_MOCK_SERVICES=false` enables Battle's HTTP collaborators through
-`GATEWAY_URL`; true is reserved for isolated fixture tests. Battle trusts gateway
-identity headers and has no signing key or token verification configuration.
+Compose passes each API only its own database/cache settings and client credential.
+The issuer receives the seven secret hashes and its private key. The gateway
+receives neither client secrets nor the private signing key; it retrieves public
+keys from User Management through JWKS. Do not add a shared `.env` as `env_file`
+to API containers, because that would disclose other clients' secrets to them.
 
-## Service Authentication
+`REQUEST_TIMEOUT_SECONDS` and `MAX_CONCURRENCY` configure service admission and
+deadlines. Gateway budgets and upstream timeouts are configured separately in
+`config/gateway.yaml`, along with route URLs and the public-operation allowlist.
 
-Run from the repository root:
+## Generate Client Credentials
+
+Generate a 32-byte random base64url secret and its SHA-256 hash in one command:
+
+```sh
+just gen-client-secret battle-service
+# Without just: python3 scripts/generate_client_secret.py battle-service
+```
+
+The output labels both destinations:
+
+```text
+BATTLE_CLIENT_SECRET=<plaintext>       # local .env; passed only to Battle
+BATTLE_CLIENT_SECRET_HASH=<sha256-hex> # local .env; passed only to UMS
+```
+
+Use the corresponding client ID for each of the seven services. Client IDs and
+allowed scopes are recorded in `config/service-clients.yaml`. The generator does
+not write either value to Git. Keep its output private.
+
+Alternatively, prepare all credentials and the signing key together:
 
 ```sh
 python3 scripts/configure_services_auth.py
 ```
 
-Python 3.9 or newer, OpenSSL and Git are required. The script creates or reuses an
-RSA signing key and seven independent client secrets without printing them. It
-preserves existing credentials and writes the SHA-256 hashes to `.env` for the
-mounted client registry in `config/service-clients.yaml`.
+The setup script preserves existing credentials, generates missing ones, and
+writes both plaintexts and hashes to the ignored local `.env` without printing
+them. It also maintains private `secrets/<client-id>.env` files for compatibility
+with independent service runs. Compose maps each matching plaintext to
+`CLIENT_SECRET` and `OAUTH_CLIENT_SECRET`; it never loads another client's file.
 
-The signing key lives at `secrets/jwt-private.pem` and is mounted only into the
-token issuer. `JWT_PRIVATE_KEY_PATH` is its path inside the container; `JWT_KEY_ID`
-identifies its public key. The gateway receives public keys through JWKS and must
-never receive the private key.
+## Signing Key
 
-Each `secrets/<client-id>.env` belongs in the corresponding service's private
-configuration. It contains `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET` and
-`OAUTH_TOKEN_URL`; adapt these names to that service's configuration interface.
-Compose loads only `secrets/battle-service.env` into the Battle API, after the
-shared `.env`. Battle derives the token endpoint from `GATEWAY_URL` and reads
-`OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET`; it does not use `OAUTH_TOKEN_URL`.
-Do not load every client's plaintext secret into a shared environment. Clients
-request a token through the gateway, cache it and refresh it when fewer than
-30 seconds remain. Claims, scopes and identity headers are defined in the
-README's authentication contract.
+The setup script generates or reuses an RSA private key at
+`JWT_PRIVATE_KEY_FILE` (default `./secrets/jwt-private.pem`). Only User Management
+mounts it at `JWT_PRIVATE_KEY_PATH=/run/secrets/jwt-private.pem`. `JWT_KEY_ID`
+identifies its public key. The committed template contains a file path, never PEM
+key material. A PEM file can also be generated manually with:
 
-## Secret Storage and Rotation
+```sh
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out secrets/jwt-private.pem
+```
 
-Keep `.env` and `secrets/` out of Git. Back them up in encrypted storage or a
+The issuer loads client hashes from the mounted `config/service-clients.yaml`.
+Services request their tokens at
+`GATEWAY_URL/user-management/api/v1/oauth2/token` using form-body client credentials.
+They cache tokens and refresh them before expiry; callers never sign tokens locally.
+
+## Storage and Rotation
+
+Keep `.env` and `secrets/` outside Git. Back them up in encrypted storage or a
 password manager. Share each client credential only with its service owner; keep
-the issuer's private key with the deployment operator. The private directory is
-mode 700 and credential files are mode 600. The key file is readable by the
-non-root container inside that private host directory.
+the issuer's private key with the deployment operator. The private directory uses
+mode 700 and credential files mode 600. The key file is readable by the non-root
+container inside that private host directory.
 
-For client secret rotation, temporarily configure both hashes, restart the issuer,
-switch the client to the new secret, then remove the old hash. For signing-key
-rotation, publish both old and current public keys until existing tokens expire.
-Never distribute an old private key as part of public key rotation.
+For secret rotation, add the new hash alongside the old one in the issuer's
+registry, restart the issuer, update the corresponding client secret, recreate
+that service, and remove the old hash. Update the matching `.env` plaintext before running the setup script;
+it synchronizes the client's private file and issuer hash. During signing-key rotation, publish both public keys until old tokens
+expire. Never distribute private keys as public rotation material.
 
-If Docker on macOS cannot read a cloud-offloaded signing key, rerun the setup
-script. It materializes the existing key without generating a replacement.
+If Docker on macOS cannot read a cloud-offloaded key, rerun the setup script.
+It materializes the existing key without generating a replacement.
