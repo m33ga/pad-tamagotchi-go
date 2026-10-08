@@ -1,6 +1,6 @@
 services:
   api-gateway:
-    image: ${GATEWAY_IMAGE:?Set GATEWAY_IMAGE to the published gateway image}
+    image: grdz/gateway:2.0.1
     pull_policy: always
     ports:
       - "${GATEWAY_PORT:-8000}:8080"
@@ -22,7 +22,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
+      - ${JWT_PRIVATE_KEY_FILE:-./secrets/jwt-private.pem}:/run/secrets/jwt-private.pem:ro
       - ./config/service-clients.yaml:/app/config/service-clients.yaml:ro
     depends_on:
       user-management-db:
@@ -49,12 +49,11 @@ services:
       retries: 10
 
   battle-api:
-    image: sanda2004/battle-service:1.0.2
+    image: sanda2004/battle-service:2.0.0
     pull_policy: always
     env_file:
       - .env
-    ports:
-      - "${BATTLE_API_PORT:-5020}:8080"
+      - ./secrets/battle-service.env
     depends_on:
       battle-db:
         condition: service_healthy
@@ -71,8 +70,6 @@ services:
       POSTGRES_DB: ${BATTLE_DB_NAME}
       POSTGRES_USER: ${BATTLE_DB_USER}
       POSTGRES_PASSWORD: ${BATTLE_DB_PASSWORD}
-    ports:
-      - "${BATTLE_DB_PUBLISHED_PORT:-5434}:5432"
     volumes:
       - battle-data:/var/lib/postgresql/data
     healthcheck:
@@ -82,15 +79,14 @@ services:
       retries: 10
 
   map-api:
-    image: grdz/map-service:1.0.3
+    image: grdz/map-service:2.0.0
     pull_policy: always
     env_file:
       - .env
+      - ./secrets/map-service.env
     environment:
       REDIS_ADDR: map-redis:6379
       REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
-    ports:
-      - "${MAP_API_PORT:-5030}:8080"
     depends_on:
       map-redis:
         condition: service_healthy
@@ -106,8 +102,6 @@ services:
     command: ["redis-server", "--requirepass", "${MAP_REDIS_PASSWORD}"]
     environment:
       REDISCLI_AUTH: ${MAP_REDIS_PASSWORD}
-    ports:
-      - "${MAP_REDIS_PUBLISHED_PORT:-6380}:6379"
     volumes:
       - map-redis-data:/data
     healthcheck:
@@ -121,6 +115,7 @@ services:
     pull_policy: always
     env_file:
       - .env
+      - ./secrets/monster-raid-service.env
     environment:
       POSTGRES_HOST: monster-raid-db
       POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
@@ -128,8 +123,6 @@ services:
       POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
       REDIS_ADDR: monster-raid-redis:6379
       REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
-    ports:
-      - "${MONSTER_RAID_API_PORT:-5040}:8080"
     depends_on:
       monster-raid-db:
         condition: service_healthy
@@ -148,8 +141,6 @@ services:
       POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
       POSTGRES_USER: ${MONSTER_RAID_DB_USER}
       POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
-    ports:
-      - "${MONSTER_RAID_DB_PUBLISHED_PORT:-5435}:5432"
     volumes:
       - monster-raid-data:/var/lib/postgresql/data
     healthcheck:
@@ -163,8 +154,6 @@ services:
     command: ["redis-server", "--requirepass", "${MONSTER_RAID_REDIS_PASSWORD}"]
     environment:
       REDISCLI_AUTH: ${MONSTER_RAID_REDIS_PASSWORD}
-    ports:
-      - "${MONSTER_RAID_REDIS_PUBLISHED_PORT:-6381}:6379"
     volumes:
       - monster-raid-redis-data:/data
     healthcheck:
@@ -174,23 +163,29 @@ services:
       retries: 10
 
   guild-api:
-    image: cosmak47/pad-guild-service:0.1.0
+    image: cosmak47/pad-guild-service:2.0.0
     pull_policy: always
+    env_file:
+      - .env
+      - ./secrets/guild-service.env
     environment:
-      PORT: ${GUILD_API_PORT}
+      PORT: "8081"
+      WS_PORT: "8082"
+      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL:-ws://localhost:8081}
       DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
-      MOCK_EXTERNAL_SERVICES: "true"
+      MOCK_EXTERNAL_SERVICES: "false"
     ports:
-      - "${GUILD_API_PORT}:${GUILD_API_PORT}"
+      - "${GUILD_CHAT_PORT:-8081}:8082"
     depends_on:
       guild-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:${GUILD_API_PORT}/healthz"]
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8081/healthz"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+
 
   guild-db:
     image: postgres:17-alpine
@@ -198,8 +193,6 @@ services:
       POSTGRES_DB: ${GUILD_DB_NAME}
       POSTGRES_USER: ${GUILD_DB_USER}
       POSTGRES_PASSWORD: ${GUILD_DB_PASSWORD}
-    ports:
-      - "${GUILD_DB_PUBLISHED_PORT:-5436}:5432"
     volumes:
       - guild-data:/var/lib/postgresql/data
     healthcheck:
@@ -209,18 +202,19 @@ services:
       retries: 10
 
   package-registry-api:
-    image: cosmak47/pad-package-registry-service:0.1.0
+    image: cosmak47/pad-package-registry-service:2.0.0
     pull_policy: always
+    env_file:
+      - .env
+      - ./secrets/package-registry-service.env
     environment:
-      PORT: ${PACKAGE_REGISTRY_API_PORT}
+      PORT: "8082"
       DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
-    ports:
-      - "${PACKAGE_REGISTRY_API_PORT}:${PACKAGE_REGISTRY_API_PORT}"
     depends_on:
       package-registry-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:${PACKAGE_REGISTRY_API_PORT}/healthz"]
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8082/healthz"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -232,8 +226,6 @@ services:
       POSTGRES_DB: ${PACKAGE_REGISTRY_DB_NAME}
       POSTGRES_USER: ${PACKAGE_REGISTRY_DB_USER}
       POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD}
-    ports:
-      - "${PACKAGE_REGISTRY_DB_PUBLISHED_PORT:-5437}:5432"
     volumes:
       - package-registry-data:/var/lib/postgresql/data
     healthcheck:
@@ -243,6 +235,7 @@ services:
       retries: 10
 
   tamagotchi-api:
+    platform: ${SERVICE_PLATFORM:-linux/amd64}
     image: johnnyc05/pad-tamagotchi-service:v2.0.1
     pull_policy: always
     # Reachable only through the gateway: no published port. The client
@@ -275,8 +268,6 @@ services:
       POSTGRES_DB: ${TAMAGOTCHI_DB_NAME}
       POSTGRES_USER: ${TAMAGOTCHI_DB_USER}
       POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD}
-    ports:
-      - "${TAMAGOTCHI_DB_PUBLISHED_PORT:-5438}:5432"
     volumes:
       - tamagotchi-data:/var/lib/postgresql/data
     healthcheck:
@@ -286,6 +277,7 @@ services:
       retries: 10
 
   notification-api:
+    platform: ${SERVICE_PLATFORM:-linux/amd64}
     image: johnnyc05/pad-notification-service:v2.0.1
     pull_policy: always
     # Reachable only through the gateway: no published port. The client
@@ -319,8 +311,6 @@ services:
       POSTGRES_DB: ${NOTIFICATION_DB_NAME}
       POSTGRES_USER: ${NOTIFICATION_DB_USER}
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
-    ports:
-      - "${NOTIFICATION_DB_PUBLISHED_PORT:-5439}:5432"
     volumes:
       - notification-data:/var/lib/postgresql/data
     healthcheck:
@@ -334,8 +324,6 @@ services:
     command: ["redis-server", "--requirepass", "${NOTIFICATION_REDIS_PASSWORD}", "--appendonly", "yes"]
     environment:
       REDISCLI_AUTH: ${NOTIFICATION_REDIS_PASSWORD}
-    ports:
-      - "${NOTIFICATION_REDIS_PUBLISHED_PORT:-6382}:6379"
     volumes:
       - notification-redis-data:/data
     healthcheck:

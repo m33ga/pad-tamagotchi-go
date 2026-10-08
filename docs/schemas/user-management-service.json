@@ -485,6 +485,99 @@
         }
       }
     },
+    "/api/v1/users/{userId}/relationships": {
+      "get": {
+        "operationId": "listUserRelationships",
+        "summary": "List a user's friends and enemies",
+        "description": "Callable by the account owner (X-Caller-Kind: user and matching X-User-ID), or by map-service and guild-service (X-Caller-Kind: service and X-Service-Name). Other users and services receive 403. Results are ordered by otherUserId. Omit cursor for the first page; reuse nextCursor with the same userId and status filter. Relationships with classification NONE are never returned. Pagination reflects current relationships rather than a fixed snapshot.",
+        "tags": [
+          "Relationships"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/UserId"
+          },
+          {
+            "$ref": "#/components/parameters/RelationshipCursor"
+          },
+          {
+            "$ref": "#/components/parameters/RelationshipLimit"
+          },
+          {
+            "$ref": "#/components/parameters/RelationshipStatus"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relationships page; nextCursor is null on the last page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor, limit or status: INVALID_REQUEST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "User not found: USER_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CONCURRENCY_LIMIT_REACHED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "1 second for concurrency rejection"
+              }
+            }
+          },
+          "504": {
+            "description": "REQUEST_TIMEOUT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{userId}/relationships/{otherUserId}": {
       "get": {
         "operationId": "getRelationship",
@@ -1410,6 +1503,42 @@
         "schema": {
           "type": "string"
         }
+      },
+      "RelationshipCursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque nextCursor from the preceding page for the same user and status filter. Omit for the first page.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "RelationshipLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum number of relationships per page",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
+      },
+      "RelationshipStatus": {
+        "name": "status",
+        "in": "query",
+        "required": false,
+        "description": "Optional relationship classification filter; omit to return both friends and enemies",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "FRIEND",
+            "ENEMY"
+          ]
+        }
       }
     },
     "responses": {
@@ -2160,6 +2289,51 @@
           }
         },
         "description": "sub is client ID; exp=iat+300. RS256 header carries kid. UMS self-issues with sub user-management-service."
+      },
+      "UserRelationship": {
+        "type": "object",
+        "required": [
+          "otherUserId",
+          "relationship"
+        ],
+        "properties": {
+          "otherUserId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The related user"
+          },
+          "relationship": {
+            "type": "string",
+            "enum": [
+              "FRIEND",
+              "ENEMY"
+            ],
+            "description": "Current relationship classification"
+          }
+        }
+      },
+      "RelationshipPageResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/UserRelationship"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page, or null on the last page"
+          }
+        }
       }
     }
   }

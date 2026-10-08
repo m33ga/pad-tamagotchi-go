@@ -8,3 +8,6 @@
 # Private OAuth credentials and signing keys
 secrets/
 *.pem
+
+# Python deployment tooling
+__pycache__/

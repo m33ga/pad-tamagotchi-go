@@ -2,10 +2,238 @@
   "info": {
     "_postman_id": "a269e2ca-46c1-4f04-b01e-8958f7b31368",
     "name": "Tamagotchi Go - Package Registry Service",
-    "description": "Executable Lab 1 collection for the Package Registry Service HTTP contract, including raid configuration and scheduling. Start the common Docker Compose deployment, then run the folders and requests in order. Bearer tokens and X-User-Role headers use the mocked identities and roles documented by the service.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
+    {
+      "name": "0. Authentication",
+      "item": [
+        {
+          "name": "Login admin through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"adminAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"adminUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login developer through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{developerEmail}}\",\n  \"password\": \"{{developerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"developerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"developerUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login moderator through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{moderatorEmail}}\",\n  \"password\": \"{{moderatorPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"moderatorAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"moderatorUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login registered through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{registeredEmail}}\",\n  \"password\": \"{{registeredPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"registeredAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"registeredUserId\", claims.sub);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get service token through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{serviceClientId}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{serviceClientSecret}}"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Client credentials succeed\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set(\"serviceAccessToken\", pm.response.json().access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
     {
       "name": "Package Registry Service",
       "item": [
@@ -14,7 +242,17 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{registryBaseUrl}}/healthz"
+            "url": "{{registryBaseUrl}}/healthz",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
           },
           "response": [],
           "event": [
@@ -37,10 +275,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages",
@@ -49,7 +283,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -90,7 +324,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -120,7 +354,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -147,10 +381,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
@@ -159,7 +389,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -195,10 +425,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/moderators",
@@ -207,7 +433,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -238,41 +464,29 @@
         {
           "name": "Register user for package",
           "request": {
-            "method": "POST",
+            "method": "PUT",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
               },
               {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              },
-              {
                 "key": "Idempotency-Key",
                 "value": "{{$guid}}"
               }
             ],
-            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/registrations",
+            "url": "{{gatewayUrl}}/user-management/api/v1/users/{{registeredUserId}}/packages/{{packageId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{registeredAccessToken}}",
                   "type": "string"
                 }
               ]
             },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"userId\": \"{{registeredUserId}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
+            "description": "The account owner requests registration through UMS, which calls Package Registry with its own service identity."
           },
           "response": [],
           "event": [
@@ -281,7 +495,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 201\", function () { pm.response.to.have.status(201); });"
+                  "pm.test(\"Registration succeeds through User Management\", () => pm.response.to.have.status(201));"
                 ]
               }
             }
@@ -291,19 +505,14 @@
           "name": "Get package registration",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/registrations/{{registeredUserId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -326,19 +535,14 @@
           "name": "List user's registrations",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/users/{{registeredUserId}}/package-registrations",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -365,10 +569,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/stat-definitions",
@@ -377,7 +577,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -409,19 +609,14 @@
           "name": "Get stat definitions",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/stat-definitions",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -448,10 +643,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts",
@@ -460,7 +651,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -492,19 +683,14 @@
           "name": "Get battle boosts",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -527,19 +713,14 @@
           "name": "Get battle boost by key",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "SERVICE"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/battle-boosts/power_snack",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{serviceUserId}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -562,19 +743,14 @@
           "name": "Remove moderator",
           "request": {
             "method": "DELETE",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "DEVELOPER"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}/moderators/{{moderatorUserId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{developerUserId}}",
+                  "value": "{{developerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -606,10 +782,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations",
@@ -618,7 +790,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -652,19 +824,14 @@
           "name": "List raid configurations",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations?limit=20",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -687,19 +854,14 @@
           "name": "Get raid configuration",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations/{{raidConfigurationId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -726,10 +888,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-configurations/{{raidConfigurationId}}",
@@ -738,7 +896,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -774,10 +932,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules",
@@ -786,7 +940,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -834,19 +988,14 @@
           "name": "List raid schedules",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules?status=SCHEDULED",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -869,19 +1018,14 @@
           "name": "Get raid schedule",
           "request": {
             "method": "GET",
-            "header": [
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
-              }
-            ],
+            "header": [],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
             "auth": {
               "type": "bearer",
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -908,10 +1052,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
@@ -920,7 +1060,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -956,10 +1096,6 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "X-User-Role",
-                "value": "ADMIN"
               }
             ],
             "url": "{{registryBaseUrl}}/api/v1/raid-schedules/{{scheduleId}}",
@@ -968,7 +1104,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{adminUserId}}",
+                  "value": "{{adminAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -1002,19 +1138,25 @@
   "variable": [
     {
       "key": "registryBaseUrl",
-      "value": "http://localhost:8082"
+      "value": "{{gatewayUrl}}/package-registry"
     },
     {
       "key": "adminUserId",
-      "value": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "developerUserId",
-      "value": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "moderatorUserId",
-      "value": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "serviceUserId",
@@ -1022,7 +1164,9 @@
     },
     {
       "key": "registeredUserId",
-      "value": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "packageId",
@@ -1035,6 +1179,102 @@
     {
       "key": "scheduleId",
       "value": ""
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
+    },
+    {
+      "key": "adminEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "adminPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "adminAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "developerEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "developerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "developerAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "moderatorEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "moderatorPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "moderatorAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "registeredEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
+    },
+    {
+      "key": "registeredPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
+    },
+    {
+      "key": "registeredAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "serviceClientId",
+      "value": "guild-service",
+      "type": "string",
+      "description": "Allowed service client for these operations; set locally if needed."
+    },
+    {
+      "key": "serviceClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "Use only the matching private service credential; never export it."
+    },
+    {
+      "key": "serviceAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the client-credentials request; never export."
     }
   ]
 }

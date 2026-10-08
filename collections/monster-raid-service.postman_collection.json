@@ -2,10 +2,60 @@
 	"info": {
 		"_postman_id": "6cf1ea86-e8a2-4ee9-a9a2-aca14373393b",
 		"name": "Tamagotchi Go - Monster Raid Service",
-		"description": "Generated from the Monster Raid Service OpenAPI 3.1 document (`docs/openapi/openapi.json` in the service repository).\n\nStart the common Docker Compose deployment, then run the requests in order: starting a raid stores a fresh `guildId` and the returned `raidId` in collection variables, which every later request reuses. `scheduleId` is the schedule the mocked Package Registry Service serves, and the monster it configures has 1000 health with 25 damage per attack, so 40 attacks finish a raid.",
+		"description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
+		{
+			"name": "0. Authentication",
+			"item": [
+				{
+					"name": "Login user through gateway",
+					"request": {
+						"method": "POST",
+						"auth": {
+							"type": "noauth"
+						},
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"response": [],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+									"if (pm.response.code === 200) {",
+									"  const body = pm.response.json();",
+									"  pm.collectionVariables.set(\"accessToken\", body.accessToken);",
+									"  // Read the subject returned by UMS; token verification is done by the gateway.",
+									"  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+									"  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+									"  pm.collectionVariables.set(\"userId\", claims.sub);",
+									"}"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
 		{
 			"name": "Raids",
 			"item": [
@@ -290,7 +340,8 @@
 						},
 						"description": "Returns the guild's raids in creation order, optionally filtered by status."
 					},
-					"response": []
+					"response": [],
+					"event": []
 				},
 				{
 					"name": "Get a raid",
@@ -364,7 +415,8 @@
 							"cookie": [],
 							"body": "{\n  \"error\": {\n    \"code\": \"RAID_NOT_FOUND\",\n    \"message\": \"The raid does not exist.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
 						}
-					]
+					],
+					"event": []
 				},
 				{
 					"name": "Get the raid result",
@@ -480,7 +532,8 @@
 							"cookie": [],
 							"body": "{\n  \"error\": {\n    \"code\": \"RAID_NOT_FINISHED\",\n    \"message\": \"The raid is not finished.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
 						}
-					]
+					],
+					"event": []
 				}
 			]
 		},
@@ -506,11 +559,6 @@
 					"request": {
 						"method": "POST",
 						"header": [
-							{
-								"description": "Calling user; injected by the gateway from the JWT in a later lab",
-								"key": "X-User-ID",
-								"value": "{{userId}}"
-							},
 							{
 								"description": "Correlation identifier; generated when absent",
 								"key": "X-Correlation-ID",
@@ -563,10 +611,6 @@
 								"method": "POST",
 								"header": [
 									{
-										"key": "X-User-ID",
-										"value": "{{userId}}"
-									},
-									{
 										"key": "Content-Type",
 										"value": "application/json"
 									}
@@ -617,11 +661,6 @@
 								"method": "POST",
 								"header": [
 									{
-										"description": "The user the mocked Guild Service reports as an outsider",
-										"key": "X-User-ID",
-										"value": "00000000-0000-0000-0000-0000000000ee"
-									},
-									{
 										"key": "Content-Type",
 										"value": "application/json"
 									}
@@ -671,10 +710,6 @@
 							"originalRequest": {
 								"method": "POST",
 								"header": [
-									{
-										"key": "X-User-ID",
-										"value": "{{userId}}"
-									},
 									{
 										"key": "Content-Type",
 										"value": "application/json"
@@ -768,7 +803,8 @@
 						},
 						"description": "Returns the raid's participants in join order with their accumulated damage."
 					},
-					"response": []
+					"response": [],
+					"event": []
 				}
 			]
 		},
@@ -797,11 +833,6 @@
 					"request": {
 						"method": "POST",
 						"header": [
-							{
-								"description": "Calling user; injected by the gateway from the JWT in a later lab",
-								"key": "X-User-ID",
-								"value": "{{userId}}"
-							},
 							{
 								"description": "Correlation identifier; generated when absent",
 								"key": "X-Correlation-ID",
@@ -854,10 +885,6 @@
 								"method": "POST",
 								"header": [
 									{
-										"key": "X-User-ID",
-										"value": "{{userId}}"
-									},
-									{
 										"key": "Content-Type",
 										"value": "application/json"
 									}
@@ -908,10 +935,6 @@
 								"method": "POST",
 								"header": [
 									{
-										"key": "X-User-ID",
-										"value": "{{userId}}"
-									},
-									{
 										"key": "Content-Type",
 										"value": "application/json"
 									}
@@ -961,10 +984,6 @@
 							"originalRequest": {
 								"method": "POST",
 								"header": [
-									{
-										"key": "X-User-ID",
-										"value": "9f1d9d32-1a2a-4a0e-9a6d-8c5d3f2a1b77"
-									},
 									{
 										"key": "Content-Type",
 										"value": "application/json"
@@ -1018,7 +1037,7 @@
 	"variable": [
 		{
 			"key": "baseUrl",
-			"value": "http://localhost:5040/api/v1",
+			"value": "{{gatewayUrl}}/monster-raid/api/v1",
 			"type": "string"
 		},
 		{
@@ -1028,8 +1047,9 @@
 		},
 		{
 			"key": "userId",
-			"value": "40ab3082-433f-4018-8f8f-e25e3b544a04",
-			"type": "string"
+			"value": "",
+			"type": "string",
+			"description": "Populated from the UMS-issued login token."
 		},
 		{
 			"key": "tamagotchiId",
@@ -1045,6 +1065,40 @@
 			"key": "raidId",
 			"value": "",
 			"type": "string"
+		},
+		{
+			"key": "gatewayUrl",
+			"value": "http://localhost:8000",
+			"type": "string",
+			"description": "Single HTTP entry point; adjust the gateway host port here."
+		},
+		{
+			"key": "userEmail",
+			"value": "",
+			"type": "string",
+			"description": "Existing UMS account email; set locally."
+		},
+		{
+			"key": "userPassword",
+			"value": "",
+			"type": "string",
+			"description": "Existing UMS password; keep local and never export."
+		},
+		{
+			"key": "accessToken",
+			"value": "",
+			"type": "string",
+			"description": "Populated by the login request; never export an access token."
 		}
-	]
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{accessToken}}",
+				"type": "string"
+			}
+		]
+	}
 }

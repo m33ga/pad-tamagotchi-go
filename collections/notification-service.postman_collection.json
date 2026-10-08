@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tamagotchi Go - Notification Service",
-    "description": "Notification Service endpoints through the API Gateway: Firebase device registrations, per-category notification preferences, and the owner-only rule that protects them.\n\nRun the folders in order. \"0. Authentication\" registers an owner and a second user through User Management and logs both in; \"1. Devices\" registers an installation for the owner and stores its identifiers for the requests that follow.\n\nFirebase registration tokens are confidential: they are sent when registering a device and are deliberately never returned in a response, which the tests assert.\n\npackageId defaults to 11111111-1111-4111-8111-111111111111, the package User Management's mock registry accepts at registration.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. The Access Rules folder checks who may call each operation: no token and a second user's token are refused.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -16,24 +16,14 @@
   },
   "variable": [
     {
-      "key": "gatewayUrl",
-      "value": "http://localhost:8000"
-    },
-    {
       "key": "baseUrl",
       "value": "{{gatewayUrl}}/notification/api/v1"
     },
     {
-      "key": "userManagementUrl",
-      "value": "{{gatewayUrl}}/user-management/api/v1"
-    },
-    {
-      "key": "accountPassword",
-      "value": "Collection-Test-Account-1"
-    },
-    {
       "key": "ownerUserId",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "deviceId",
@@ -41,39 +31,59 @@
     },
     {
       "key": "packageId",
-      "value": "11111111-1111-4111-8111-111111111111"
+      "value": ""
     },
     {
       "key": "ownerAccessToken",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     },
     {
       "key": "fcmToken",
       "value": ""
     },
     {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
+    },
+    {
       "key": "ownerEmail",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
     },
     {
-      "key": "ownerUsername",
-      "value": ""
-    },
-    {
-      "key": "otherUserId",
-      "value": ""
+      "key": "ownerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
     },
     {
       "key": "otherEmail",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Second existing UMS account email; set locally."
     },
     {
-      "key": "otherUsername",
-      "value": ""
+      "key": "otherPassword",
+      "value": "",
+      "type": "string",
+      "description": "Second existing UMS password; keep local and never export."
+    },
+    {
+      "key": "otherUserId",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the second login."
     },
     {
       "key": "otherAccessToken",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     }
   ],
   "item": [
@@ -81,178 +91,90 @@
       "name": "0. Authentication",
       "item": [
         {
-          "name": "Register owner account",
+          "name": "Login owner through gateway",
           "request": {
             "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
-            "url": "{{userManagementUrl}}/users",
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"{{ownerUsername}}\",\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{accountPassword}}\",\n  \"initialPackageId\": \"{{packageId}}\"\n}",
+              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
+          "response": [],
           "event": [
             {
-              "listen": "prerequest",
+              "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "const run = Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);",
-                  "pm.collectionVariables.set('ownerEmail', 'owner-' + run + '@example.com');",
-                  "pm.collectionVariables.set('ownerUsername', 'owner-' + run);",
-                  "if (!pm.collectionVariables.get('packageId')) {",
-                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"ownerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"ownerUserId\", claims.sub);",
                   "}"
                 ]
               }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set(\"ownerUserId\", pm.response.json().userId);"
-                ]
-              }
             }
           ]
         },
         {
-          "name": "Log in owner",
+          "name": "Login other user through gateway",
           "request": {
             "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
-            "url": "{{userManagementUrl}}/auth/sessions",
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{accountPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{otherPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
+          "response": [],
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set(\"ownerAccessToken\", pm.response.json().accessToken);",
-                  "pm.test(\"Issues a bearer token\", () => pm.expect(pm.response.json().accessToken).to.be.a(\"string\").and.not.empty);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Register other account",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{userManagementUrl}}/users",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"username\": \"{{otherUsername}}\",\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{accountPassword}}\",\n  \"initialPackageId\": \"{{packageId}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "auth": {
-              "type": "noauth"
-            }
-          },
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const run = Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);",
-                  "pm.collectionVariables.set('otherEmail', 'other-' + run + '@example.com');",
-                  "pm.collectionVariables.set('otherUsername', 'other-' + run);",
-                  "if (!pm.collectionVariables.get('packageId')) {",
-                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"otherAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"otherUserId\", claims.sub);",
                   "}"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set(\"otherUserId\", pm.response.json().userId);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Log in other",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{userManagementUrl}}/auth/sessions",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{accountPassword}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "auth": {
-              "type": "noauth"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set(\"otherAccessToken\", pm.response.json().accessToken);",
-                  "pm.test(\"Issues a bearer token\", () => pm.expect(pm.response.json().accessToken).to.be.a(\"string\").and.not.empty);"
                 ]
               }
             }
@@ -301,6 +223,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "if (!pm.collectionVariables.get('ownerUserId')) {",
+                  "    pm.collectionVariables.set('ownerUserId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
                   "if (!pm.collectionVariables.get('packageId')) {",
                   "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
                   "}",

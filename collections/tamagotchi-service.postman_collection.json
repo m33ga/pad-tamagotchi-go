@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tamagotchi Go - Tamagotchi Service",
-    "description": "Tamagotchi Service endpoints through the API Gateway: creature lifecycle, roster and primary selection, combat profile, XP grants, ownership transfers, and who may call each of them.\n\nRun the folders in order. \"0. Authentication\" registers an owner and a second user through User Management and logs both in, and obtains a battle-service token with the client-credentials grant. Owner requests use the owner's token; the combat profile, XP grant and ownership transfer requests use the battle-service token, as only Battle Service and Monster Raid Service may call them.\n\nSet battleClientSecret to BATTLE_CLIENT_SECRET from your local .env before running, and never export or commit it. packageId defaults to 11111111-1111-4111-8111-111111111111, the package User Management's mock registry accepts at registration. Once Package Registry is called for real it must name a registered package whose statistic definitions include hunger, tiredness and happiness.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. The Access Rules folder checks who may call each operation: no token, a second user's token and the owner's token on service-only operations are refused.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -16,32 +16,24 @@
   },
   "variable": [
     {
-      "key": "gatewayUrl",
-      "value": "http://localhost:8000"
-    },
-    {
       "key": "baseUrl",
       "value": "{{gatewayUrl}}/tamagotchi/api/v1"
     },
     {
-      "key": "userManagementUrl",
-      "value": "{{gatewayUrl}}/user-management/api/v1"
-    },
-    {
-      "key": "accountPassword",
-      "value": "Collection-Test-Account-1"
-    },
-    {
       "key": "ownerUserId",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "winnerUserId",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated from the UMS-issued login token."
     },
     {
       "key": "packageId",
-      "value": "11111111-1111-4111-8111-111111111111"
+      "value": ""
     },
     {
       "key": "tamagotchiId",
@@ -53,7 +45,9 @@
     },
     {
       "key": "ownerAccessToken",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     },
     {
       "key": "battleReferenceId",
@@ -68,40 +62,58 @@
       "value": ""
     },
     {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
+    },
+    {
       "key": "ownerEmail",
-      "value": ""
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
     },
     {
-      "key": "ownerUsername",
-      "value": ""
+      "key": "ownerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
     },
     {
-      "key": "otherUserId",
-      "value": ""
+      "key": "winnerEmail",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS account email; set locally."
     },
     {
-      "key": "otherEmail",
-      "value": ""
+      "key": "winnerPassword",
+      "value": "",
+      "type": "string",
+      "description": "Existing UMS password; keep local and never export."
     },
     {
-      "key": "otherUsername",
-      "value": ""
+      "key": "winnerAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the login request; never export an access token."
     },
     {
-      "key": "otherAccessToken",
-      "value": ""
+      "key": "serviceClientId",
+      "value": "battle-service",
+      "type": "string",
+      "description": "Allowed service client for these operations; set locally if needed."
     },
     {
-      "key": "battleClientId",
-      "value": "battle-service"
+      "key": "serviceClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "Use only the matching private service credential; never export it."
     },
     {
-      "key": "battleClientSecret",
-      "value": ""
-    },
-    {
-      "key": "battleAccessToken",
-      "value": ""
+      "key": "serviceAccessToken",
+      "value": "",
+      "type": "string",
+      "description": "Populated by the client-credentials request; never export."
     }
   ],
   "item": [
@@ -109,238 +121,133 @@
       "name": "0. Authentication",
       "item": [
         {
-          "name": "Register owner account",
+          "name": "Login owner through gateway",
           "request": {
             "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
-            "url": "{{userManagementUrl}}/users",
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"{{ownerUsername}}\",\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{accountPassword}}\",\n  \"initialPackageId\": \"{{packageId}}\"\n}",
+              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{ownerPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
+          "response": [],
           "event": [
             {
-              "listen": "prerequest",
+              "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "const run = Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);",
-                  "pm.collectionVariables.set('ownerEmail', 'owner-' + run + '@example.com');",
-                  "pm.collectionVariables.set('ownerUsername', 'owner-' + run);",
-                  "if (!pm.collectionVariables.get('packageId')) {",
-                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"ownerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"ownerUserId\", claims.sub);",
                   "}"
                 ]
               }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set(\"ownerUserId\", pm.response.json().userId);"
-                ]
-              }
             }
           ]
         },
         {
-          "name": "Log in owner",
+          "name": "Login winner through gateway",
           "request": {
             "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
-            "url": "{{userManagementUrl}}/auth/sessions",
+            "url": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{accountPassword}}\"\n}",
+              "raw": "{\n  \"email\": \"{{winnerEmail}}\",\n  \"password\": \"{{winnerPassword}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "auth": {
-              "type": "noauth"
             }
           },
+          "response": [],
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set(\"ownerAccessToken\", pm.response.json().accessToken);",
-                  "pm.test(\"Issues a bearer token\", () => pm.expect(pm.response.json().accessToken).to.be.a(\"string\").and.not.empty);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Register other account",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{userManagementUrl}}/users",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"username\": \"{{otherUsername}}\",\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{accountPassword}}\",\n  \"initialPackageId\": \"{{packageId}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "auth": {
-              "type": "noauth"
-            }
-          },
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const run = Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);",
-                  "pm.collectionVariables.set('otherEmail', 'other-' + run + '@example.com');",
-                  "pm.collectionVariables.set('otherUsername', 'other-' + run);",
-                  "if (!pm.collectionVariables.get('packageId')) {",
-                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.test(\"Login succeeds\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set(\"winnerAccessToken\", body.accessToken);",
+                  "  // Read the subject returned by UMS; token verification is done by the gateway.",
+                  "  const payload = body.accessToken.split(\".\")[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+                  "  const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, \"=\")));",
+                  "  pm.collectionVariables.set(\"winnerUserId\", claims.sub);",
                   "}"
                 ]
               }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status code is 201\", () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set(\"otherUserId\", pm.response.json().userId);"
-                ]
-              }
             }
           ]
         },
         {
-          "name": "Log in other",
+          "name": "Get service token through gateway",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{userManagementUrl}}/auth/sessions",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{otherEmail}}\",\n  \"password\": \"{{accountPassword}}\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "auth": {
-              "type": "noauth"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set(\"otherAccessToken\", pm.response.json().accessToken);",
-                  "pm.test(\"Issues a bearer token\", () => pm.expect(pm.response.json().accessToken).to.be.a(\"string\").and.not.empty);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Get battle-service token",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/x-www-form-urlencoded"
-              }
-            ],
-            "url": "{{userManagementUrl}}/oauth2/token",
             "auth": {
               "type": "noauth"
             },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+            "header": [],
             "body": {
               "mode": "urlencoded",
               "urlencoded": [
                 {
                   "key": "grant_type",
-                  "value": "client_credentials",
-                  "type": "text"
+                  "value": "client_credentials"
                 },
                 {
                   "key": "client_id",
-                  "value": "{{battleClientId}}",
-                  "type": "text"
+                  "value": "{{serviceClientId}}"
                 },
                 {
                   "key": "client_secret",
-                  "value": "{{battleClientSecret}}",
-                  "type": "text"
+                  "value": "{{serviceClientSecret}}"
                 }
               ]
             }
           },
+          "response": [],
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "if (!pm.variables.get('battleClientSecret')) {",
-                  "    console.warn('battleClientSecret is empty: set it to BATTLE_CLIENT_SECRET from your local .env. Never export or commit it.');",
-                  "}"
-                ]
-              }
-            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set(\"battleAccessToken\", pm.response.json().access_token);",
-                  "pm.test(\"Issues a bearer service token\", () => pm.expect(pm.response.json().token_type).to.eql(\"Bearer\"));"
+                  "pm.test(\"Client credentials succeed\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set(\"serviceAccessToken\", pm.response.json().access_token);",
+                  "}"
                 ]
               }
             }
@@ -430,6 +337,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "if (!pm.collectionVariables.get('ownerUserId')) {",
+                  "    pm.collectionVariables.set('ownerUserId', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
                   "if (!pm.collectionVariables.get('packageId')) {",
                   "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
                   "}"
@@ -848,7 +758,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{battleAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -894,7 +804,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{battleAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -950,7 +860,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{battleAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -1019,7 +929,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{otherAccessToken}}",
+                  "value": "{{winnerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -1050,7 +960,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{otherAccessToken}}",
+                  "value": "{{winnerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -1095,7 +1005,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{otherAccessToken}}",
+                  "value": "{{winnerAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -1120,7 +1030,17 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/combat-profile"
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}/combat-profile",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
           },
           "event": [
             {
@@ -1155,6 +1075,16 @@
                   "language": "json"
                 }
               }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "event": [
@@ -1184,12 +1114,22 @@
             "url": "{{baseUrl}}/tamagotchi-ownership-transfers",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"fromUserId\": \"{{ownerUserId}}\",\n  \"toUserId\": \"{{otherUserId}}\",\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{$guid}}\"\n}",
+              "raw": "{\n  \"tamagotchiId\": \"{{tamagotchiId}}\",\n  \"fromUserId\": \"{{ownerUserId}}\",\n  \"toUserId\": \"{{winnerUserId}}\",\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{$guid}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
             }
           },
           "event": [
@@ -1227,7 +1167,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{battleAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]
@@ -1289,7 +1229,7 @@
               "bearer": [
                 {
                   "key": "token",
-                  "value": "{{battleAccessToken}}",
+                  "value": "{{serviceAccessToken}}",
                   "type": "string"
                 }
               ]

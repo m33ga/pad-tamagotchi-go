@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "66c663f6-55c3-4f75-aa92-0da82f4cff45",
     "name": "Tamagotchi Go - User Management Service",
-    "description": "Executable Lab 1 collection for all User Management Service contract endpoints. Start the Docker Compose stack, set jwtSigningKey to the same local development key used by the service, then run folders in order. Registration and login populate the remaining runtime variables automatically.",
+    "description": "Gateway collection for UMS. Registration requires a real ACTIVE initialPackageId. Run registration and login first; tokens come from UMS. Configure the matching battle-service credential locally before the service-only balance operation. Never export credentials or populated tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -156,7 +156,8 @@
                   "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
                   "pm.collectionVariables.set('accessToken', body.accessToken);",
-                  "pm.collectionVariables.set('refreshToken', body.refreshToken);"
+                  "pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "// The access token is issued and signed by UMS; no local signing key is used."
                 ]
               }
             }
@@ -537,6 +538,49 @@
       "name": "4. Balances",
       "item": [
         {
+          "name": "Get service token through gateway",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{serviceClientId}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{serviceClientSecret}}"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Client credentials succeed\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set(\"serviceAccessToken\", pm.response.json().access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Apply global balance transaction",
           "request": {
             "method": "POST",
@@ -578,14 +622,6 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "const secret = pm.variables.get('jwtSigningKey');",
-                  "if (!secret || secret.length < 32) throw new Error('Set jwtSigningKey to the service local JWT key.');",
-                  "const Crypto = require('crypto-js');",
-                  "const encode = value => Crypto.enc.Base64.stringify(Crypto.enc.Utf8.parse(JSON.stringify(value))).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
-                  "const unsigned = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: 'tamagotchi-go', aud: 'tamagotchi-go', kind: 'service', service: 'battle-service', exp: Math.floor(Date.now() / 1000) + 300 })}`;",
-                  "const signature = Crypto.enc.Base64.stringify(Crypto.HmacSHA256(unsigned, secret)).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
-                  "const token = `${unsigned}.${signature}`;",
-                  "pm.collectionVariables.set('serviceAccessToken', token);",
                   "pm.collectionVariables.set('balanceReferenceId', pm.variables.replaceIn('{{$guid}}'));",
                   "pm.collectionVariables.set('balanceIdempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
                 ]
@@ -738,19 +774,14 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:5010/api/v1",
+      "value": "{{gatewayUrl}}/user-management/api/v1",
       "type": "string"
-    },
-    {
-      "key": "jwtSigningKey",
-      "value": "",
-      "type": "string",
-      "description": "Set locally to the same development key used by User Management Service. Never commit a real key."
     },
     {
       "key": "password",
-      "value": "ExamplePass123!",
-      "type": "string"
+      "value": "",
+      "type": "string",
+      "description": "Choose a local test-account password; do not export it."
     },
     {
       "key": "initialPackageId",
@@ -815,7 +846,8 @@
     {
       "key": "serviceAccessToken",
       "value": "",
-      "type": "string"
+      "type": "string",
+      "description": "Populated by the client-credentials request; never export."
     },
     {
       "key": "friendRequestId",
@@ -841,6 +873,24 @@
       "key": "balanceIdempotencyKey",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Single HTTP entry point; adjust the gateway host port here."
+    },
+    {
+      "key": "serviceClientId",
+      "value": "battle-service",
+      "type": "string",
+      "description": "Allowed service client for these operations; set locally if needed."
+    },
+    {
+      "key": "serviceClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "Use only the matching private service credential; never export it."
     }
   ]
 }
