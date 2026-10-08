@@ -1,0 +1,66 @@
+name: User Management Lab 2
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/user-management-contract.yml'
+      - 'compose*.yaml'
+      - 'config/**'
+      - 'docs/schemas/user-management-service.json'
+      - 'scripts/configure-user-management-oauth.py'
+      - 'tests/user_management_gateway_smoke.py'
+      - '.env.example'
+  workflow_dispatch:
+    inputs:
+      ums_image:
+        description: Published UMS Lab 2 image
+        required: true
+        default: sanda2004/user-management-service:2.0.0
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - run: python -m pip install openapi-spec-validator==0.9.0
+      - name: Validate OpenAPI
+        run: python -m openapi_spec_validator docs/schemas/user-management-service.json
+      - name: Validate deployment templates and isolation
+        run: |
+          docker compose --env-file .env.example -f compose.yaml -f compose.gateway.yaml config --format json > /tmp/issuer-compose.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          model = json.loads(Path('/tmp/issuer-compose.json').read_text())
+          api = model['services']['user-management-api']
+          assert not api.get('ports'), 'UMS must not publish a host port'
+          assert not model['services']['user-management-db'].get('ports')
+          assert 'JWT_SIGNING_KEY' not in api['environment']
+          assert model['networks']['issuer']['internal']
+          for path in ('scripts/configure-user-management-oauth.py', 'tests/user_management_gateway_smoke.py'):
+              compile(Path(path).read_text(), path, 'exec')
+          PY
+  integration:
+    if: github.event_name == 'workflow_dispatch'
+    needs: contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: m33ga/gateway
+          ref: fb646400a86b8b987c89eb2cfa9ff922bad63641
+          path: .gateway-source
+      - name: Build the verified gateway implementation
+        run: docker build -t grdz/gateway:dev .gateway-source
+      - name: Fetch the released UMS image
+        env:
+          UMS_IMAGE: ${{ inputs.ums_image }}
+        run: docker pull "$UMS_IMAGE"
+      - name: Run isolated gateway and UMS integration
+        env:
+          UMS_IMAGE: ${{ inputs.ums_image }}
+        run: python3 tests/user_management_gateway_smoke.py --ums-image "$UMS_IMAGE"

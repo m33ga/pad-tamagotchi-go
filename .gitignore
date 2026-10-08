@@ -4,3 +4,7 @@
 
 .idea/
 .vscode/
+
+# Private OAuth credentials and signing keys
+secrets/
+*.pem
