@@ -231,7 +231,7 @@ services:
 
   tamagotchi-api:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v2.0.1
+    image: johnnyc05/pad-tamagotchi-service:v2.0.2
     pull_policy: always
     # Reachable only through the gateway: no published port. The client
     # credentials come from this service's own secrets file.
@@ -273,7 +273,7 @@ services:
 
   notification-api:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-notification-service:v2.0.1
+    image: johnnyc05/pad-notification-service:v2.0.3
     pull_policy: always
     # Reachable only through the gateway: no published port. The client
     # credentials come from this service's own secrets file.
