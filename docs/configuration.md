@@ -13,7 +13,7 @@ never joins `edge`. `GUILD_PUBLIC_WS_URL` is the public socket address clients r
 
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
-`GATEWAY_IMAGE` defaults to the published `grdz/gateway:2.0.0` image.
+`GATEWAY_IMAGE` defaults to the published `grdz/gateway:2.0.1` image.
 The currently published Tamagotchi and Notification images target `linux/amd64`;
 Compose selects that platform explicitly so Docker Desktop can emulate them on
 Apple Silicon. The other images use their native platform.

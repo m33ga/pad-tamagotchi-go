@@ -1,6 +1,6 @@
 services:
   api-gateway:
-    image: ${GATEWAY_IMAGE:-grdz/gateway:2.0.0}
+    image: ${GATEWAY_IMAGE:-grdz/gateway:2.0.1}
     pull_policy: always
     ports:
       - "${GATEWAY_PORT:-8000}:8080"

@@ -1741,7 +1741,7 @@ A single [`compose.yaml`](compose.yaml) runs the published gateway and all eight
 | API Gateway | `http://localhost:8000` | Every client and synchronous service HTTP request |
 | Guild chat socket | `ws://localhost:8081/ws/v1/guilds/{guildId}/chat` | Direct connection using a Guild-issued chat ticket |
 
-`GATEWAY_PORT` and `GUILD_CHAT_PORT` select the two host ports. `GUILD_PUBLIC_WS_URL` must match the address clients use for chat. Image versions are pinned in Compose; `GATEWAY_IMAGE` defaults to `grdz/gateway:2.0.0`. The gateway is a private Git submodule alongside the service submodules. Team members and the professor need repository access to initialize it.
+`GATEWAY_PORT` and `GUILD_CHAT_PORT` select the two host ports. `GUILD_PUBLIC_WS_URL` must match the address clients use for chat. Image versions are pinned in Compose; `GATEWAY_IMAGE` defaults to `grdz/gateway:2.0.1`. The gateway is a private Git submodule alongside the service submodules. Team members and the professor need repository access to initialize it.
 
 ### Run the Services
 

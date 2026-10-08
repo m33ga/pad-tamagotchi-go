@@ -77,9 +77,9 @@ def main():
         values[prefix + '_CLIENT_SECRET_HASH'] = hashlib.sha256(secret.encode()).hexdigest()
     values.setdefault('JWT_KEY_ID', values.pop('USER_MANAGEMENT_JWT_KEY_ID', 'ums-key-1'))
     values.setdefault('JWT_PRIVATE_KEY_FILE', './secrets/jwt-private.pem')
-    values.setdefault('GATEWAY_IMAGE', 'grdz/gateway:2.0.0')
+    values.setdefault('GATEWAY_IMAGE', 'grdz/gateway:2.0.1')
     if values['GATEWAY_IMAGE'] == 'replace-with-published-gateway-image':
-        values['GATEWAY_IMAGE'] = 'grdz/gateway:2.0.0'
+        values['GATEWAY_IMAGE'] = 'grdz/gateway:2.0.1'
     values.setdefault('JWT_PRIVATE_KEY_PATH', '/run/secrets/jwt-private.pem')
     values.setdefault('SERVICE_CLIENTS_PATH', '/app/config/service-clients.yaml')
     values.setdefault('GATEWAY_URL', 'http://api-gateway:8080')
