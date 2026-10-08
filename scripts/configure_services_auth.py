@@ -71,15 +71,14 @@ def main():
         else:
             secret = secrets.token_urlsafe(32)
         token_url = values.get('GATEWAY_URL', 'http://api-gateway:8080').rstrip('/')
-        private_write(path, f'OAUTH_CLIENT_ID={client}\nOAUTH_CLIENT_SECRET={secret}\n'
+        private_write(path, f'CLIENT_ID={client}\nCLIENT_SECRET={secret}\n'
+                      f'OAUTH_CLIENT_ID={client}\nOAUTH_CLIENT_SECRET={secret}\n'
                       f'OAUTH_TOKEN_URL={token_url}/user-management/api/v1/oauth2/token\n')
         values[prefix + '_CLIENT_SECRET'] = secret
         values[prefix + '_CLIENT_SECRET_HASH'] = hashlib.sha256(secret.encode()).hexdigest()
     values.setdefault('JWT_KEY_ID', values.pop('USER_MANAGEMENT_JWT_KEY_ID', 'ums-key-1'))
     values.setdefault('JWT_PRIVATE_KEY_FILE', './secrets/jwt-private.pem')
-    values.setdefault('GATEWAY_IMAGE', 'grdz/gateway:2.0.1')
-    if values['GATEWAY_IMAGE'] == 'replace-with-published-gateway-image':
-        values['GATEWAY_IMAGE'] = 'grdz/gateway:2.0.1'
+    values.pop('GATEWAY_IMAGE', None)
     values.setdefault('JWT_PRIVATE_KEY_PATH', '/run/secrets/jwt-private.pem')
     values.setdefault('SERVICE_CLIENTS_PATH', '/app/config/service-clients.yaml')
     values.setdefault('GATEWAY_URL', 'http://api-gateway:8080')

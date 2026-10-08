@@ -20,7 +20,7 @@ def main():
     print(f'{prefix}_CLIENT_SECRET={secret}')
     print('# User Management: issuer configuration in local .env')
     print(f'{prefix}_CLIENT_SECRET_HASH={hashlib.sha256(secret.encode()).hexdigest()}')
-    print('# Compose passes the plaintext only to this client and the hash only to UMS.')
+    print('# UMS authenticates this client using the hash; the client uses the plaintext.')
 
 
 if __name__ == '__main__':
