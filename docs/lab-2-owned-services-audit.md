@@ -26,9 +26,28 @@ This is a progress report, not confirmation that either issue is complete.
 - Guild: migration from UUID to text outbox correlation IDs preserves existing
   events and can be run repeatedly. Missing guild negotiation uses
   GUILD_NOT_FOUND as specified.
+- Unit-only statement coverage is now **87.0% for Guild** and **87.5% for
+  Package Registry**, measured across each entire Go module with the race
+  detector (`-count=3`), without TEST_DATABASE_URL or TEST_GATEWAY_URL. CI enforces 80%.
+  Strict PostgreSQL mocks exercise real handlers/stores with failure injection
+  at each database step, transaction rollback, permissions, pagination,
+  validation, idempotent registration and message replay. WebSocket unit tests
+  cover invalid tickets, errors, broadcast, revoked membership and disconnects.
+  A subsequent PostgreSQL-backed race-test regression also passed in both
+  repositories, using unique schemas on a separate disposable database.
 - OAuth verifier unit tests cover form credentials, caching, early refresh,
   one retry after 401, correlation forwarding and remaining-deadline propagation.
-  These tests use a controlled token/dependency transport, not the team's issuer.
+  These unit tests use a controlled token/dependency transport.
+- A separate disposable Docker run passed against the **actual gateway** and
+  published **sanda2004/user-management-service:2.0.0** issuer with all external
+  mocks disabled. Verified: real user registration/login, 300-second service
+  tokens for Guild/Registry/Monster Raid, package creation and permissions,
+  moderator revocation, rejected forged identity headers, real Guild dependency
+  checks, invitations/acceptance, Monster Raid roster access, negotiated direct
+  WebSocket URLs, ticket reuse rejection, broadcast/deduplication/persistence,
+  ownership transfer and deleted-guild socket shutdown. The issuer image digest
+  was sha256:18e357c00973b6a6ea68b5cc7f8e940d0654e462afdd346f947d1be4f4ce857d.
+  Gateway and owned-service images were built locally, not downloaded releases.
 - Configuration accepts the shared setup script's OAUTH_CLIENT_ID and
   OAUTH_CLIENT_SECRET. Compose loads each service's own private credential file.
   Neither REST listener nor either database publishes a host port; only the
@@ -41,7 +60,8 @@ This is a progress report, not confirmation that either issue is complete.
 
 In either private service repository:
 
-1. Run `go test -race -coverprofile=unit.cover ./...`.
+1. Run `env -u TEST_DATABASE_URL -u TEST_GATEWAY_URL go test -race -coverpkg=./... -coverprofile=unit.cover ./...`,
+   then `go tool cover -func=unit.cover`.
 2. Set TEST_DATABASE_URL to a disposable PostgreSQL database; the test account
    must be able to create schemas. Run
    `go test -race -coverpkg=./... -coverprofile=integration.cover ./...`.
@@ -52,22 +72,34 @@ TEST_DATABASE_URL they explicitly skip, so a unit-only green run is not evidence
 that the PostgreSQL or WebSocket integration tests ran. The CI configuration now
 provides PostgreSQL, runs both suites and uploads the separate coverage reports.
 
+For the real gateway/issuer check, build the current gateway and owned services
+into local image tags, then run from the CPR:
+
+```sh
+python3 scripts/verify_owned_services_e2e.py \
+  --gateway-image YOUR_LOCAL_GATEWAY_IMAGE \
+  --guild-image YOUR_LOCAL_GUILD_IMAGE \
+  --registry-image YOUR_LOCAL_REGISTRY_IMAGE
+```
+
+This requires Docker Compose, Go, openssl, and the initialized Guild submodule.
+The script creates a uniquely named Compose project with tmpfs databases,
+generated fixture credentials/key, and loopback-only gateway/WebSocket ports.
+It does not read the project's `.env` or `secrets/`. A bootstrap package is seeded
+only into its disposable Registry database; users and subsequent resources are
+created through the gateway. The script runs Guild's opt-in
+`TestLiveGatewayIssuer`, then removes its containers/network and fixture files.
+This checks deployment behavior separately from unit coverage.
+
 In the CPR, run `python3 scripts/test_owned_gateway_deployment.py`.
 This validates the Compose model using placeholder values without loading private
 credential files or starting the deployment.
 
 ## Remaining before claiming completion
 
-- Unit-only statement coverage: Guild **16.8%**, Registry **14.0%**.
-  Combined unit/integration statement coverage: Guild **48.3%**, Registry
-  **46.7%**. Neither result establishes the 80% unit-test coverage requirement.
-  Extend meaningful unit tests across business rules, handlers and storage
-  behavior; do not substitute gateway coverage or integration coverage.
-- Run the integrated stack with the actual gateway and User Management issuer,
-  real registered client credentials, and mocks disabled. Exercise both Postman
-  collections, including cross-service calls and the negotiated WebSocket URL.
-  Current service integration tests provide gateway-style trusted headers
-  directly; they do not prove the deployed token trust boundary.
+- Run the Postman collections against the final merged/published deployment.
+  The automated real-stack test exercises the trust boundary and principal
+  business flows, but is not a claim that every imported Postman request was run.
 - Review and merge private-service PRs only after approval and successful CI.
   Confirm Docker Hub Actions secrets, successful automatic publication after
   merge, and that the lab-version/latest tags identify the intended release on
