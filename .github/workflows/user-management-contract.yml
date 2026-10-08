@@ -30,6 +30,7 @@ jobs:
         run: python -m openapi_spec_validator docs/schemas/user-management-service.json
       - name: Validate deployment templates and isolation
         run: |
+          cp .env.example .env
           docker compose --env-file .env.example -f compose.yaml -f compose.gateway.yaml config --format json > /tmp/issuer-compose.json
           python - <<'PY'
           import json

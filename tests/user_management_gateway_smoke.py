@@ -251,6 +251,11 @@ def main():
     pull_policy: never
     ports: !override ["127.0.0.1:0:8080"]
 ''')
+        # Compose resolves env_file entries even for services this test never starts.
+        # Use the disposable test configuration instead of the checkout's private .env.
+        with override.open('a') as file:
+            for service in ('battle-api', 'map-api', 'monster-raid-api', 'tamagotchi-api', 'notification-api'):
+                file.write(f'  {service}:\n    env_file: !override ["{envfile}"]\n')
         command = ['compose', '-p', project, '--project-directory', str(ROOT), '--env-file', str(envfile),
                    '-f', str(ROOT/'compose.yaml'), '-f', str(ROOT/'compose.gateway.yaml'), '-f', str(override)]
         try:
