@@ -21,6 +21,13 @@ the README.
 `REQUEST_TIMEOUT_SECONDS` and `MAX_CONCURRENCY` configure the issuer's request
 deadline and admission budget, defaulting to 10 seconds and 64 requests. Other
 services may expose their own settings for the same request handling contract.
+Tamagotchi and Notification read their own deadline from
+`TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS` and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS`,
+4 seconds by default, below the gateway's 5 second upstream timeout so a slow
+request ends with the service's `504 REQUEST_TIMEOUT`. Tamagotchi follows
+`USE_MOCK_PACKAGE_REGISTRY` like User Management: `true` keeps its built-in
+registry mock, `false` validates health statistics against Package Registry
+through the gateway.
 `JWT_SIGNING_KEY` is retained for the current Battle image and its direct-call
 collection. It is not used to issue system tokens; those use asymmetric signing.
 
@@ -45,7 +52,9 @@ never receive the private key.
 Each `secrets/<client-id>.env` belongs in the corresponding service's private
 configuration. It contains `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET` and
 `OAUTH_TOKEN_URL`; adapt these names to that service's configuration interface.
-Do not load every client's plaintext secret into a shared environment. Clients
+Do not load every client's plaintext secret into a shared environment.
+Tamagotchi and Notification load their file through `env_file` in
+`compose.yaml` and read these three names directly. Clients
 request a token through the gateway, cache it and refresh it when fewer than
 30 seconds remain. Claims, scopes and identity headers are defined in the
 README's authentication contract.

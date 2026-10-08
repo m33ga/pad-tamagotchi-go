@@ -1629,8 +1629,8 @@ Docker Compose runs the gateway and all eight services from a single [`compose.y
 | Battle | [`sanda2004/battle-service`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | [battle](collections/battle-service.postman_collection.json) |
 | Map | [`grdz/map-service`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | [map](collections/map-service.postman_collection.json) |
 | Monster Raid | [`grdz/monster-raid-service`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | [monster-raid](collections/monster-raid-service.postman_collection.json) |
-| Tamagotchi | [`johnnyc05/pad-tamagotchi-service`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:5050` | [tamagotchi](collections/tamagotchi-service.postman_collection.json) |
-| Notification | [`johnnyc05/pad-notification-service`](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `http://localhost:5060` | [notification](collections/notification-service.postman_collection.json) |
+| Tamagotchi | [`johnnyc05/pad-tamagotchi-service`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:8000/tamagotchi` | [tamagotchi](collections/tamagotchi-service.postman_collection.json) |
+| Notification | [`johnnyc05/pad-notification-service`](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `http://localhost:8000/notification` | [notification](collections/notification-service.postman_collection.json) |
 | Guild | [`cosmak47/pad-guild-service`](https://hub.docker.com/r/cosmak47/pad-guild-service) | `http://localhost:8081` | [guild](collections/guild-service.postman_collection.json) |
 | Package Registry | [`cosmak47/pad-package-registry-service`](https://hub.docker.com/r/cosmak47/pad-package-registry-service) | `http://localhost:8082` | [package-registry](collections/package-registry-service.postman_collection.json) |
 
@@ -1647,8 +1647,8 @@ Docker Compose runs the gateway and all eight services from a single [`compose.y
 | Battle | 5020 | 5434 | |
 | Map | 5030 | | 6380 |
 | Monster Raid | 5040 | 5435 | 6381 |
-| Tamagotchi | 5050 | 5438 | |
-| Notification | 5060 | 5439 | 6382 |
+| Tamagotchi | Via gateway | 5438 | |
+| Notification | Via gateway | 5439 | 6382 |
 | Guild | 8081 | 5436 | |
 | Package Registry | 8082 | 5437 | |
 
@@ -1679,8 +1679,8 @@ Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PA
    curl http://localhost:5020/_health
    curl http://localhost:5030/health
    curl http://localhost:5040/health
-   curl http://localhost:5050/_health
-   curl http://localhost:5060/_health
+   docker compose exec tamagotchi-api curl --fail http://localhost:8080/_health
+   docker compose exec notification-api curl --fail http://localhost:8080/_health
    curl http://localhost:8081/healthz
    curl http://localhost:8082/healthz
    docker compose ps
