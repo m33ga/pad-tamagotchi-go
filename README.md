@@ -1038,6 +1038,30 @@ The transfer updates the existing Tamagotchi instead of creating a new entry. Th
 
 Battle Service owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns and results in PostgreSQL.
 
+##### Gateway Identity and Collaborators
+
+External callers reach Battle through `/battle` with a bearer token. The internal
+API requires gateway-generated `X-Caller-Kind`; user operations use `X-User-ID`
+for challenger, opponent, participant and path ownership checks. `X-Session-ID`
+is optional. Service callers supply `X-Service-Name` and optional `X-Scopes`, but
+cannot perform player operations. Missing or malformed identity yields
+`401 INVALID_IDENTITY`; a disallowed caller yields `403`.
+
+Battle calls User Management, Tamagotchi and Package Registry through
+`GATEWAY_URL` using `/user-management`, `/tamagotchi` and `/package-registry`.
+Its `battle-service` client sends OAuth credentials in the token request's form
+body, caches the token and refreshes below 30 seconds remaining. A collaborator
+`401` causes one refresh and one retry. Every outbound request retains the
+inbound `X-Correlation-ID`; an identifier is generated only when absent.
+Commands retain contract-defined idempotency keys and use the battle ID as the
+business reference so settlement can resume after a deadline.
+
+All handlers have a configurable deadline and concurrency budget, defaulting to
+10 seconds and 64 requests. Deadline expiry yields `504 REQUEST_TIMEOUT`.
+Saturation yields immediate `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
+Both use the shared error envelope. The Battle API publishes no host port;
+[configuration](docs/configuration.md) describes its private OAuth settings.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
@@ -1653,7 +1677,7 @@ Docker Compose runs the gateway and all eight services from a single [`compose.y
 | Service | Image | API | Collection |
 |---|---|---|---|
 | User Management | [`sanda2004/user-management-service`](https://hub.docker.com/r/sanda2004/user-management-service) | `http://localhost:8000/user-management` | [user-management](collections/user-management-service.postman_collection.json) |
-| Battle | [`sanda2004/battle-service`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:5020` | [battle](collections/battle-service.postman_collection.json) |
+| Battle | [`sanda2004/battle-service`](https://hub.docker.com/r/sanda2004/battle-service) | `http://localhost:8000/battle` | [battle](collections/battle-service.postman_collection.json) |
 | Map | [`grdz/map-service`](https://hub.docker.com/r/grdz/map-service) | `http://localhost:5030` | [map](collections/map-service.postman_collection.json) |
 | Monster Raid | [`grdz/monster-raid-service`](https://hub.docker.com/r/grdz/monster-raid-service) | `http://localhost:5040` | [monster-raid](collections/monster-raid-service.postman_collection.json) |
 | Tamagotchi | [`johnnyc05/pad-tamagotchi-service`](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `http://localhost:5050` | [tamagotchi](collections/tamagotchi-service.postman_collection.json) |
@@ -1671,7 +1695,7 @@ Docker Compose runs the gateway and all eight services from a single [`compose.y
 |---|---:|---:|---:|
 | API Gateway | 8000 | | |
 | User Management | Via gateway | Internal only | |
-| Battle | 5020 | 5434 | |
+| Battle | Gateway `/battle` | 5434 | API port is internal |
 | Map | 5030 | | 6380 |
 | Monster Raid | 5040 | 5435 | 6381 |
 | Tamagotchi | 5050 | 5438 | |
@@ -1703,7 +1727,7 @@ Every port above is a default that `.env` can override. `GUILD_API_PORT` and `PA
    ```bash
    curl --fail http://localhost:8000/readyz
    docker compose exec user-management-api curl --fail http://localhost:8080/_health
-   curl http://localhost:5020/_health
+   docker compose exec battle-api curl --fail http://localhost:8080/_health
    curl http://localhost:5030/health
    curl http://localhost:5040/health
    curl http://localhost:5050/_health
@@ -1749,7 +1773,7 @@ The deployed images differ in which collaborators they currently mock. The gatew
 
 Import the JSON files from [`collections`](collections) and keep their default service URLs. Run each collection from top to bottom, because its test scripts hand identifiers to later requests.
 
-The User Management collection currently generates HS256 fixture tokens and is incompatible with gateway authentication; obtain tokens through login or client credentials instead. The Battle collection uses its `jwtSigningKey` fixture setting. Give it the same value as `JWT_SIGNING_KEY` in the local `.env`, and never export or commit it. Map and Monster Raid need no token, and Monster Raid identifies the caller with the `X-User-ID` header. Guild uses UUID bearer tokens as mocked identities, and Package Registry uses the same together with the documented `X-User-Role` values.
+The User Management collection currently generates HS256 fixture tokens and is incompatible with gateway authentication; obtain tokens through login or client credentials instead. The Battle collection calls the gateway and requires real UMS-issued user tokens in `challengerAccessToken` and `opponentAccessToken`, with matching existing user and Tamagotchi IDs. Keep these values local and never export or commit tokens. Map and Monster Raid need no token, and Monster Raid identifies the caller with the `X-User-ID` header. Guild uses UUID bearer tokens as mocked identities, and Package Registry uses the same together with the documented `X-User-Role` values.
 
 [Back to top](#table-of-contents)
 
