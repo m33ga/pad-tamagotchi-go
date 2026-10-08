@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "6cf1ea86-e8a2-4ee9-a9a2-aca14373393b",
 		"name": "Tamagotchi Go - Monster Raid Service",
-		"description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
+		"description": "Requests go through the API Gateway, which verifies the bearer token and tells the service who the caller is. Run from top to bottom: Authentication logs in with an existing account and fetches the service token, and Setup creates the guild and reads the Tamagotchi and raid schedule the raid needs. Joining and attacking require a user token and refuse a service one. Keep passwords and client secrets local and never export populated tokens.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -53,34 +53,225 @@
 							}
 						}
 					]
+				},
+				{
+					"name": "Get service token through gateway",
+					"request": {
+						"method": "POST",
+						"auth": {
+							"type": "noauth"
+						},
+						"header": [],
+						"url": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+						"description": "Reads the active raid schedule below. Set serviceClientSecret from the private secrets/monster-raid-service.env of the deployment.",
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials"
+								},
+								{
+									"key": "client_id",
+									"value": "{{serviceClientId}}"
+								},
+								{
+									"key": "client_secret",
+									"value": "{{serviceClientSecret}}"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('client credentials succeed', () => pm.response.to.have.status(200));",
+									"if (pm.response.code === 200) {",
+									"  pm.collectionVariables.set('serviceAccessToken', pm.response.json().access_token);",
+									"}"
+								]
+							}
+						}
+					]
 				}
 			]
 		},
 		{
-			"name": "Raids",
+			"name": "1. Setup",
+			"item": [
+				{
+					"name": "Create a guild",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Raid collection {{$timestamp}}\",\n  \"description\": \"Guild created for this run\"\n}",
+							"options": {
+								"raw": {
+									"headerFamily": "json",
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{gatewayUrl}}/guild/api/v1/guilds",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"guild",
+								"api",
+								"v1",
+								"guilds"
+							]
+						},
+						"description": "A raid belongs to a guild and the caller must be a member. Creating one makes the logged-in user its owner, and a fresh guild keeps the one-active-raid rule from blocking a second run."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('guild created', () => pm.response.to.have.status(201));",
+									"pm.collectionVariables.set('guildId', pm.response.json().guildId);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Get the user's primary Tamagotchi",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{userId}}/primary-tamagotchi",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"tamagotchi",
+								"api",
+								"v1",
+								"users",
+								"{{userId}}",
+								"primary-tamagotchi"
+							]
+						},
+						"description": "The account needs a Tamagotchi before it can join a raid."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('primary Tamagotchi found', () => pm.response.to.have.status(200));",
+									"pm.collectionVariables.set('tamagotchiId', pm.response.json().tamagotchiId);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Find an active raid schedule",
+					"request": {
+						"method": "GET",
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{serviceAccessToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{gatewayUrl}}/package-registry/api/v1/raid-schedules?status=ACTIVE",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"package-registry",
+								"api",
+								"v1",
+								"raid-schedules"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "ACTIVE"
+								}
+							]
+						},
+						"description": "Package Registry only shows schedules to an admin or an approved service client, so this one request uses the service token."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('an active schedule exists', () => pm.response.to.have.status(200));",
+									"const schedules = pm.response.json();",
+									"pm.test('at least one schedule is active', () => pm.expect(schedules).to.not.be.empty);",
+									"if (schedules.length) {",
+									"  pm.collectionVariables.set('scheduleId', schedules[0].scheduleId);",
+									"}"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "2. Raids",
 			"item": [
 				{
 					"name": "Start a guild raid",
 					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"type": "text/javascript",
-								"exec": [
-									"// A guild may only have one active raid, so every run uses a new guild.",
-									"pm.collectionVariables.set('guildId', pm.variables.replaceIn('{{$guid}}'));"
-								]
-							}
-						},
 						{
 							"listen": "test",
 							"script": {
 								"type": "text/javascript",
 								"exec": [
 									"pm.test('raid created', () => pm.response.to.have.status(201));",
-									"",
-									"const raid = pm.response.json();",
-									"pm.collectionVariables.set('raidId', raid.raidId);"
+									"pm.collectionVariables.set('raidId', pm.response.json().raidId);"
 								]
 							}
 						}
@@ -341,7 +532,17 @@
 						"description": "Returns the guild's raids in creation order, optionally filtered by status."
 					},
 					"response": [],
-					"event": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('raids listed', () => pm.response.to.have.status(200));"
+								]
+							}
+						}
+					]
 				},
 				{
 					"name": "Get a raid",
@@ -416,129 +617,22 @@
 							"body": "{\n  \"error\": {\n    \"code\": \"RAID_NOT_FOUND\",\n    \"message\": \"The raid does not exist.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
 						}
 					],
-					"event": []
-				},
-				{
-					"name": "Get the raid result",
-					"protocolProfileBehavior": {
-						"disableBodyPruning": true
-					},
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Accept",
-								"value": "application/json"
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('raid returned', () => pm.response.to.have.status(200));"
+								]
 							}
-						],
-						"url": {
-							"raw": "{{baseUrl}}/raids/:raidId/result",
-							"host": [
-								"{{baseUrl}}"
-							],
-							"path": [
-								"raids",
-								":raidId",
-								"result"
-							],
-							"variable": [
-								{
-									"key": "raidId",
-									"value": "{{raidId}}",
-									"description": "Raid identifier"
-								}
-							]
-						},
-						"description": "Returns the outcome of a finished raid. Rewards stay empty until reward settlement is implemented.\n\nAnswers 409 RAID_NOT_FINISHED until the monster is defeated, which takes 40 attacks with the mocked configuration."
-					},
-					"response": [
-						{
-							"name": "OK",
-							"originalRequest": {
-								"method": "GET",
-								"header": [
-									{
-										"key": "Accept",
-										"value": "application/json"
-									}
-								],
-								"url": {
-									"raw": "{{baseUrl}}/raids/:raidId/result",
-									"host": [
-										"{{baseUrl}}"
-									],
-									"path": [
-										"raids",
-										":raidId",
-										"result"
-									],
-									"variable": [
-										{
-											"key": "raidId",
-											"value": "{{raidId}}"
-										}
-									]
-								}
-							},
-							"status": "OK",
-							"code": 200,
-							"_postman_previewlanguage": "json",
-							"header": [
-								{
-									"key": "Content-Type",
-									"value": "application/json"
-								}
-							],
-							"cookie": [],
-							"body": "{\n  \"raidId\": \"8f6434c8-52bf-480d-965b-ff8dcbd54248\",\n  \"status\": \"COMPLETED\",\n  \"totalDamage\": 1000,\n  \"rewards\": [],\n  \"finishedAt\": \"2026-09-23T12:08:03Z\"\n}"
-						},
-						{
-							"name": "RAID_NOT_FINISHED",
-							"originalRequest": {
-								"method": "GET",
-								"header": [
-									{
-										"key": "Accept",
-										"value": "application/json"
-									}
-								],
-								"url": {
-									"raw": "{{baseUrl}}/raids/:raidId/result",
-									"host": [
-										"{{baseUrl}}"
-									],
-									"path": [
-										"raids",
-										":raidId",
-										"result"
-									],
-									"variable": [
-										{
-											"key": "raidId",
-											"value": "{{raidId}}"
-										}
-									]
-								}
-							},
-							"status": "Conflict",
-							"code": 409,
-							"_postman_previewlanguage": "json",
-							"header": [
-								{
-									"key": "Content-Type",
-									"value": "application/json"
-								}
-							],
-							"cookie": [],
-							"body": "{\n  \"error\": {\n    \"code\": \"RAID_NOT_FINISHED\",\n    \"message\": \"The raid is not finished.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
 						}
-					],
-					"event": []
+					]
 				}
 			]
 		},
 		{
-			"name": "Participants",
+			"name": "3. Participants",
 			"item": [
 				{
 					"name": "Join a raid",
@@ -804,12 +898,22 @@
 						"description": "Returns the raid's participants in join order with their accumulated damage."
 					},
 					"response": [],
-					"event": []
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('participants listed', () => pm.response.to.have.status(200));"
+								]
+							}
+						}
+					]
 				}
 			]
 		},
 		{
-			"name": "Attacks",
+			"name": "4. Attacks",
 			"item": [
 				{
 					"name": "Attack the monster",
@@ -820,9 +924,13 @@
 								"type": "text/javascript",
 								"exec": [
 									"pm.test('attack applied', () => pm.response.to.have.status(200));",
-									"",
 									"const attack = pm.response.json();",
-									"console.log(`monster at ${attack.monsterCurrentHp} hp, raid ${attack.raidStatus}`);"
+									"console.log(`monster at ${attack.monsterCurrentHp} hp, raid ${attack.raidStatus}`);",
+									"// One attack rarely finishes a raid, and the result below needs a finished one,",
+									"// so repeat this request until the monster is down.",
+									"if (attack.raidStatus === 'ACTIVE') {",
+									"  pm.execution.setNextRequest('Attack the monster');",
+									"}"
 								]
 							}
 						}
@@ -876,7 +984,7 @@
 								}
 							]
 						},
-						"description": "Applies one attack to the raid monster. The action identifier deduplicates retries, and the server calculates the damage itself. The raid completes when the monster reaches zero health.\n\nEach run sends a new `actionId`; repeating the same one answers 409 ATTACK_ALREADY_PROCESSED."
+						"description": "Applies one attack to the raid monster. The action identifier deduplicates retries and the server calculates the damage from the combat profile it reads from Tamagotchi Service. The test repeats this request until the monster reaches zero health, which completes the raid and settles the rewards."
 					},
 					"response": [
 						{
@@ -1032,6 +1140,140 @@
 					]
 				}
 			]
+		},
+		{
+			"name": "5. Result",
+			"item": [
+				{
+					"name": "Get the raid result",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/raids/:raidId/result",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"raids",
+								":raidId",
+								"result"
+							],
+							"variable": [
+								{
+									"key": "raidId",
+									"value": "{{raidId}}",
+									"description": "Raid identifier"
+								}
+							]
+						},
+						"description": "Returns the outcome of a finished raid, with the currency and XP credited to each participant. Answers 409 RAID_NOT_FINISHED until the monster is defeated."
+					},
+					"response": [
+						{
+							"name": "OK",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/result",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"result"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"raidId\": \"8f6434c8-52bf-480d-965b-ff8dcbd54248\",\n  \"status\": \"COMPLETED\",\n  \"totalDamage\": 1000,\n  \"rewards\": [],\n  \"finishedAt\": \"2026-09-23T12:08:03Z\"\n}"
+						},
+						{
+							"name": "RAID_NOT_FINISHED",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/raids/:raidId/result",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"raids",
+										":raidId",
+										"result"
+									],
+									"variable": [
+										{
+											"key": "raidId",
+											"value": "{{raidId}}"
+										}
+									]
+								}
+							},
+							"status": "Conflict",
+							"code": 409,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"error\": {\n    \"code\": \"RAID_NOT_FINISHED\",\n    \"message\": \"The raid is not finished.\",\n    \"correlationId\": \"0723d34f-ed46-c9e9-4162-44bde41cea0c\",\n    \"details\": []\n  }\n}"
+						}
+					],
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('result returned', () => pm.response.to.have.status(200));",
+									"pm.test('participants were rewarded', () => pm.expect(pm.response.json().rewards).to.not.be.empty);"
+								]
+							}
+						}
+					]
+				}
+			],
+			"description": "Runs after the monster is defeated by the attacks above."
 		}
 	],
 	"variable": [
@@ -1041,54 +1283,52 @@
 			"type": "string"
 		},
 		{
-			"key": "scheduleId",
-			"value": "00000000-0000-0000-0000-0000000000aa",
-			"type": "string"
-		},
-		{
-			"key": "userId",
-			"value": "",
-			"type": "string",
-			"description": "Populated from the UMS-issued login token."
-		},
-		{
-			"key": "tamagotchiId",
-			"value": "0db0a7c5-399e-4c0b-bbbe-96f3b30b108a",
-			"type": "string"
-		},
-		{
-			"key": "guildId",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "raidId",
-			"value": "",
-			"type": "string"
-		},
-		{
 			"key": "gatewayUrl",
-			"value": "http://localhost:8000",
-			"type": "string",
-			"description": "Single HTTP entry point; adjust the gateway host port here."
+			"value": "http://localhost:8000"
 		},
 		{
 			"key": "userEmail",
-			"value": "",
-			"type": "string",
-			"description": "Existing UMS account email; set locally."
+			"value": ""
 		},
 		{
 			"key": "userPassword",
-			"value": "",
-			"type": "string",
-			"description": "Existing UMS password; keep local and never export."
+			"value": ""
 		},
 		{
 			"key": "accessToken",
-			"value": "",
-			"type": "string",
-			"description": "Populated by the login request; never export an access token."
+			"value": ""
+		},
+		{
+			"key": "userId",
+			"value": ""
+		},
+		{
+			"key": "serviceClientId",
+			"value": "monster-raid-service"
+		},
+		{
+			"key": "serviceClientSecret",
+			"value": ""
+		},
+		{
+			"key": "serviceAccessToken",
+			"value": ""
+		},
+		{
+			"key": "guildId",
+			"value": ""
+		},
+		{
+			"key": "tamagotchiId",
+			"value": ""
+		},
+		{
+			"key": "scheduleId",
+			"value": ""
+		},
+		{
+			"key": "raidId",
+			"value": ""
 		}
 	],
 	"auth": {

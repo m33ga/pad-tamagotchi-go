@@ -79,7 +79,7 @@ services:
       retries: 10
 
   map-api:
-    image: grdz/map-service:2.0.0
+    image: grdz/map-service:2.0.3
     pull_policy: always
     env_file:
       - .env
@@ -111,7 +111,7 @@ services:
       retries: 10
 
   monster-raid-api:
-    image: grdz/monster-raid-service:1.0.3
+    image: grdz/monster-raid-service:2.0.3
     pull_policy: always
     env_file:
       - .env
