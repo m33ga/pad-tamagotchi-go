@@ -66,13 +66,16 @@ without `X-Caller-Kind`; its internal health and JWKS endpoints are exceptions.
 
 ## Verification
 
-Build UMS from its service branch and gateway from its current main:
+Pull the published UMS image and build the verified gateway for local checks:
 
 ```sh
-docker build -t sanda2004/user-management-service:2.0.0 ../user-management-service
+docker pull sanda2004/user-management-service:2.0.0
 docker build -t grdz/gateway:dev ../gateway
 python3 tests/user_management_gateway_smoke.py
 ```
+
+The UMS submodule is pinned to the merged service implementation. For development
+before publication, build its Dockerfile locally instead of pulling the release.
 
 The smoke test creates temporary keys, secrets, a separate Compose project and a
 fresh PostgreSQL volume. It runs the actual gateway and UMS images. An HTTP fixture
