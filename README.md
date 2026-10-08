@@ -112,7 +112,9 @@ It consumes events published by other services (notably the **User Management Se
 
 ## Architecture Diagram
 
-Requests flow from the client through the API Gateway, which fronts the microservices. Each service owns its own database. Synchronous calls (solid arrows) handle request/response between services, while asynchronous events (dotted arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
+The API Gateway is the only way into the system. It verifies the bearer token, replaces whatever identity headers the caller sent with ones it has verified, strips the service prefix and forwards the rest. Every solid arrow in the diagram is a call that passes through it, including the service-to-service ones: those are drawn directly between services so it stays readable which service needs what, but none of them is a connection a service could open on its own. The one exception is the Guild chat WebSocket, drawn as a direct violet edge from the client, because the gateway negotiates that connection over REST and then carries none of its traffic.
+
+Each service owns its own database. Asynchronous events (dashed green arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging; the queue is not part of the gateway's path. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
 
 ![Architecture Diagram](docs/architecture.png)
 
