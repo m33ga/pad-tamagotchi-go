@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "984b8f75-d842-56fb-bb6b-146a5e1f8895",
     "name": "Tamagotchi Go - Game Workflows",
-    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
+    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n| 3 | Guild life and a Monster Raid | User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -4301,6 +4301,2098 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Notification accepts the battle.completed.v1 event from battle-service', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Guild life and a Monster Raid",
+      "id": "ea323c7f-1bd1-5349-bb81-10e13ac14302",
+      "description": "**Services:** User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification.\nAlso covers **Lab 2 grade 7** (WebSocket negotiation through the gateway).\n\nThe raid administrator schedules a monster. Alice founds a guild that only players of her package can\njoin, invites Bob and opens the guild chat. Then the two of them take the monster down together.\nService-to-service calls: `Guild → User Management`, `Guild → Package Registry`,\n`Monster Raid → Package Registry` (schedule and monster snapshot), `Monster Raid → Guild` (membership),\n`Monster Raid → Tamagotchi` (combat profile, XP), `Monster Raid → User Management` (rewards).\n\nNeeds `adminEmail` / `adminPassword` (an account allow-listed in `PACKAGE_REGISTRY_ADMIN_USER_IDS`),\n`guildClientSecret` and `monsterRaidClientSecret`. Run folders 1 and 2 first.",
+      "item": [
+        {
+          "name": "Register the raid admin (first run only)",
+          "id": "e863b333-20a9-5bab-9ea5-5436594fde88",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('adminEmail') || !pm.variables.get('adminPassword')) {",
+                  "    throw new Error('Set adminEmail and adminPassword (any values you choose; see docs/game-workflows.md, step 4).');",
+                  "}",
+                  "pm.variables.set('adminUsername', ('admin-' + pm.variables.get('adminEmail').split('@')[0]).slice(0, 32));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Admin account exists (201 now, 409 on later runs)', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in the raid admin",
+          "id": "385eb527-9bb8-59ec-95f2-ed4268eec04b",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "auth",
+                "sessions"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "        pm.test('Admin logs in', () => pm.response.to.have.status(200));",
+                  "        if (pm.response.code === 200) {",
+                  "            const accessToken = pm.response.json().accessToken;",
+                  "            pm.collectionVariables.set('adminToken', accessToken);",
+                  "            pm.collectionVariables.set('adminUserId', claimsOf(accessToken).sub);",
+                  "            console.log(`PACKAGE_REGISTRY_ADMIN_USER_IDS=${claimsOf(accessToken).sub}`);",
+                  "        }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Find open raid windows",
+          "id": "02dd5f70-77b9-5e18-82fd-aa5633b161a1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/raid-schedules",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "raid-schedules"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Package Registry allows only one SCHEDULED or ACTIVE raid window at a time. Windows left open by earlier runs are closed in the next step."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Raid admin is allow-listed in Package Registry', () => {",
+                  "    if (pm.response.code === 403) {",
+                  "        throw new Error(`Add ${pm.collectionVariables.get('adminUserId')} to PACKAGE_REGISTRY_ADMIN_USER_IDS in .env, ` +",
+                  "            'then run: docker compose up -d package-registry-api');",
+                  "    }",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const now = Date.now();",
+                  "    const open = pm.response.json()",
+                  "        .filter(s => ['SCHEDULED', 'ACTIVE'].includes(s.status) && Date.parse(s.endsAt) > now)",
+                  "        .map(s => s.scheduleId);",
+                  "    pm.collectionVariables.set('openScheduleIds', JSON.stringify(open));",
+                  "    console.log(`${open.length} open raid window(s) from earlier runs`);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Close an open raid window (repeats; skipped when none)",
+          "id": "75c6eb73-559b-509f-99c0-90b86ab04a4c",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/raid-schedules/{{openScheduleId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "raid-schedules",
+                "{{openScheduleId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const open = JSON.parse(pm.collectionVariables.get('openScheduleIds') || '[]');",
+                  "if (open.length === 0) {",
+                  "    pm.execution.skipRequest();",
+                  "} else {",
+                  "    pm.variables.set('openScheduleId', open[0]);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Earlier raid window is deactivated', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('INACTIVE');",
+                  "});",
+                  "const open = JSON.parse(pm.collectionVariables.get('openScheduleIds') || '[]').slice(1);",
+                  "pm.collectionVariables.set('openScheduleIds', JSON.stringify(open));",
+                  "if (open.length > 0) {",
+                  "    pm.execution.setNextRequest(pm.info.requestName);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin designs the Gloom Hydra",
+          "id": "1466c24c-f43f-5d3e-9871-9d7615c43a94",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/raid-configurations",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "raid-configurations"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Gloom Hydra\",\n  \"description\": \"A three-headed swamp beast. Guilds have 30 minutes to bring it down.\",\n  \"spriteUrl\": \"https://assets.tamagotchi-go.test/monsters/gloom-hydra.png\",\n  \"maximumHp\": 120,\n  \"combatStats\": {\n    \"attack\": 12,\n    \"defense\": 4\n  },\n  \"weaknesses\": [\n    \"FLAME\",\n    \"WATER\",\n    \"NATURE\",\n    \"EARTH\"\n  ],\n  \"resistances\": [\n    \"SHADOW\"\n  ],\n  \"specialProperties\": {\n    \"heads\": 3\n  },\n  \"durationSeconds\": 1800,\n  \"participantLimit\": 10,\n  \"rewards\": {\n    \"globalCurrency\": 75,\n    \"xp\": 120,\n    \"otherRewards\": []\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Raid configuration is stored', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('raidConfigurationId', pm.response.json().raidConfigurationId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin schedules the raid window",
+          "id": "f8a0928a-383a-5a6a-a526-82f888a58292",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/raid-schedules",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "raid-schedules"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"raidConfigurationId\": \"{{raidConfigurationId}}\",\n  \"startsAt\": \"{{raidStartsAt}}\",\n  \"endsAt\": \"{{raidEndsAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Opens in 15 s and stays open for an hour, longer than the 30-minute raid.",
+                  "const startsAt = Date.now() + 15 * 1000;",
+                  "pm.collectionVariables.set('raidStartsAt', new Date(startsAt).toISOString());",
+                  "pm.collectionVariables.set('raidEndsAt', new Date(startsAt + 60 * 60 * 1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Raid window is SCHEDULED', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().status).to.eql('SCHEDULED');",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('scheduleId', pm.response.json().scheduleId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin activates the raid window",
+          "id": "5aac8bea-bc3d-5eb2-9a88-07455ff3d16f",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/raid-schedules/{{scheduleId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "raid-schedules",
+                "{{scheduleId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Raid window is ACTIVE', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('ACTIVE');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice founds a package-only guild",
+          "id": "06ca5245-d8cd-5080-a0ee-3987de2353c7",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/guilds",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "guilds"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ember Squad {{runId}}\",\n  \"description\": \"Pocket Pets players only.\",\n  \"requiredPackageId\": \"{{packageId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Guild checks the required package with Package Registry through the gateway as `guild-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Guild is created with Alice as owner', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const guild = pm.response.json();",
+                  "    pm.expect(guild.ownerId).to.eql(pm.collectionVariables.get('aliceUserId'));",
+                  "    pm.expect(guild.requiredPackageId).to.eql(pm.collectionVariables.get('packageId'));",
+                  "    pm.expect(guild.memberCount).to.eql(1);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('guildId', pm.response.json().guildId);",
+                  "    pm.collectionVariables.set('guildName', pm.response.json().name);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Dave",
+          "id": "3f707bf3-5e1b-55b5-84a5-a60b6f841de1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{daveUsername}}\",\n  \"email\": \"{{daveEmail}}\",\n  \"password\": \"{{playerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Dave registers but never joins the package', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().packageIds).to.eql([]);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('daveUserId', pm.response.json().userId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice invites Dave (not in the package)",
+          "id": "f4f06e15-e689-5c8a-8473-d72687f4d4c0",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/guilds/{{guildId}}/invitations",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "guilds",
+                "{{guildId}}",
+                "invitations"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inviteeUserId\": \"{{daveUserId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Guild finds Dave in User Management, but Package Registry has no registration for him, so the invitation breaks the package rule."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Guild refuses players outside the required package', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('MEMBERSHIP_RULE_NOT_SATISFIED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice invites Bob",
+          "id": "e0fa7fe1-f8f9-5b85-987c-3bee6218c701",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/guilds/{{guildId}}/invitations",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "guilds",
+                "{{guildId}}",
+                "invitations"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inviteeUserId\": \"{{bobUserId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invitation is pending', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().status).to.eql('PENDING');",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('invitationId', pm.response.json().invitationId);",
+                  "    pm.collectionVariables.set('invitationExpiresAt', pm.response.json().expiresAt);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get the guild-service token",
+          "id": "4a598e55-ce4d-5080-aec4-8397e2ecb68e",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "oauth2",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "guild-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{guildClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Public client-credentials operation. The gateway forwards it anonymously to User Management,\nthe only token issuer. The guild-service secret comes from your local `.env` (GUILD_CLIENT_SECRET).\nNothing in this collection signs tokens itself."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('guildClientSecret')) {",
+                  "    throw new Error('Set guildClientSecret to GUILD_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Guild obtains a service token with client credentials', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('guildServiceToken', body.access_token);",
+                  "    const claims = claimsOf(body.access_token);",
+                  "    pm.test('Token identifies guild-service', () => {",
+                  "        pm.expect(claims.kind).to.eql('service');",
+                  "        pm.expect(claims.sub).to.eql('guild-service');",
+                  "        pm.expect(body.expires_in).to.eql(300);",
+                  "    });",
+                  "    pm.test('Token carries the configured scopes', () => {",
+                  "        [\"users:read\", \"packages:read\"].forEach(scope => pm.expect(body.scope.split(' ')).to.include(scope));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deliver the guild invitation event to Notification",
+          "id": "e8d2e74f-1ed9-5036-8755-f6b8aedbb38c",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/internal/events",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "internal",
+                "events"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{guildServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"eventType\": \"guild.invitation.created.v1\",\n  \"eventVersion\": 1,\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"producer\": \"guild-service\",\n  \"correlationId\": \"{{lastCorrelationId}}\",\n  \"data\": {\n    \"invitationId\": \"{{invitationId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"guildName\": \"{{guildName}}\",\n    \"inviterUserId\": \"{{aliceUserId}}\",\n    \"inviteeUserId\": \"{{bobUserId}}\",\n    \"expiresAt\": \"{{invitationExpiresAt}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Guild keeps invitation events in its outbox because no broker is deployed. This delivers the same envelope to Notification as `guild-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notification accepts the guild.invitation.created.v1 event from guild-service', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob's guild invitations",
+          "id": "d5635d6c-89a3-5719-a563-36cc5258d14a",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/users/{{bobUserId}}/guild-invitations?status=PENDING",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "guild-invitations"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bob sees the invitation', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().map(i => i.invitationId)).to.include(pm.collectionVariables.get('invitationId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob accepts the invitation",
+          "id": "0ed3a72b-0792-5cd2-b55d-aca94128ed24",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/guilds/{{guildId}}/invitations/{{invitationId}}/responses",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "guilds",
+                "{{guildId}}",
+                "invitations",
+                "{{invitationId}}",
+                "responses"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"ACCEPT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bob is in', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('ACCEPTED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Guild members",
+          "id": "1f6df665-0941-5d6e-95aa-02db5e5709b4",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/guilds/{{guildId}}/members",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "guilds",
+                "{{guildId}}",
+                "members"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Alice owns the guild and Bob is a member', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const roles = Object.fromEntries(pm.response.json().items.map(m => [m.userId, m.role]));",
+                  "    pm.expect(roles[pm.collectionVariables.get('aliceUserId')]).to.eql('OWNER');",
+                  "    pm.expect(roles[pm.collectionVariables.get('bobUserId')]).to.eql('MEMBER');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob negotiates a guild chat connection",
+          "id": "fb2100bf-f6ec-556a-a715-ee5d3240d9a0",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/guilds/{{guildId}}/chat-sessions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "guilds",
+                "{{guildId}}",
+                "chat-sessions"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "**Lab 2 grade 7.** The gateway only carries this REST negotiation. Guild returns its public WebSocket\nURL and a 60-second, single-use ticket, and the client connects straight to Guild. To chat, open a\nPostman WebSocket request to `{{chatConnectUrl}}` within 60 seconds and send:\n\n```json\n{\"type\": \"guild.chat.message.send.v1\", \"clientMessageId\": \"a30b3bd2-3c74-4fe1-9f53-c67ea72171db\", \"content\": \"Ready for the raid?\"}\n```"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway negotiation returns a direct socket URL and ticket', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    const session = pm.response.json();",
+                  "    const hostOf = url => (url.match(/^[a-z]+:\\/\\/([^/]+)/i) || [])[1];",
+                  "    pm.test('Socket URL is ws:// or wss://', () => pm.expect(session.url).to.match(/^wss?:\\/\\//));",
+                  "    pm.test('Clients connect to Guild directly, not through the gateway', () =>",
+                  "        pm.expect(hostOf(session.url)).to.not.eql(hostOf(pm.variables.get('gatewayUrl'))));",
+                  "    pm.test('Ticket is single-use, 43 base64url characters, valid for 60 s', () => {",
+                  "        pm.expect(session.ticket).to.match(/^[A-Za-z0-9_-]{43}$/);",
+                  "        pm.expect(Date.parse(session.expiresAt) - Date.now()).to.be.within(0, 61 * 1000);",
+                  "    });",
+                  "    const connectUrl = `${session.url}?ticket=${session.ticket}`;",
+                  "    pm.collectionVariables.set('chatConnectUrl', connectUrl);",
+                  "    console.log(`Connect within 60 s: ${connectUrl}`);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Guild chat history",
+          "id": "396d94ba-8a73-5493-9652-251b331842e7",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/guild/api/v1/guilds/{{guildId}}/messages?limit=20",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "guild",
+                "api",
+                "v1",
+                "guilds",
+                "{{guildId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('History is readable by members over REST', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice's current primary",
+          "id": "cc0d21a3-5a6d-5a1b-9687-31aeb8e0d666",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{aliceUserId}}/primary-tamagotchi",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "primary-tamagotchi"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Alice has a primary Tamagotchi to bring', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('aliceRaidPetId', pm.response.json().tamagotchiId);",
+                  "    pm.collectionVariables.set('aliceRaidPetXp', pm.response.json().xp);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob's current primary",
+          "id": "3738316f-ecb0-5b24-864e-578d6b0eb09f",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{bobUserId}}/primary-tamagotchi",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "primary-tamagotchi"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bob has a primary Tamagotchi to bring', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('bobRaidPetId', pm.response.json().tamagotchiId);",
+                  "    pm.collectionVariables.set('bobRaidPetXp', pm.response.json().xp);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice's wallet before the raid",
+          "id": "b5faebb9-a27e-5643-837f-20e4bb0a2540",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{aliceUserId}}/balances",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "balances"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Wallet is readable', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('aliceBalanceBeforeRaid', pm.response.json().globalBalance);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice starts the guild raid",
+          "id": "3cdb8e99-1b81-5b39-b88c-1701f34b0593",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/monster-raid/api/v1/guilds/{{guildId}}/raids",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "monster-raid",
+                "api",
+                "v1",
+                "guilds",
+                "{{guildId}}",
+                "raids"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scheduleId\": \"{{scheduleId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Monster Raid reads the active schedule and snapshots the monster from Package Registry, and checks the guild with Guild, all as `monster-raid-service`."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The raid window opens 15 s after it was scheduled.",
+                  "const wait = Date.parse(pm.collectionVariables.get('raidStartsAt')) + 1000 - Date.now();",
+                  "if (wait > 0) {",
+                  "    console.log(`waiting ${Math.ceil(wait / 1000)} s for the raid window to open`);",
+                  "    setTimeout(() => {}, wait);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Raid starts with the monster at full health', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const raid = pm.response.json();",
+                  "    pm.expect(raid.status).to.eql('ACTIVE');",
+                  "    pm.expect(raid.monster.name).to.eql('Gloom Hydra');",
+                  "    pm.expect(raid.monster.currentHp).to.eql(raid.monster.maximumHp);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    const raid = pm.response.json();",
+                  "    pm.collectionVariables.set('raidId', raid.raidId);",
+                  "    pm.collectionVariables.set('raidEndsAt', raid.endsAt);",
+                  "    pm.collectionVariables.set('raidAttacker', 'alice');",
+                  "    pm.collectionVariables.set('raidAttempts', 0);",
+                  "    pm.collectionVariables.set('raidPolls', 0);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get the monster-raid-service token",
+          "id": "3ca117fc-f01f-5b61-bd27-885b1ea758be",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "oauth2",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "monster-raid-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{monsterRaidClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Public client-credentials operation. The gateway forwards it anonymously to User Management,\nthe only token issuer. The monster-raid-service secret comes from your local `.env` (MONSTER_RAID_CLIENT_SECRET).\nNothing in this collection signs tokens itself."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('monsterRaidClientSecret')) {",
+                  "    throw new Error('Set monsterRaidClientSecret to MONSTER_RAID_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Monster Raid obtains a service token with client credentials', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('monsterRaidServiceToken', body.access_token);",
+                  "    const claims = claimsOf(body.access_token);",
+                  "    pm.test('Token identifies monster-raid-service', () => {",
+                  "        pm.expect(claims.kind).to.eql('service');",
+                  "        pm.expect(claims.sub).to.eql('monster-raid-service');",
+                  "        pm.expect(body.expires_in).to.eql(300);",
+                  "    });",
+                  "    pm.test('Token carries the configured scopes', () => {",
+                  "        [\"tamagotchis:read\", \"users.balances:write\", \"guilds:read\", \"packages:read\"].forEach(scope => pm.expect(body.scope.split(' ')).to.include(scope));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deliver the raid started event to Notification",
+          "id": "79872a38-12c8-53e9-8984-f8a223334804",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/internal/events",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "internal",
+                "events"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{monsterRaidServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"eventType\": \"raid.started.v1\",\n  \"eventVersion\": 1,\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"producer\": \"monster-raid-service\",\n  \"correlationId\": \"{{lastCorrelationId}}\",\n  \"data\": {\n    \"raidId\": \"{{raidId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"monsterName\": \"Gloom Hydra\",\n    \"recipientUserIds\": [\n      \"{{aliceUserId}}\",\n      \"{{bobUserId}}\"\n    ],\n    \"startsAt\": \"{{raidStartsAt}}\",\n    \"endsAt\": \"{{raidEndsAt}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Monster Raid logs its lifecycle events because no broker is deployed. This delivers the same envelope to Notification as `monster-raid-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notification accepts the raid.started.v1 event from monster-raid-service', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A service token cannot join the raid",
+          "id": "3252a3fd-bc62-5df1-aa20-3a6c11ed270b",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/monster-raid/api/v1/raids/{{raidId}}/participants",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "monster-raid",
+                "api",
+                "v1",
+                "raids",
+                "{{raidId}}",
+                "participants"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{monsterRaidServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"primaryTamagotchiId\": \"{{aliceRaidPetId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The gateway forwards `X-Caller-Kind: service` for this token, so Monster Raid refuses it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Joining needs a player identity', () => {",
+                  "    pm.response.to.have.status(403);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('USER_CALLER_REQUIRED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice joins the raid",
+          "id": "36cfc610-dcef-5218-8236-efa2f0e75fff",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/monster-raid/api/v1/raids/{{raidId}}/participants",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "monster-raid",
+                "api",
+                "v1",
+                "raids",
+                "{{raidId}}",
+                "participants"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"primaryTamagotchiId\": \"{{aliceRaidPetId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Monster Raid checks the membership with Guild and the ownership with Tamagotchi, as `monster-raid-service` through the gateway."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Alice joins with their primary Tamagotchi', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().tamagotchiId).to.eql(pm.collectionVariables.get('aliceRaidPetId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob joins the raid",
+          "id": "24439c7b-5d1f-5eb8-9bbc-482d9ac97bbd",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/monster-raid/api/v1/raids/{{raidId}}/participants",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "monster-raid",
+                "api",
+                "v1",
+                "raids",
+                "{{raidId}}",
+                "participants"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"primaryTamagotchiId\": \"{{bobRaidPetId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Monster Raid checks the membership with Guild and the ownership with Tamagotchi, as `monster-raid-service` through the gateway."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bob joins with their primary Tamagotchi', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().tamagotchiId).to.eql(pm.collectionVariables.get('bobRaidPetId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Attack the monster (repeats until it falls)",
+          "id": "3b4fbf4a-d6a2-5717-87b3-e814f9d1c4fe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/monster-raid/api/v1/raids/{{raidId}}/attacks",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "monster-raid",
+                "api",
+                "v1",
+                "raids",
+                "{{raidId}}",
+                "attacks"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{raidAttackToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{raidAttack}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Damage is computed on the server from the Tamagotchi combat profile and the monster snapshot.\nThe players alternate. In the Collection Runner the request repeats until the monster's HP\nreaches 0. When sending by hand, click Send until `raidStatus` is no longer ACTIVE."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Alice and Bob take turns clicking the monster.",
+                  "const attacker = pm.collectionVariables.get('raidAttacker') || 'alice';",
+                  "pm.variables.set('raidAttack', JSON.stringify({",
+                  "    actionId: pm.variables.replaceIn('{{$guid}}'),",
+                  "    tamagotchiId: pm.collectionVariables.get(`${attacker}RaidPetId`),",
+                  "    performedAt: new Date().toISOString()",
+                  "}));",
+                  "pm.variables.set('raidAttackerName', attacker);",
+                  "pm.variables.set('raidAttackToken', pm.collectionVariables.get(`${attacker}Token`));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const MAX_ATTEMPTS = 200;",
+                  "const attempts = Number(pm.collectionVariables.get('raidAttempts') || 0) + 1;",
+                  "pm.collectionVariables.set('raidAttempts', attempts);",
+                  "const attacker = pm.variables.get('raidAttackerName');",
+                  "const other = attacker === 'alice' ? 'bob' : 'alice';",
+                  "if (pm.response.code === 200) {",
+                  "    const hit = pm.response.json();",
+                  "    console.log(`${attacker} hits for ${hit.damage}: monster at ${hit.monsterCurrentHp} HP (${hit.raidStatus})`);",
+                  "    pm.test(`Attack ${attempts}: ${attacker} deals server-calculated damage`, () => pm.expect(hit.damage).to.be.at.least(1));",
+                  "    pm.collectionVariables.set('raidAttacker', other);",
+                  "    if (hit.raidStatus === 'ACTIVE' && attempts < MAX_ATTEMPTS) {",
+                  "        pm.execution.setNextRequest(pm.info.requestName);",
+                  "    }",
+                  "} else if (pm.response.code === 429 && attempts < MAX_ATTEMPTS) {",
+                  "    // Attacks are rate limited per participant: let the other player swing after a short pause.",
+                  "    console.log(`${attacker} is rate limited (ATTACK_RATE_LIMITED); ${other} attacks next`);",
+                  "    pm.collectionVariables.set('raidAttacker', other);",
+                  "    pm.execution.setNextRequest(pm.info.requestName);",
+                  "    setTimeout(() => {}, 500);",
+                  "} else {",
+                  "    pm.test(`Attack ${attempts} accepted`, () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Raid state after the final blow",
+          "id": "a7b0681c-f9fe-5f25-9dda-2048dc6cf150",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/monster-raid/api/v1/raids/{{raidId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "monster-raid",
+                "api",
+                "v1",
+                "raids",
+                "{{raidId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const raid = pm.response.json();",
+                  "const polls = Number(pm.collectionVariables.get('raidPolls') || 0);",
+                  "if (pm.response.code === 200 && ['ACTIVE', 'SETTLING'].includes(raid.status) && raid.monster.currentHp === 0 && polls < 20) {",
+                  "    // Rewards go to User Management and Tamagotchi through the gateway before the raid is COMPLETED.",
+                  "    pm.collectionVariables.set('raidPolls', polls + 1);",
+                  "    console.log(`raid is ${raid.status}; checking again in a second`);",
+                  "    pm.execution.setNextRequest(pm.info.requestName);",
+                  "    setTimeout(() => {}, 1000);",
+                  "} else {",
+                  "    pm.collectionVariables.set('raidPolls', 0);",
+                  "    pm.test('Monster is defeated and the raid is COMPLETED', () => {",
+                  "        pm.response.to.have.status(200);",
+                  "        pm.expect(raid.monster.currentHp).to.eql(0);",
+                  "        pm.expect(raid.status).to.eql('COMPLETED');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Raid result and rewards",
+          "id": "cce12e22-2009-525b-a91f-09f1f7f28d5d",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/monster-raid/api/v1/raids/{{raidId}}/result",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "monster-raid",
+                "api",
+                "v1",
+                "raids",
+                "{{raidId}}",
+                "result"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Raid is COMPLETED and both players are rewarded', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const result = pm.response.json();",
+                  "    pm.expect(result.status).to.eql('COMPLETED');",
+                  "    pm.expect(result.rewards.map(r => r.userId)).to.have.members(",
+                  "        [pm.collectionVariables.get('aliceUserId'), pm.collectionVariables.get('bobUserId')]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const result = pm.response.json();",
+                  "    const alice = result.rewards.find(r => r.userId === pm.collectionVariables.get('aliceUserId'));",
+                  "    pm.collectionVariables.set('aliceRaidCurrency', alice.globalCurrency);",
+                  "    pm.collectionVariables.set('aliceRaidXp', alice.xp);",
+                  "    pm.collectionVariables.set('raidFinishedAt', result.finishedAt);",
+                  "    console.log(`total damage ${result.totalDamage}; Alice earned ${alice.globalCurrency} coins and ${alice.xp} XP`);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice's wallet after the raid",
+          "id": "adb41409-d248-57d9-bbd3-1655ef795803",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{aliceUserId}}/balances",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "balances"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const before = Number(pm.collectionVariables.get('aliceBalanceBeforeRaid'));",
+                  "const reward = Number(pm.collectionVariables.get('aliceRaidCurrency'));",
+                  "pm.test('Monster Raid credited the reward through User Management', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().globalBalance).to.eql(before + reward);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice's raid Tamagotchi after the raid",
+          "id": "d4625f2a-b35b-5722-aa8f-6dc5d9f6b011",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis/{{aliceRaidPetId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis",
+                "{{aliceRaidPetId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const before = Number(pm.collectionVariables.get('aliceRaidPetXp'));",
+                  "const reward = Number(pm.collectionVariables.get('aliceRaidXp'));",
+                  "pm.test('Monster Raid granted the XP through Tamagotchi', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().xp).to.eql(before + reward);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deliver the raid completed event to Notification",
+          "id": "0a9b8103-47f8-5c1a-aa49-59708c46e3c0",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/internal/events",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "internal",
+                "events"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{monsterRaidServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"eventType\": \"raid.completed.v1\",\n  \"eventVersion\": 1,\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"producer\": \"monster-raid-service\",\n  \"correlationId\": \"{{lastCorrelationId}}\",\n  \"data\": {\n    \"raidId\": \"{{raidId}}\",\n    \"guildId\": \"{{guildId}}\",\n    \"status\": \"COMPLETED\",\n    \"participantUserIds\": [\n      \"{{aliceUserId}}\",\n      \"{{bobUserId}}\"\n    ],\n    \"finishedAt\": \"{{raidFinishedAt}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Delivers `raid.completed.v1` to both participants as `monster-raid-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notification accepts the raid.completed.v1 event from monster-raid-service', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin closes the raid window",
+          "id": "cf4be013-cd0a-5711-a108-1a3c78913c30",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/raid-schedules/{{scheduleId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "raid-schedules",
+                "{{scheduleId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Raid window is closed so the next run can schedule its own', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('INACTIVE');",
+                  "});"
                 ]
               }
             }
