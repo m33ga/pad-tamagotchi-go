@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "984b8f75-d842-56fb-bb6b-146a5e1f8895",
     "name": "Tamagotchi Go - Game Workflows",
-    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n| 3 | Guild life and a Monster Raid | User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification |\n| 4 | Resilience drills (manual) | Gateway, Tamagotchi |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
+    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway.\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n| 3 | Guild life and a Monster Raid | User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification |\n| 4 | Resilience drills (manual) | Gateway, Tamagotchi |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup and required local values are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -38,7 +38,7 @@
     {
       "name": "0. Gateway entry and authorization",
       "id": "7ae17c43-cfc6-5611-9d48-d93bcf73011d",
-      "description": "**Lab 2 grades 6, 9 and 10.** The API Gateway is the only door into the system: it validates bearer\ntokens against the User Management JWKS, removes `Authorization` and any identity headers the caller\nsent, and forwards a verified identity (`X-Caller-Kind`, `X-User-ID` or `X-Service-Name`) instead.\n\nRuns on its own: it registers a throwaway \"probe\" player. The service-token checks need\n`battleClientSecret`.",
+      "description": "The API Gateway is the only door into the system: it validates bearer\ntokens against the User Management JWKS, removes `Authorization` and any identity headers the caller\nsent, and forwards a verified identity (`X-Caller-Kind`, `X-User-ID` or `X-Service-Name`) instead.\n\nRuns on its own: it registers a throwaway \"probe\" player. The service-token checks need\n`battleClientSecret`.",
       "item": [
         {
           "name": "Gateway readiness",
@@ -4311,7 +4311,7 @@
     {
       "name": "3. Guild life and a Monster Raid",
       "id": "ea323c7f-1bd1-5349-bb81-10e13ac14302",
-      "description": "**Services:** User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification.\nAlso covers **Lab 2 grade 7** (WebSocket negotiation through the gateway).\n\nThe raid administrator schedules a monster. Alice founds a guild that only players of her package can\njoin, invites Bob and opens the guild chat. Then the two of them take the monster down together.\nService-to-service calls: `Guild → User Management`, `Guild → Package Registry`,\n`Monster Raid → Package Registry` (schedule and monster snapshot), `Monster Raid → Guild` (membership),\n`Monster Raid → Tamagotchi` (combat profile, XP), `Monster Raid → User Management` (rewards).\n\nNeeds `adminEmail` / `adminPassword` (an account allow-listed in `PACKAGE_REGISTRY_ADMIN_USER_IDS`),\n`guildClientSecret` and `monsterRaidClientSecret`. Run folders 1 and 2 first.",
+      "description": "**Services:** User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification.\n\nThe raid administrator schedules a monster. Alice founds a guild that only players of her package can\njoin, invites Bob and opens the guild chat. Then the two of them take the monster down together.\nService-to-service calls: `Guild → User Management`, `Guild → Package Registry`,\n`Monster Raid → Package Registry` (schedule and monster snapshot), `Monster Raid → Guild` (membership),\n`Monster Raid → Tamagotchi` (combat profile, XP), `Monster Raid → User Management` (rewards).\n\nNeeds `adminEmail` / `adminPassword` (an account allow-listed in `PACKAGE_REGISTRY_ADMIN_USER_IDS`),\n`guildClientSecret` and `monsterRaidClientSecret`. Run folders 1 and 2 first.",
       "item": [
         {
           "name": "Register the raid admin (first run only)",
@@ -5341,7 +5341,7 @@
                 }
               ]
             },
-            "description": "**Lab 2 grade 7.** The gateway only carries this REST negotiation. Guild returns its public WebSocket\nURL and a 60-second, single-use ticket, and the client connects straight to Guild. To chat, open a\nPostman WebSocket request to `{{chatConnectUrl}}` within 60 seconds and send:\n\n```json\n{\"type\": \"guild.chat.message.send.v1\", \"clientMessageId\": \"a30b3bd2-3c74-4fe1-9f53-c67ea72171db\", \"content\": \"Ready for the raid?\"}\n```"
+            "description": "The gateway only carries this REST negotiation. Guild returns its public WebSocket\nURL and a 60-second, single-use ticket, and the client connects straight to Guild. To chat, open a\nPostman WebSocket request to `{{chatConnectUrl}}` within 60 seconds and send:\n\n```json\n{\"type\": \"guild.chat.message.send.v1\", \"clientMessageId\": \"a30b3bd2-3c74-4fe1-9f53-c67ea72171db\", \"content\": \"Ready for the raid?\"}\n```"
           },
           "event": [
             {
@@ -6403,7 +6403,7 @@
     {
       "name": "4. Resilience drills: timeouts and concurrency",
       "id": "b5e52306-e87c-54e3-b63e-78a8c1ab39d1",
-      "description": "**Lab 2 grade 8.** Manual drills: arm each one with the Docker command in its description, send it,\nthen undo the command. Unarmed drills just report \"not armed\", so the Collection Runner can still\nrun the whole collection. The concurrency limits need parallel requests; docs/game-workflows.md\nhas a one-line shell command for those.",
+      "description": "Manual drills: arm each one with the Docker command in its description, send it,\nthen undo the command. Unarmed drills just report \"not armed\", so the Collection Runner can still\nrun the whole collection. The concurrency limits need parallel requests; docs/game-workflows.md\nhas a one-line shell command for those.",
       "item": [
         {
           "name": "Baseline: Alice lists her Tamagotchis",

@@ -19,19 +19,6 @@ What the collection stands in for:
 - **Message queue.** No broker is deployed. Battle, Map, Guild and Monster Raid log or store the events they would publish. The `Deliver … event to Notification` requests send the same envelope to Notification's producer endpoint, using the producing service's own token. Firebase is mocked, so deliveries appear in the Notification logs.
 - **Earlier battles.** A battle needs a primary and a secondary Tamagotchi, and players only get secondaries by capturing them. The `Starter gift` requests call the Battle-only ownership transfer with the `battle-service` token. The `Starter purse` requests credit 100 coins so the loser can pay. Battle makes the same calls when it settles a fight.
 
-## Lab 2 coverage
-
-| Grade | Requirement | Where the collection shows it |
-|---:|---|---|
-| 2 | Run all services with Docker Compose | [Setup](#1-start-the-stack) |
-| 5 | Gateway as the entry point, in Compose | Every request goes to `{{gatewayUrl}}`; no service publishes a REST port |
-| 6 | All client-to-service and service-to-service REST through the gateway | Folders 1–3. Each request description names the calls it triggers; [trace them](#6-see-what-happened) in the gateway log. For example, `Alice challenges Bob` produces one user call and eleven Battle calls to UMS, Tamagotchi and Package Registry, all under the same correlation ID |
-| 7 | WebSocket negotiation through the gateway, direct socket to the service | `3 › Bob negotiates a guild chat connection`, then [Guild chat](#7-guild-chat-over-websocket) |
-| 8 | Task timeout and concurrent task limit, with proper errors | Folder 4 and [Resilience drills](#8-resilience-drills) |
-| 10 | Authorization at the gateway; `Authorization` not forwarded | Folder 0: missing, malformed, forged and non-Bearer tokens; spoofed `X-User-ID` / `X-Caller-Kind` replaced; junk `Authorization` dropped on public operations; user vs service callers |
-
-Grades 3, 4 and 9 cover the repository, the diagram and CI, not runtime behaviour.
-
 ## 1. Start the stack
 
 From the repository root, follow [Run the Services](../README.md#run-the-services):
