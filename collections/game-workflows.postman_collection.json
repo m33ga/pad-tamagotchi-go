@@ -1,0 +1,2845 @@
+{
+  "info": {
+    "_postman_id": "984b8f75-d842-56fb-bb6b-146a5e1f8895",
+    "name": "Tamagotchi Go - Game Workflows",
+    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// One correlation id per call: the gateway forwards it and the services pass it on to every",
+          "// service-to-service call, so a whole workflow step can be traced in the logs.",
+          "const correlationId = pm.variables.replaceIn('{{$guid}}');",
+          "pm.request.headers.upsert({ key: 'X-Correlation-ID', value: correlationId });",
+          "pm.variables.set('lastCorrelationId', correlationId);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Gateway returns an X-Correlation-ID', () => pm.expect(pm.response.headers.has('X-Correlation-ID')).to.be.true);",
+          "// Trace any step with: docker compose logs api-gateway | grep <correlation id>",
+          "console.log(`${pm.info.requestName}: ${pm.response.code}, correlation ${pm.response.headers.get('X-Correlation-ID')}`);"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Gateway entry and authorization",
+      "id": "7ae17c43-cfc6-5611-9d48-d93bcf73011d",
+      "description": "**Lab 2 grades 6, 9 and 10.** The API Gateway is the only door into the system: it validates bearer\ntokens against the User Management JWKS, removes `Authorization` and any identity headers the caller\nsent, and forwards a verified identity (`X-Caller-Kind`, `X-User-ID` or `X-Service-Name`) instead.\n\nRuns on its own: it registers a throwaway \"probe\" player. The service-token checks need\n`battleClientSecret`.",
+      "item": [
+        {
+          "name": "Gateway readiness",
+          "id": "9f05ac9d-3528-5405-9033-a28d639c34f8",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/readyz",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "readyz"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Gateway-owned probe. 503 NOT_READY means it has not fetched the signing keys yet."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway is ready: configuration loaded and JWKS fetched', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Public signing keys (JWKS)",
+          "id": "634b449a-3b55-5fd9-bf57-4885a6060a0a",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/.well-known/jwks.json",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                ".well-known",
+                "jwks.json"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "The gateway verifies every protected request with these public keys. User Management keeps the private key."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('JWKS is public through the gateway', () => pm.response.to.have.status(200));",
+                  "const keys = pm.response.json().keys;",
+                  "pm.test('Keys are RS256 signing keys with a kid', () => {",
+                  "    pm.expect(keys).to.be.an('array').that.is.not.empty;",
+                  "    keys.forEach(key => {",
+                  "        pm.expect(key.kty).to.eql('RSA');",
+                  "        pm.expect(key.alg).to.eql('RS256');",
+                  "        pm.expect(key.use).to.eql('sig');",
+                  "        pm.expect(key.kid).to.be.a('string').and.not.empty;",
+                  "    });",
+                  "});",
+                  "pm.test('No private key material is published', () =>",
+                  "    keys.forEach(key => ['d', 'p', 'q', 'dp', 'dq', 'qi'].forEach(field => pm.expect(key).to.not.have.property(field))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown service prefix",
+          "id": "1080d411-9e38-5f14-afff-f3b82ed71582",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/no-such-service/api/v1/anything",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "no-such-service",
+                "api",
+                "v1",
+                "anything"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway answers routes no service owns', () => {",
+                  "    pm.response.to.have.status(404);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('ROUTE_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protected call without a token",
+          "id": "fabd7fa3-e125-5e88-9f35-a4a8fa671526",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battles/{{$guid}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battles",
+                "{{$guid}}"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Rejected at the gateway; Battle never sees the request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway refuses a protected call without a token', () => {",
+                  "    pm.response.to.have.status(401);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('MISSING_TOKEN');",
+                  "});",
+                  "pm.test('Challenge names the Bearer realm', () =>",
+                  "    pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('Bearer'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protected call with a malformed token",
+          "id": "e869d027-4de8-5f00-aa7e-d44600b81839",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battles/{{$guid}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battles",
+                "{{$guid}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "not-a-jwt",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway refuses a token it cannot verify', () => {",
+                  "    pm.response.to.have.status(401);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('INVALID_TOKEN');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protected call with a non-Bearer scheme",
+          "id": "78ded896-9a12-5f42-915a-0695d12db801",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic cHJvYmU6cHJvYmU="
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battles/{{$guid}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battles",
+                "{{$guid}}"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Only Bearer tokens are accepted', () => {",
+                  "    pm.response.to.have.status(401);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('INVALID_TOKEN');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register the probe player",
+          "id": "f7c1e4a0-faef-5da0-a7f6-0373b2b6d157",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{probeUsername}}\",\n  \"email\": \"{{probeEmail}}\",\n  \"password\": \"{{probePassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const runId = Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);",
+                  "pm.collectionVariables.set('probeUsername', `probe-${runId}`);",
+                  "pm.collectionVariables.set('probeEmail', `postman-probe-${runId}@example.com`);",
+                  "pm.collectionVariables.set('probePassword', 'Pw-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Registration is a public operation', () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('probeUserId', pm.response.json().userId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in the probe player (junk Authorization is dropped)",
+          "id": "4cd7feed-d7a4-5166-999b-340a86496c4a",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "auth",
+                "sessions"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "junk-token-that-the-gateway-drops",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{probeEmail}}\",\n  \"password\": \"{{probePassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Login is public. The gateway drops the `Authorization` header unchecked and forwards the call as anonymous."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "        pm.test('Public operation ignores the junk bearer token', () => pm.response.to.have.status(200));",
+                  "        if (pm.response.code === 200) {",
+                  "            const accessToken = pm.response.json().accessToken;",
+                  "            pm.collectionVariables.set('probeToken', accessToken);",
+                  "            const claims = claimsOf(accessToken);",
+                  "            pm.test('UMS issued a 15-minute RS256 user token', () => {",
+                  "                pm.expect(claims.iss).to.eql('tamagotchi-go');",
+                  "                pm.expect(claims.kind).to.eql('user');",
+                  "                pm.expect(claims.sub).to.eql(pm.collectionVariables.get('probeUserId'));",
+                  "                pm.expect(claims.exp - claims.iat).to.eql(900);",
+                  "            });",
+                  "        }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Forged token: subject swapped, signature kept",
+          "id": "0aa43685-e575-52be-b3b7-3723f97c4e0d",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{probeUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{probeUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{forgedToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Rewrite the payload to claim another user. The RS256 signature no longer matches.",
+                  "const [header, payload, signature] = pm.collectionVariables.get('probeToken').split('.');",
+                  "const claims = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=')));",
+                  "claims.sub = pm.variables.replaceIn('{{$guid}}');",
+                  "const forged = btoa(JSON.stringify(claims)).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+                  "pm.variables.set('forgedToken', [header, forged, signature].join('.'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway detects the broken signature', () => {",
+                  "    pm.response.to.have.status(401);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('INVALID_TOKEN');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Genuine token reaches Tamagotchi",
+          "id": "370be0fd-aefc-57a1-96d1-c975c8ba5d42",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{probeUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{probeUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{probeToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Owner reads their own (empty) roster', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json()).to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Spoofed identity headers are replaced",
+          "id": "f4f0e147-6630-58c2-8d03-9a562fdf407f",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-User-ID",
+                "value": "{{victimUserId}}"
+              },
+              {
+                "key": "X-Caller-Kind",
+                "value": "service"
+              },
+              {
+                "key": "X-Service-Name",
+                "value": "battle-service"
+              },
+              {
+                "key": "X-Scopes",
+                "value": "tamagotchis:read"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{victimUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{victimUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{probeToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "The caller claims to be `battle-service` and another user. The gateway removes these headers and sets the\nidentity from the verified token, so the owner check fails with 403."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('victimUserId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Had the spoofed headers reached the service, it would answer 200 as battle-service.",
+                  "pm.test('Tamagotchi sees the verified probe user, not the spoofed identity', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Client credentials with a wrong secret",
+          "id": "d71068e7-3a01-5a27-b39e-25ac8a5fcd9a",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "oauth2",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "battle-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "definitely-not-the-secret",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Issuer rejects an unknown client secret', () => {",
+                  "    pm.response.to.have.status(401);",
+                  "    pm.expect(pm.response.json().error).to.eql('invalid_client');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get the battle-service token",
+          "id": "98839c54-4881-5e87-a603-34581cb3b7ed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "oauth2",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "battle-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{battleClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Public client-credentials operation. The gateway forwards it anonymously to User Management,\nthe only token issuer. The battle-service secret comes from your local `.env` (BATTLE_CLIENT_SECRET).\nNothing in this collection signs tokens itself."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('battleClientSecret')) {",
+                  "    throw new Error('Set battleClientSecret to BATTLE_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Battle obtains a service token with client credentials', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('battleServiceToken', body.access_token);",
+                  "    const claims = claimsOf(body.access_token);",
+                  "    pm.test('Token identifies battle-service', () => {",
+                  "        pm.expect(claims.kind).to.eql('service');",
+                  "        pm.expect(claims.sub).to.eql('battle-service');",
+                  "        pm.expect(body.expires_in).to.eql(300);",
+                  "    });",
+                  "    pm.test('Token carries the configured scopes', () => {",
+                  "        [\"tamagotchis:read\", \"users.balances:write\", \"packages:read\"].forEach(scope => pm.expect(body.scope.split(' ')).to.include(scope));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Service token cannot act as a player",
+          "id": "91cba437-be6d-5c8b-8f9a-0a04157b7831",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battle-requests",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battle-requests"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"opponentUserId\": \"{{$guid}}\",\n  \"primaryTamagotchiId\": \"{{$guid}}\",\n  \"secondaryTamagotchiId\": \"{{$guid}}\",\n  \"equippedBoosts\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Battle refuses player commands from a service caller', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "User token on a service-only operation",
+          "id": "58b3bee6-9116-5637-bebe-158e40b20571",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis/{{$guid}}/combat-profile",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis",
+                "{{$guid}}",
+                "combat-profile"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{probeToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Combat profiles are reserved for Battle and Monster Raid', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Service token on the same operation",
+          "id": "72d1a7f5-7f51-5fd0-98b7-2bc4a01217ed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis/{{$guid}}/combat-profile",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis",
+                "{{$guid}}",
+                "combat-profile"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('battle-service is authorized; the random pet simply does not exist', () => {",
+                  "    pm.response.to.have.status(404);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('TAMAGOTCHI_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Onboarding: players, package and pets",
+      "id": "8de6a2c0-95ab-57bf-9d67-fbe229c71eae",
+      "description": "**Services:** User Management, Package Registry, Tamagotchi, Notification, all through the gateway.\n\nThree players (Alice, Bob, Carol) register without a package. Alice publishes her own game package\nwith statistics and battle boosts, everyone joins it, and each player hatches a primary Tamagotchi.\nService-to-service calls in this folder:\n`User Management → Package Registry` (registration) and `Tamagotchi → Package Registry` (stat validation).",
+      "item": [
+        {
+          "name": "Register Alice",
+          "id": "85ccaf06-c2f3-5ab1-977c-2f20c7e57b0f",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{aliceUsername}}\",\n  \"email\": \"{{aliceEmail}}\",\n  \"password\": \"{{playerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Public operation. Registration no longer needs a package, so a clean deployment can bootstrap itself."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Every run creates a fresh world, so the collection can be rerun on the same stack.",
+                  "const runId = Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);",
+                  "pm.collectionVariables.set('runId', runId);",
+                  "pm.collectionVariables.set('playerPassword', 'Pw-' + pm.variables.replaceIn('{{$guid}}'));",
+                  "['alice', 'bob', 'carol', 'dave'].forEach(name => {",
+                  "    pm.collectionVariables.set(`${name}Username`, `${name}-${runId}`);",
+                  "    pm.collectionVariables.set(`${name}Email`, `postman-${name}-${runId}@example.com`);",
+                  "    pm.collectionVariables.set(`${name}DeviceId`, pm.variables.replaceIn('{{$guid}}'));",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Alice is registered without a package', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().packageIds).to.eql([]);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('aliceUserId', pm.response.json().userId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Bob",
+          "id": "b7ad495a-5f4e-57a5-b1f0-69afe9fcf24a",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{bobUsername}}\",\n  \"email\": \"{{bobEmail}}\",\n  \"password\": \"{{playerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Bob is registered without a package', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().packageIds).to.eql([]);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('bobUserId', pm.response.json().userId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Carol",
+          "id": "13470a9b-9018-5220-8fd3-73c89b0ae974",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{carolUsername}}\",\n  \"email\": \"{{carolEmail}}\",\n  \"password\": \"{{playerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Carol is registered without a package', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().packageIds).to.eql([]);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('carolUserId', pm.response.json().userId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in Alice",
+          "id": "09327f0d-ea16-5976-bdbf-cbeaaf0638b7",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "auth",
+                "sessions"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{aliceEmail}}\",\n  \"password\": \"{{playerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Alice receives a user token from User Management', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const accessToken = pm.response.json().accessToken;",
+                  "    pm.collectionVariables.set('aliceToken', accessToken);",
+                  "    const claims = claimsOf(accessToken);",
+                  "    pm.test('Token subject is Alice', () => {",
+                  "        pm.expect(claims.kind).to.eql('user');",
+                  "        pm.expect(claims.sub).to.eql(pm.collectionVariables.get('aliceUserId'));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in Bob",
+          "id": "f3ef0f46-7ecc-5040-b3ae-1ab278b543c6",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "auth",
+                "sessions"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{bobEmail}}\",\n  \"password\": \"{{playerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Bob receives a user token from User Management', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const accessToken = pm.response.json().accessToken;",
+                  "    pm.collectionVariables.set('bobToken', accessToken);",
+                  "    const claims = claimsOf(accessToken);",
+                  "    pm.test('Token subject is Bob', () => {",
+                  "        pm.expect(claims.kind).to.eql('user');",
+                  "        pm.expect(claims.sub).to.eql(pm.collectionVariables.get('bobUserId'));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in Carol",
+          "id": "8f69907b-4981-5d41-a0c2-50961bb667cc",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/auth/sessions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "auth",
+                "sessions"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{carolEmail}}\",\n  \"password\": \"{{playerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Carol receives a user token from User Management', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const accessToken = pm.response.json().accessToken;",
+                  "    pm.collectionVariables.set('carolToken', accessToken);",
+                  "    const claims = claimsOf(accessToken);",
+                  "    pm.test('Token subject is Carol', () => {",
+                  "        pm.expect(claims.kind).to.eql('user');",
+                  "        pm.expect(claims.sub).to.eql(pm.collectionVariables.get('carolUserId'));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice creates her game package",
+          "id": "e681fc6d-7974-5af9-b0e6-37b4c58bef3a",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/packages",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "packages"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Pocket Pets {{runId}}\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Package published by the game workflow collection.\",\n  \"developerIds\": [\n    \"{{aliceUserId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Package is created as a DRAFT with Alice as developer', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const pkg = pm.response.json();",
+                  "    pm.expect(pkg.status).to.eql('DRAFT');",
+                  "    pm.expect(pkg.developerIds).to.include(pm.collectionVariables.get('aliceUserId'));",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('packageId', pm.response.json().packageId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice defines the package statistics",
+          "id": "8e73d344-0130-5fa2-9c5b-4f42647ce8fb",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/packages/{{packageId}}/stat-definitions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "packages",
+                "{{packageId}}",
+                "stat-definitions"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"definitions\": [\n    {\n      \"key\": \"hunger\",\n      \"displayName\": \"Hunger\",\n      \"valueType\": \"INTEGER\",\n      \"minimumValue\": 0,\n      \"maximumValue\": 100,\n      \"combatBonusRules\": [\n        {\n          \"operator\": \"GTE\",\n          \"threshold\": 80,\n          \"bonusType\": \"ATTACK\",\n          \"modifier\": -5\n        }\n      ]\n    },\n    {\n      \"key\": \"happiness\",\n      \"displayName\": \"Happiness\",\n      \"valueType\": \"INTEGER\",\n      \"minimumValue\": 0,\n      \"maximumValue\": 100,\n      \"combatBonusRules\": [\n        {\n          \"operator\": \"GTE\",\n          \"threshold\": 70,\n          \"bonusType\": \"ATTACK\",\n          \"modifier\": 5\n        }\n      ]\n    },\n    {\n      \"key\": \"energy\",\n      \"displayName\": \"Energy\",\n      \"valueType\": \"INTEGER\",\n      \"minimumValue\": 0,\n      \"maximumValue\": 100,\n      \"combatBonusRules\": [\n        {\n          \"operator\": \"LTE\",\n          \"threshold\": 20,\n          \"bonusType\": \"DEFENSE\",\n          \"modifier\": -3\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Package-local stats and the combat bonuses they give. Battle and Monster Raid read these definitions later."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Hunger, happiness and energy are defined', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().map(it => it.definition.key)).to.have.members(['hunger', 'happiness', 'energy']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice defines the battle boosts",
+          "id": "a5048c17-2fe2-5f68-b013-ac71e3b5d04e",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/packages/{{packageId}}/battle-boosts",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "packages",
+                "{{packageId}}",
+                "battle-boosts"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"boosts\": [\n    {\n      \"key\": \"power_snack\",\n      \"displayName\": \"Power Snack\",\n      \"affectedStat\": \"ATTACK\",\n      \"modifier\": 10,\n      \"maxUsesPerBattle\": 1\n    },\n    {\n      \"key\": \"iron_shell\",\n      \"displayName\": \"Iron Shell\",\n      \"affectedStat\": \"DEFENSE\",\n      \"modifier\": 5,\n      \"maxUsesPerBattle\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Power Snack and Iron Shell are available', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().map(it => it.definition.key)).to.have.members(['power_snack', 'iron_shell']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice activates the package",
+          "id": "f2061dba-96ae-50ad-8ebf-d2a436132da7",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/package-registry/api/v1/packages/{{packageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "package-registry",
+                "api",
+                "v1",
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Package is ACTIVE', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('ACTIVE');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice joins the package",
+          "id": "4551c7f5-706b-5864-9d59-64cb2c12e4e4",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{aliceUserId}}/packages/{{packageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "User Management calls Package Registry through the gateway with its own service identity (`user-management-service`) to record the registration."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User Management registered Alice with Package Registry', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().packageId).to.eql(pm.collectionVariables.get('packageId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob joins the package",
+          "id": "4e460322-454d-5376-a452-352d0106e72a",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{bobUserId}}/packages/{{packageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "User Management calls Package Registry through the gateway with its own service identity (`user-management-service`) to record the registration."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User Management registered Bob with Package Registry', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().packageId).to.eql(pm.collectionVariables.get('packageId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Carol joins the package",
+          "id": "e92aeb4b-53b0-57d7-933e-da7c71e17772",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{carolUserId}}/packages/{{packageId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{carolUserId}}",
+                "packages",
+                "{{packageId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{carolToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "User Management calls Package Registry through the gateway with its own service identity (`user-management-service`) to record the registration."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('User Management registered Carol with Package Registry', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().packageId).to.eql(pm.collectionVariables.get('packageId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice checks her wallets",
+          "id": "4267caae-143b-54e0-85a1-c4a01b07fc0c",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{aliceUserId}}/balances",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "balances"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Joining the package opened a local wallet next to the global one', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const wallet = pm.response.json();",
+                  "    pm.expect(wallet.globalBalance).to.be.a('number');",
+                  "    pm.expect(wallet.localBalances.map(it => it.packageId)).to.include(pm.collectionVariables.get('packageId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Combat types and their cycle",
+          "id": "93e1d5f1-178f-53f6-87c1-21320fd7c5b1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchi-combat-types",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchi-combat-types"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Six types in the advantage cycle', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const strongAgainst = Object.fromEntries(pm.response.json().map(it => [it.type, it.strongAgainst]));",
+                  "    pm.expect(strongAgainst).to.eql({",
+                  "        FLAME: 'NATURE', NATURE: 'EARTH', EARTH: 'ELECTRIC', ELECTRIC: 'WATER', WATER: 'SHADOW', SHADOW: 'FLAME'",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice hatches Ember",
+          "id": "e6876a84-ba11-5418-9e7e-77ea6a59a9e4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerUserId\": \"{{aliceUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Ember\",\n  \"combatType\": \"FLAME\",\n  \"spriteUrl\": \"https://assets.tamagotchi-go.test/sprites/ember.png\",\n  \"healthStats\": {\n    \"hunger\": 30,\n    \"happiness\": 85,\n    \"energy\": 70\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Tamagotchi validates the health stats against the package's definitions, which it reads from Package Registry through the gateway as `tamagotchi-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Ember is Alice\\'s primary Tamagotchi', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const pet = pm.response.json();",
+                  "    pm.expect(pet.ownershipRole).to.eql('PRIMARY');",
+                  "    pm.expect(pet.combatType).to.eql('FLAME');",
+                  "    pm.expect(pet.level).to.eql(1);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('alicePrimaryId', pm.response.json().tamagotchiId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob hatches Ripple",
+          "id": "429121cb-51fe-5a69-9646-3cd22ed9bd2c",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerUserId\": \"{{bobUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Ripple\",\n  \"combatType\": \"WATER\",\n  \"spriteUrl\": \"https://assets.tamagotchi-go.test/sprites/ripple.png\",\n  \"healthStats\": {\n    \"hunger\": 40,\n    \"happiness\": 75,\n    \"energy\": 65\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Tamagotchi validates the health stats against the package's definitions, which it reads from Package Registry through the gateway as `tamagotchi-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Ripple is Bob\\'s primary Tamagotchi', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const pet = pm.response.json();",
+                  "    pm.expect(pet.ownershipRole).to.eql('PRIMARY');",
+                  "    pm.expect(pet.combatType).to.eql('WATER');",
+                  "    pm.expect(pet.level).to.eql(1);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('bobPrimaryId', pm.response.json().tamagotchiId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Carol hatches Sprout",
+          "id": "f7abae3b-9046-570c-acc0-241a1942d8ff",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{carolToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerUserId\": \"{{carolUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Sprout\",\n  \"combatType\": \"NATURE\",\n  \"spriteUrl\": \"https://assets.tamagotchi-go.test/sprites/sprout.png\",\n  \"healthStats\": {\n    \"hunger\": 20,\n    \"happiness\": 60,\n    \"energy\": 80\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Tamagotchi validates the health stats against the package's definitions, which it reads from Package Registry through the gateway as `tamagotchi-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Sprout is Carol\\'s primary Tamagotchi', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const pet = pm.response.json();",
+                  "    pm.expect(pet.ownershipRole).to.eql('PRIMARY');",
+                  "    pm.expect(pet.combatType).to.eql('NATURE');",
+                  "    pm.expect(pet.level).to.eql(1);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('giftForAliceId', pm.response.json().tamagotchiId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob tries a stat the package does not define",
+          "id": "d9d96467-d0ec-5a8c-a6d3-86e6276fbd5a",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis/{{bobPrimaryId}}/health-stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis",
+                "{{bobPrimaryId}}",
+                "health-stats"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stats\": {\n    \"mana\": 50\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "`mana` is not one of Alice's statistics. The rejection proves Tamagotchi consulted Package Registry through the gateway."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Tamagotchi rejects it after asking Package Registry', () => {",
+                  "    pm.response.to.have.status(422);",
+                  "    pm.expect(pm.response.json().error.code).to.eql('INVALID_LOCAL_STATS');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice feeds Ember",
+          "id": "3673a46e-c692-5ac3-b048-3f0fca130f9b",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis/{{alicePrimaryId}}/health-stats",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis",
+                "{{alicePrimaryId}}",
+                "health-stats"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stats\": {\n    \"hunger\": 5,\n    \"happiness\": 95\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fed and happy; untouched stats are kept', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const stats = pm.response.json().healthStats;",
+                  "    pm.expect(stats.hunger).to.eql(5);",
+                  "    pm.expect(stats.happiness).to.eql(95);",
+                  "    pm.expect(stats.energy).to.eql(70);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice registers a phone for push notifications",
+          "id": "c126bf52-05f6-5536-aded-547a27efe5c2",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/users/{{aliceUserId}}/notification-devices/{{aliceDeviceId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "notification-devices",
+                "{{aliceDeviceId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmRegistrationToken\": \"{{fcmToken}}\",\n  \"platform\": \"ANDROID\",\n  \"packageId\": \"{{packageId}}\",\n  \"appVersion\": \"1.0.0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('fcmToken', 'fcm-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Device is registered and enabled', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().enabled).to.be.true;",
+                  "});",
+                  "pm.test('Firebase token is never echoed back', () =>",
+                  "    pm.expect(pm.response.text()).to.not.include(pm.variables.get('fcmToken')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob registers a phone for push notifications",
+          "id": "58b041bb-61a7-585a-a7a1-b7b288b7fbbf",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/users/{{bobUserId}}/notification-devices/{{bobDeviceId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "notification-devices",
+                "{{bobDeviceId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmRegistrationToken\": \"{{fcmToken}}\",\n  \"platform\": \"IOS\",\n  \"packageId\": \"{{packageId}}\",\n  \"appVersion\": \"1.0.0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('fcmToken', 'fcm-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Device is registered and enabled', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().enabled).to.be.true;",
+                  "});",
+                  "pm.test('Firebase token is never echoed back', () =>",
+                  "    pm.expect(pm.response.text()).to.not.include(pm.variables.get('fcmToken')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Carol registers a phone for push notifications",
+          "id": "27fce913-375f-5adf-9f89-31e0bddb1b08",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/users/{{carolUserId}}/notification-devices/{{carolDeviceId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "users",
+                "{{carolUserId}}",
+                "notification-devices",
+                "{{carolDeviceId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{carolToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fcmRegistrationToken\": \"{{fcmToken}}\",\n  \"platform\": \"WEB\",\n  \"packageId\": \"{{packageId}}\",\n  \"appVersion\": \"1.0.0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('fcmToken', 'fcm-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Device is registered and enabled', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().enabled).to.be.true;",
+                  "});",
+                  "pm.test('Firebase token is never echoed back', () =>",
+                  "    pm.expect(pm.response.text()).to.not.include(pm.variables.get('fcmToken')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice reviews her notification preferences",
+          "id": "91de10b6-a26c-5280-a12f-af24097ed531",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/users/{{aliceUserId}}/notification-preferences",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "notification-preferences"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('All six categories are enabled by default', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const categories = pm.response.json().categories;",
+                  "    pm.expect(Object.keys(categories)).to.have.members(",
+                  "        ['FRIEND_REQUEST', 'PROXIMITY', 'BATTLE_REQUEST', 'BATTLE_RESULT', 'GUILD_INVITATION', 'RAID_LIFECYCLE']);",
+                  "    Object.values(categories).forEach(enabled => pm.expect(enabled).to.be.true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Gateway address published by Docker Compose."
+    },
+    {
+      "key": "battleClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "BATTLE_CLIENT_SECRET from the deployment .env. Keep it as a local value only."
+    },
+    {
+      "key": "mapClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "MAP_CLIENT_SECRET from the deployment .env."
+    },
+    {
+      "key": "guildClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "GUILD_CLIENT_SECRET from the deployment .env."
+    },
+    {
+      "key": "monsterRaidClientSecret",
+      "value": "",
+      "type": "string",
+      "description": "MONSTER_RAID_CLIENT_SECRET from the deployment .env."
+    },
+    {
+      "key": "adminEmail",
+      "value": "",
+      "type": "string",
+      "description": "Raid admin email of your choice; its user ID goes into PACKAGE_REGISTRY_ADMIN_USER_IDS."
+    },
+    {
+      "key": "adminPassword",
+      "value": "",
+      "type": "string",
+      "description": "Raid admin password of your choice (8-72 characters)."
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "playerPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "probeUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "probeEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "probePassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "probeUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "probeToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceDeviceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobDeviceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "carolUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "carolEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "carolUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "carolToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "carolDeviceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "daveUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "daveEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "daveUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "daveDeviceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "packageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "alicePrimaryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobPrimaryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "giftForAliceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "giftForBobId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceSecondaryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobSecondaryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleServiceToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "mapServiceToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "guildServiceToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "monsterRaidServiceToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "friendRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "carolDistanceNumber",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "aliceBalanceBefore",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobBalanceBefore",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleRequestExpiresAt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleState",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleActions",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleRejections",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battlePolls",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleActorPrefs",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleTargetPrefs",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleBoostsUsed",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "battleSwitchFor",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "winnerName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "loserName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "winnerUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "loserUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "winnerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "loserToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "winnerPrimaryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "loserNewPrimaryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "capturedTamagotchiId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "winnerRewardNumber",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "loserLossNumber",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "battleSettledAt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "adminUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "openScheduleIds",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidConfigurationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidStartsAt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidEndsAt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "scheduleId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "guildId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "guildName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invitationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invitationExpiresAt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chatConnectUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceRaidPetId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceRaidPetXp",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobRaidPetId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bobRaidPetXp",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceBalanceBeforeRaid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidAttacker",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidAttempts",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidPolls",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceRaidCurrency",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "aliceRaidXp",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "raidFinishedAt",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
