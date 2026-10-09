@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "984b8f75-d842-56fb-bb6b-146a5e1f8895",
     "name": "Tamagotchi Go - Game Workflows",
-    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway.\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n| 3 | Guild life and a Monster Raid | User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification |\n| 4 | Resilience drills (manual) | Gateway, Tamagotchi |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup and required local values are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
+    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway.\nWhat each workflow does, and the service calls behind every step, is described in\n`docs/game-workflows.md`.\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n| 3 | Guild life and a Monster Raid | User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification |\n| 4 | Resilience drills (manual) | Gateway, Tamagotchi |\n\n**Before running**\n\n1. Start the Compose deployment as described in the README, including\n   `scripts/configure_services_auth.py`.\n2. In a Postman environment, set `battleClientSecret`, `mapClientSecret`, `guildClientSecret` and\n   `monsterRaidClientSecret` to the matching `*_CLIENT_SECRET` values from the deployment `.env`,\n   and `adminEmail` / `adminPassword` to a raid admin account of your choice. Keep them as\n   current values only.\n3. Once per deployment, send `Register the raid admin` and `Log in the raid admin` (folder 3). The\n   console prints `PACKAGE_REGISTRY_ADMIN_USER_IDS=<uuid>`; put that line in `.env` and run\n   `docker compose up -d package-registry-api`.\n\n**Running**\n\nRun folders 0 to 3 in order with the Collection Runner, or send the requests from top to bottom.\n`Take a turn` and `Attack the monster` repeat themselves in the Runner; when sending by hand, click\nSend until the battle or raid is over. Every run creates fresh players, so it can be repeated on the\nsame stack. Folder 4 drills are armed by hand as described on each request. User tokens last\n15 minutes and service tokens 5 minutes; after a pause, resend the folder's login and token\nrequests. Requires a current Postman (v11) or Newman 6. Never export or commit populated secrets\nor tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -716,7 +716,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!pm.variables.get('battleClientSecret')) {",
-                  "    throw new Error('Set battleClientSecret to BATTLE_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "    throw new Error('Set battleClientSecret to BATTLE_CLIENT_SECRET from the deployment .env (see the collection description).');",
                   "}"
                 ]
               }
@@ -2909,7 +2909,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!pm.variables.get('mapClientSecret')) {",
-                  "    throw new Error('Set mapClientSecret to MAP_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "    throw new Error('Set mapClientSecret to MAP_CLIENT_SECRET from the deployment .env (see the collection description).');",
                   "}"
                 ]
               }
@@ -3056,7 +3056,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!pm.variables.get('battleClientSecret')) {",
-                  "    throw new Error('Set battleClientSecret to BATTLE_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "    throw new Error('Set battleClientSecret to BATTLE_CLIENT_SECRET from the deployment .env (see the collection description).');",
                   "}"
                 ]
               }
@@ -4356,7 +4356,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!pm.variables.get('adminEmail') || !pm.variables.get('adminPassword')) {",
-                  "    throw new Error('Set adminEmail and adminPassword (any values you choose; see docs/game-workflows.md, step 4).');",
+                  "    throw new Error('Set adminEmail and adminPassword (any values you choose; see the collection description).');",
                   "}",
                   "pm.variables.set('adminUsername', ('admin-' + pm.variables.get('adminEmail').split('@')[0]).slice(0, 32));"
                 ]
@@ -5058,7 +5058,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!pm.variables.get('guildClientSecret')) {",
-                  "    throw new Error('Set guildClientSecret to GUILD_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "    throw new Error('Set guildClientSecret to GUILD_CLIENT_SECRET from the deployment .env (see the collection description).');",
                   "}"
                 ]
               }
@@ -5703,7 +5703,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "if (!pm.variables.get('monsterRaidClientSecret')) {",
-                  "    throw new Error('Set monsterRaidClientSecret to MONSTER_RAID_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "    throw new Error('Set monsterRaidClientSecret to MONSTER_RAID_CLIENT_SECRET from the deployment .env (see the collection description).');",
                   "}"
                 ]
               }
@@ -6403,7 +6403,7 @@
     {
       "name": "4. Resilience drills: timeouts and concurrency",
       "id": "b5e52306-e87c-54e3-b63e-78a8c1ab39d1",
-      "description": "Manual drills: arm each one with the Docker command in its description, send it,\nthen undo the command. Unarmed drills just report \"not armed\", so the Collection Runner can still\nrun the whole collection. The concurrency limits need parallel requests; docs/game-workflows.md\nhas a one-line shell command for those.",
+      "description": "Manual drills: arm each one with the Docker command in its description, send it,\n    then undo the command. Unarmed drills just report \"not armed\", so the Collection Runner can still\n    run the whole collection.\n\n    The concurrency limits need parallel requests, so they are exercised from a shell. With\n    `tamagotchi-api` paused and `TOKEN` holding a user token, 100 parallel calls give 64 x 504 and\n    36 x 503 CONCURRENCY_LIMIT_REACHED:\n\n    ```bash\n    seq 100 | xargs -P 100 -I{} curl -s -o /dev/null -w '%{http_code}\n' -H \"Authorization: Bearer $TOKEN\" http://localhost:8000/tamagotchi/api/v1/tamagotchi-combat-types | sort | uniq -c\n    ```",
       "item": [
         {
           "name": "Baseline: Alice lists her Tamagotchis",
