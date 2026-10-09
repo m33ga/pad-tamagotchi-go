@@ -358,6 +358,8 @@ User Management Service owns user identity, authentication, social relationships
 | `GET /api/v1/users/{userId}/packages` | Account owner or internal service | None | `200 PackageReference[]` | `403`, `404 USER_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
 
+Registration accepts an omitted or null `initialPackageId`. This creates an account with `packageIds: []` and only the global wallet, without calling Package Registry. If a package is supplied, it must exist and be ACTIVE. The account owner can later join an ACTIVE package with `PUT /api/v1/users/{userId}/packages/{packageId}`, which also creates its local wallet. Existing registration requests with a package remain valid.
+
 ##### Token Issuance
 
 Token request fields: `grant_type=client_credentials`, `client_id`, `client_secret`,
@@ -447,7 +449,7 @@ instead of querying each pair; it follows additional pages for larger graphs.
     "username": "String, 3-32 characters; required. Public username",
     "email": "Email string; required. Unique account email",
     "password": "String, 8-72 characters; required. Plain password transported only over HTTPS",
-    "initialPackageId": "UUID string; required. Package selected during registration"
+    "initialPackageId": "UUID string or null; optional. Existing ACTIVE package selected during registration; omit to register without a package"
   },
   "UpdateUserRequest": {
     "username": "String, 3-32 characters; optional. New public username",
@@ -1851,7 +1853,7 @@ The deployed images differ in which collaborators they currently mock. The gatew
 
 ### Postman Collections
 
-Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. The User Management collection also supports registration with an existing active package.
+Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. On a clean stack, run the User Management collection's `1. Setup and Authentication`, followed by `1b. Package Bootstrap`: register without a package, log in, create a package, activate it as its developer, and join it. These steps use only API calls; no database inserts or administrator identity are needed. Registration can still select an existing ACTIVE package with `initialPackageId`.
 
 Service-only requests use the client-credentials endpoint and the allowed service's private credential. The Map collection needs two accounts that are friends in User Management, and the Monster Raid collection needs an account with a Tamagotchi, an active raid schedule, and the `monster-raid-service` secret in `serviceClientSecret` to read that schedule. The Package Registry collection registers a user's package through User Management, which supplies its own service identity for the nested call. Business requests still require the referenced packages, pets and other resources to exist. Never export or commit credentials, Firebase tokens or populated access tokens.
 

@@ -17,7 +17,7 @@ services:
       start_period: 5s
 
   user-management-api:
-    image: sanda2004/user-management-service:2.0.0
+    image: sanda2004/user-management-service:2.0.1
     pull_policy: always
     env_file:
       - .env

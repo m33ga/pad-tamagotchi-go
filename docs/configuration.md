@@ -116,3 +116,9 @@ expire. Never distribute private keys as public rotation material.
 
 If Docker on macOS cannot read a cloud-offloaded key, rerun the setup script.
 It materializes the existing key without generating a replacement.
+
+## First account on a clean deployment
+
+After `python3 scripts/configure_services_auth.py` and `docker compose up -d --wait`, run `1. Setup and Authentication` and `1b. Package Bootstrap` in the User Management Postman collection. Registration omits `initialPackageId`; the resulting user can log in, create a package, activate it as its developer, then join it through User Management. All requests use the gateway. No package seed, SQL insert or change to Package Registry authorization is required.
+
+The UMS migration permits a null initial package and preserves existing accounts and memberships. A supplied initial package must still be ACTIVE. Package Registry administrator configuration for raid operations is a separate concern.
