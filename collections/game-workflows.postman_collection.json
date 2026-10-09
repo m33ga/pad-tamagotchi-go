@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "984b8f75-d842-56fb-bb6b-146a5e1f8895",
     "name": "Tamagotchi Go - Game Workflows",
-    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n| 3 | Guild life and a Monster Raid | User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
+    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n| 3 | Guild life and a Monster Raid | User Management, Package Registry, Guild, Monster Raid, Tamagotchi, Notification |\n| 4 | Resilience drills (manual) | Gateway, Tamagotchi |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -6393,6 +6393,217 @@
                   "    pm.response.to.have.status(200);",
                   "    pm.expect(pm.response.json().status).to.eql('INACTIVE');",
                   "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Resilience drills: timeouts and concurrency",
+      "id": "b5e52306-e87c-54e3-b63e-78a8c1ab39d1",
+      "description": "**Lab 2 grade 8.** Manual drills: arm each one with the Docker command in its description, send it,\nthen undo the command. Unarmed drills just report \"not armed\", so the Collection Runner can still\nrun the whole collection. The concurrency limits need parallel requests; docs/game-workflows.md\nhas a one-line shell command for those.",
+      "item": [
+        {
+          "name": "Baseline: Alice lists her Tamagotchis",
+          "id": "c359dac1-7317-553e-90ac-ba59710e494f",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{aliceUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Healthy path answers 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Drill: service deadline (pause tamagotchi-db first)",
+          "id": "51e83ef8-5ee4-58a9-8208-99dc67400325",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{aliceUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "1. `docker compose pause tamagotchi-db`\n2. Send. The database never answers, so Tamagotchi's 4-second request deadline fires and it returns\n   `504 REQUEST_TIMEOUT` in the shared error envelope.\n3. `docker compose unpause tamagotchi-db`"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    // Not armed: the request simply succeeded.",
+                  "    console.warn('Drill not armed. Run docker compose pause tamagotchi-db, send again, then docker compose unpause tamagotchi-db.');",
+                  "    pm.test('Drill not armed (see the request description); nothing to check', () => {});",
+                  "} else {",
+                  "    pm.test('Tamagotchi answers its own 504 REQUEST_TIMEOUT', () => {",
+                  "        pm.response.to.have.status(504);",
+                  "        pm.expect(pm.response.json().error.code).to.eql('REQUEST_TIMEOUT');",
+                  "    });",
+                  "    pm.test('It answers within its 4 s deadline, before the gateway 5 s upstream timeout', () =>",
+                  "        pm.expect(pm.response.responseTime).to.be.below(5000));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Drill: gateway upstream timeout (pause tamagotchi-api first)",
+          "id": "0a9fb08c-5601-5fbf-b6ef-bfe977522de9",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{aliceUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "1. `docker compose pause tamagotchi-api`\n2. Send. The frozen service accepts the connection but never responds; after 5 seconds the gateway\n   cancels the call, frees the concurrency slot and returns `504 UPSTREAM_TIMEOUT`.\n3. `docker compose unpause tamagotchi-api`"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    // Not armed: the request simply succeeded.",
+                  "    console.warn('Drill not armed. Run docker compose pause tamagotchi-api, send again, then docker compose unpause tamagotchi-api.');",
+                  "    pm.test('Drill not armed (see the request description); nothing to check', () => {});",
+                  "} else {",
+                  "    pm.test('Gateway cancels the call after its 5 s upstream timeout', () => {",
+                  "        pm.response.to.have.status(504);",
+                  "        pm.expect(pm.response.json().error.code).to.eql('UPSTREAM_TIMEOUT');",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Drill: upstream down (stop tamagotchi-api first)",
+          "id": "0b8e87f2-2ca3-5170-966f-995ce698af10",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{aliceUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "1. `docker compose stop tamagotchi-api`\n2. Send. The gateway cannot reach the upstream and returns `502 UPSTREAM_UNAVAILABLE`.\n3. `docker compose start tamagotchi-api` and wait until `docker compose ps` shows it healthy."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    // Not armed: the request simply succeeded.",
+                  "    console.warn('Drill not armed. Run docker compose stop tamagotchi-api, send again, then docker compose start tamagotchi-api.');",
+                  "    pm.test('Drill not armed (see the request description); nothing to check', () => {});",
+                  "} else {",
+                  "    pm.test('Gateway reports the unreachable service', () => {",
+                  "        pm.response.to.have.status(502);",
+                  "        pm.expect(pm.response.json().error.code).to.eql('UPSTREAM_UNAVAILABLE');",
+                  "    });",
+                  "}"
                 ]
               }
             }
