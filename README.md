@@ -1857,6 +1857,8 @@ Import the JSON files from [`collections`](collections). Their `gatewayUrl` defa
 
 Service-only requests use the client-credentials endpoint and the allowed service's private credential. The Map collection needs two accounts that are friends in User Management, and the Monster Raid collection needs an account with a Tamagotchi, an active raid schedule, and the `monster-raid-service` secret in `serviceClientSecret` to read that schedule. The Package Registry collection registers a user's package through User Management, which supplies its own service identity for the nested call. Business requests still require the referenced packages, pets and other resources to exist. Never export or commit credentials, Firebase tokens or populated access tokens.
 
+The [game workflow collection](collections/game-workflows.postman_collection.json) plays the whole game through the gateway in four workflows that together involve every service: gateway authorization, onboarding, a PvP battle, and a guild Monster Raid, plus timeout and concurrency drills. Its setup and Lab 2 coverage are described in [Game Workflows](docs/game-workflows.md).
+
 The Registry administrator's UMS ID must be in `PACKAGE_REGISTRY_ADMIN_USER_IDS`. The Registry collection uses separate Guild, Tamagotchi, Battle, and Monster Raid client credentials for their allowed operations; set these only in private local values. Guild's `Negotiate chat session` request returns a short-lived, single-use ticket for a direct WebSocket connection. REST collection runs do not themselves send or receive WebSocket frames.
 
 [Back to top](#table-of-contents)
