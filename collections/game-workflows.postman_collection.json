@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "984b8f75-d842-56fb-bb6b-146a5e1f8895",
     "name": "Tamagotchi Go - Game Workflows",
-    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
+    "description": "End-to-end game workflows that cross every service of Tamagotchi Go through the API Gateway (Lab 2).\n\n| Folder | Story | Services |\n|---|---|---|\n| 0 | Gateway entry and authorization | Gateway, User Management, Tamagotchi, Battle |\n| 1 | Onboarding: players, package and pets | User Management, Package Registry, Tamagotchi, Notification |\n| 2 | Social life and a PvP battle | User Management, Map, Tamagotchi, Package Registry, Battle, Notification |\n\nRun the folders in order with the Collection Runner. Every run creates fresh players, so it can be\nrepeated on the same stack. Setup, required local values and Lab 2 coverage are in\n`docs/game-workflows.md`. Never export or commit populated secrets or tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -2350,6 +2350,1957 @@
                   "        ['FRIEND_REQUEST', 'PROXIMITY', 'BATTLE_REQUEST', 'BATTLE_RESULT', 'GUILD_INVITATION', 'RAID_LIFECYCLE']);",
                   "    Object.values(categories).forEach(enabled => pm.expect(enabled).to.be.true);",
                   "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Social life and a PvP battle",
+      "id": "ef3aa13e-a6e3-5ea4-a7bd-f87aab6d29da",
+      "description": "**Services:** User Management, Map, Tamagotchi, Package Registry, Battle, Notification.\n\nAlice and Bob become friends and appear on each other's map; Carol, a stranger, shows up only within\n6 m. Carol's pets become their secondary Tamagotchis, then Alice challenges Bob. The two players\ntake turns until one side is knocked out, and Battle settles the result through the gateway:\n`Battle → User Management` (currency), `Battle → Tamagotchi` (combat profiles, XP, capture),\n`Battle → Package Registry` (stat bonuses and boosts). Map reads relationships with `Map → User Management`.\n\nNeeds `mapClientSecret` and `battleClientSecret`. Run folder 1 first.",
+      "item": [
+        {
+          "name": "Alice sends Bob a friend request",
+          "id": "4bbaa23f-109b-5b61-8ce1-325cbb65746b",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{aliceUserId}}/friend-requests",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "friend-requests"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"{{bobUserId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Friend request is pending', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().status).to.eql('PENDING');",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('friendRequestId', pm.response.json().requestId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob accepts the friend request",
+          "id": "125b7d9a-824c-5ee6-8c63-e388bdf19881",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{bobUserId}}/friend-requests/{{friendRequestId}}/responses",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "friend-requests",
+                "{{friendRequestId}}",
+                "responses"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"ACCEPT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Friend request is accepted', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('ACCEPTED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice and Bob are friends",
+          "id": "eb0c581f-2fb0-5523-9d35-d4f69bbc940c",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{aliceUserId}}/relationships/{{bobUserId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "relationships",
+                "{{bobUserId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Relationship is FRIEND', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().relationship).to.eql('FRIEND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice shares a location (city centre)",
+          "id": "e2955bbb-abaf-50dc-a061-de75cf88bad7",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/api/v1/users/{{aliceUserId}}/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "location"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 47.010500,\n  \"longitude\": 28.8638,\n  \"accuracyMeters\": 3,\n  \"recordedAt\": \"{{$isoTimestamp}}\",\n  \"sequenceNumber\": {{locationSequence}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('locationSequence', Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Location is stored with an expiry', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(Date.parse(pm.response.json().expiresAt)).to.be.above(Date.now());",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob shares a location (about 45 m north)",
+          "id": "752d6719-db38-5909-9f83-beac04c3e8a1",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/api/v1/users/{{bobUserId}}/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "location"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 47.010900,\n  \"longitude\": 28.8638,\n  \"accuracyMeters\": 3,\n  \"recordedAt\": \"{{$isoTimestamp}}\",\n  \"sequenceNumber\": {{locationSequence}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('locationSequence', Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Location is stored with an expiry', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(Date.parse(pm.response.json().expiresAt)).to.be.above(Date.now());",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Carol shares a location (about 2 m from Alice)",
+          "id": "a08c1cb1-691b-5d63-9a37-f162cb95bd33",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/api/v1/users/{{carolUserId}}/location",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "api",
+                "v1",
+                "users",
+                "{{carolUserId}}",
+                "location"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{carolToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 47.010518,\n  \"longitude\": 28.8638,\n  \"accuracyMeters\": 3,\n  \"recordedAt\": \"{{$isoTimestamp}}\",\n  \"sequenceNumber\": {{locationSequence}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('locationSequence', Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Location is stored with an expiry', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(Date.parse(pm.response.json().expiresAt)).to.be.above(Date.now());",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice's map",
+          "id": "a5c25dd3-99bc-570e-86a4-777ab4bbbba8",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/api/v1/users/{{aliceUserId}}/map",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "map"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Map classifies nearby users with the relationships it reads from User Management as `map-service`. Crossing the 6 m threshold makes Map log a `map.proximity.detected.v1` event."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Map is calculated', () => pm.response.to.have.status(200));",
+                  "const players = pm.response.json().players;",
+                  "const bob = players.find(p => p.userId === pm.collectionVariables.get('bobUserId'));",
+                  "const carol = players.find(p => p.userId === pm.collectionVariables.get('carolUserId'));",
+                  "pm.test('Friend Bob is visible although he is far away', () => {",
+                  "    pm.expect(bob, 'Bob on the map').to.be.an('object');",
+                  "    pm.expect(bob.relationship).to.eql('FRIEND');",
+                  "    pm.expect(bob.distanceMeters).to.be.above(6);",
+                  "});",
+                  "pm.test('Stranger Carol is visible because she is within 6 m', () => {",
+                  "    pm.expect(carol, 'Carol on the map').to.be.an('object');",
+                  "    pm.expect(carol.relationship).to.eql('NONE');",
+                  "    pm.expect(carol.distanceMeters).to.be.at.most(6);",
+                  "});",
+                  "pm.collectionVariables.set('carolDistanceNumber', carol ? carol.distanceMeters : 0);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob's map",
+          "id": "517bcaf3-8b64-5ee7-a80a-dc10a8abdd09",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/map/api/v1/users/{{bobUserId}}/map",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "map",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "map"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Map is calculated', () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json().players.map(p => p.userId);",
+                  "pm.test('Bob sees his friend Alice', () => pm.expect(ids).to.include(pm.collectionVariables.get('aliceUserId')));",
+                  "pm.test('Bob does not see the distant stranger Carol', () => pm.expect(ids).to.not.include(pm.collectionVariables.get('carolUserId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get the map-service token",
+          "id": "8938f6af-6307-5e50-add7-5d0fd156da12",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "oauth2",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "map-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{mapClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Public client-credentials operation. The gateway forwards it anonymously to User Management,\nthe only token issuer. The map-service secret comes from your local `.env` (MAP_CLIENT_SECRET).\nNothing in this collection signs tokens itself."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('mapClientSecret')) {",
+                  "    throw new Error('Set mapClientSecret to MAP_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Map obtains a service token with client credentials', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('mapServiceToken', body.access_token);",
+                  "    const claims = claimsOf(body.access_token);",
+                  "    pm.test('Token identifies map-service', () => {",
+                  "        pm.expect(claims.kind).to.eql('service');",
+                  "        pm.expect(claims.sub).to.eql('map-service');",
+                  "        pm.expect(body.expires_in).to.eql(300);",
+                  "    });",
+                  "    pm.test('Token carries the configured scopes', () => {",
+                  "        [\"users:read\"].forEach(scope => pm.expect(body.scope.split(' ')).to.include(scope));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deliver the proximity event to Notification",
+          "id": "f69485af-6854-567d-8abb-6f2128467784",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/internal/events",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "internal",
+                "events"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mapServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"eventType\": \"map.proximity.detected.v1\",\n  \"eventVersion\": 1,\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"producer\": \"map-service\",\n  \"correlationId\": \"{{lastCorrelationId}}\",\n  \"data\": {\n    \"firstUserId\": \"{{aliceUserId}}\",\n    \"secondUserId\": \"{{carolUserId}}\",\n    \"distanceMeters\": {{carolDistanceNumber}},\n    \"detectedAt\": \"{{$isoTimestamp}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "No message broker is deployed. Map only logs the event it would publish, so this request delivers the\nsame envelope to Notification's producer endpoint as `map-service`. Notification pushes to Alice's and\nCarol's devices through the mocked Firebase; see `docker compose logs notification-api`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notification accepts the map.proximity.detected.v1 event from map-service', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get a fresh battle-service token",
+          "id": "e14e25f2-33c4-5f74-bd5d-dee0b005355a",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/oauth2/token",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "oauth2",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "battle-service",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{battleClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Public client-credentials operation. The gateway forwards it anonymously to User Management,\nthe only token issuer. The battle-service secret comes from your local `.env` (BATTLE_CLIENT_SECRET).\nNothing in this collection signs tokens itself."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.variables.get('battleClientSecret')) {",
+                  "    throw new Error('Set battleClientSecret to BATTLE_CLIENT_SECRET from the deployment .env (see docs/game-workflows.md, step 3).');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const claimsOf = token => {",
+                  "    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "    return JSON.parse(atob(part.padEnd(Math.ceil(part.length / 4) * 4, '=')));",
+                  "};",
+                  "",
+                  "pm.test('Battle obtains a service token with client credentials', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('battleServiceToken', body.access_token);",
+                  "    const claims = claimsOf(body.access_token);",
+                  "    pm.test('Token identifies battle-service', () => {",
+                  "        pm.expect(claims.kind).to.eql('service');",
+                  "        pm.expect(claims.sub).to.eql('battle-service');",
+                  "        pm.expect(body.expires_in).to.eql(300);",
+                  "    });",
+                  "    pm.test('Token carries the configured scopes', () => {",
+                  "        [\"tamagotchis:read\", \"users.balances:write\", \"packages:read\"].forEach(scope => pm.expect(body.scope.split(' ')).to.include(scope));",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Starter gift: Sprout goes to Alice",
+          "id": "47e8bdd1-eb6a-5299-a8e6-dc42b6588b31",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchi-ownership-transfers",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchi-ownership-transfers"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tamagotchiId\": \"{{giftForAliceId}}\",\n  \"fromUserId\": \"{{carolUserId}}\",\n  \"toUserId\": \"{{aliceUserId}}\",\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A battle needs a primary and a secondary Tamagotchi, and a player only gets a secondary by capturing one.\nThis step stands in for an earlier capture: it calls the Battle-only transfer operation with the\n`battle-service` token, exactly as Battle does when it settles a fight."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Sprout now belongs to Alice as a SECONDARY Tamagotchi', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const transfer = pm.response.json();",
+                  "    pm.expect(transfer.toUserId).to.eql(pm.collectionVariables.get('aliceUserId'));",
+                  "    pm.expect(transfer.newOwnershipRole).to.eql('SECONDARY');",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('aliceSecondaryId', pm.response.json().tamagotchiId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Carol hatches Pebble",
+          "id": "1370e171-4ebb-52dd-8297-f50ecd4fcf1d",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{carolToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ownerUserId\": \"{{carolUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Pebble\",\n  \"combatType\": \"EARTH\",\n  \"spriteUrl\": \"https://assets.tamagotchi-go.test/sprites/pebble.png\",\n  \"healthStats\": {\n    \"hunger\": 25,\n    \"happiness\": 55,\n    \"energy\": 75\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Carol gave Sprout away, so she can hatch a new primary."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pebble is Carol\\'s primary Tamagotchi', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const pet = pm.response.json();",
+                  "    pm.expect(pet.ownershipRole).to.eql('PRIMARY');",
+                  "    pm.expect(pet.combatType).to.eql('EARTH');",
+                  "    pm.expect(pet.level).to.eql(1);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('giftForBobId', pm.response.json().tamagotchiId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Starter gift: Pebble goes to Bob",
+          "id": "6add3300-41fe-5954-8f2d-45464367e869",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/tamagotchi-ownership-transfers",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "tamagotchi-ownership-transfers"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tamagotchiId\": \"{{giftForBobId}}\",\n  \"fromUserId\": \"{{carolUserId}}\",\n  \"toUserId\": \"{{bobUserId}}\",\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A battle needs a primary and a secondary Tamagotchi, and a player only gets a secondary by capturing one.\nThis step stands in for an earlier capture: it calls the Battle-only transfer operation with the\n`battle-service` token, exactly as Battle does when it settles a fight."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pebble now belongs to Bob as a SECONDARY Tamagotchi', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const transfer = pm.response.json();",
+                  "    pm.expect(transfer.toUserId).to.eql(pm.collectionVariables.get('bobUserId'));",
+                  "    pm.expect(transfer.newOwnershipRole).to.eql('SECONDARY');",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('bobSecondaryId', pm.response.json().tamagotchiId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Starter purse for Alice",
+          "id": "033353cc-921a-5453-a3b9-7e853b040732",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{aliceUserId}}/balances",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "balances"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"GLOBAL\",\n  \"amount\": 100,\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Balance commands are reserved for Battle and Monster Raid. The 100 coins make sure the loser can pay the battle loss."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Global currency credited by a service caller', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('aliceBalanceBefore', pm.response.json().resultingBalance);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Starter purse for Bob",
+          "id": "422a9316-250c-5220-89f6-bc205dc510fe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{bobUserId}}/balances",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "balances"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"GLOBAL\",\n  \"amount\": 100,\n  \"reason\": \"BATTLE_REWARD\",\n  \"referenceId\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Balance commands are reserved for Battle and Monster Raid. The 100 coins make sure the loser can pay the battle loss."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Global currency credited by a service caller', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('bobBalanceBefore', pm.response.json().resultingBalance);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice's roster before the battle",
+          "id": "16f3655a-f5ba-5efd-94e6-9b7b8e75b729",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{aliceUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{aliceUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Alice owns Ember (primary) and Sprout (secondary)', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const roles = Object.fromEntries(pm.response.json().map(p => [p.tamagotchiId, p.ownershipRole]));",
+                  "    pm.expect(roles[pm.collectionVariables.get('alicePrimaryId')]).to.eql('PRIMARY');",
+                  "    pm.expect(roles[pm.collectionVariables.get('aliceSecondaryId')]).to.eql('SECONDARY');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Alice challenges Bob",
+          "id": "d6dd9dd5-5c35-5c0a-8514-90c71aaa79d9",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battle-requests",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battle-requests"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"opponentUserId\": \"{{bobUserId}}\",\n  \"primaryTamagotchiId\": \"{{alicePrimaryId}}\",\n  \"secondaryTamagotchiId\": \"{{aliceSecondaryId}}\",\n  \"equippedBoosts\": [\n    {\n      \"packageId\": \"{{packageId}}\",\n      \"boostKey\": \"power_snack\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Battle validates both players with User Management, reads ownership and combat profiles from Tamagotchi, and checks the equipped boost with Package Registry, all through the gateway as `battle-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Challenge is pending', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().status).to.eql('PENDING');",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('battleRequestId', pm.response.json().battleRequestId);",
+                  "    pm.collectionVariables.set('battleRequestExpiresAt', pm.response.json().expiresAt);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deliver the battle request event to Notification",
+          "id": "bf8def91-764a-5718-b20a-66fa25f6e83c",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/internal/events",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "internal",
+                "events"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"eventType\": \"battle.request.created.v1\",\n  \"eventVersion\": 1,\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"producer\": \"battle-service\",\n  \"correlationId\": \"{{lastCorrelationId}}\",\n  \"data\": {\n    \"battleRequestId\": \"{{battleRequestId}}\",\n    \"challengerUserId\": \"{{aliceUserId}}\",\n    \"opponentUserId\": \"{{bobUserId}}\",\n    \"expiresAt\": \"{{battleRequestExpiresAt}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Battle keeps queue publishing mocked; this delivers the same `battle.request.created.v1` envelope to Notification as `battle-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notification accepts the battle.request.created.v1 event from battle-service', () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob's incoming challenges",
+          "id": "fa56fa1a-fedc-56d6-a48d-f6d1c5af866a",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/users/{{bobUserId}}/battle-requests?direction=RECEIVED&status=PENDING",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "users",
+                "{{bobUserId}}",
+                "battle-requests"
+              ],
+              "query": [
+                {
+                  "key": "direction",
+                  "value": "RECEIVED"
+                },
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Alice's challenge is waiting for Bob\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().map(r => r.battleRequestId)).to.include(pm.collectionVariables.get('battleRequestId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob accepts the challenge",
+          "id": "1ad9c754-c883-5c8f-b9f6-76acb72bf976",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battle-requests/{{battleRequestId}}/responses",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battle-requests",
+                "{{battleRequestId}}",
+                "responses"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"ACCEPT\",\n  \"primaryTamagotchiId\": \"{{bobPrimaryId}}\",\n  \"secondaryTamagotchiId\": \"{{bobSecondaryId}}\",\n  \"equippedBoosts\": [\n    {\n      \"packageId\": \"{{packageId}}\",\n      \"boostKey\": \"iron_shell\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Battle starts', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const decision = pm.response.json();",
+                  "    pm.expect(decision.battleRequest.status).to.eql('ACCEPTED');",
+                  "    pm.expect(decision.battle.status).to.eql('ACTIVE');",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    const battle = pm.response.json().battle;",
+                  "    pm.collectionVariables.set('battleId', battle.battleId);",
+                  "    pm.collectionVariables.set('battleState', JSON.stringify(battle));",
+                  "    ['battleActions', 'battleRejections', 'battlePolls'].forEach(key => pm.collectionVariables.set(key, 0));",
+                  "    ['battleActorPrefs', 'battleTargetPrefs', 'battleBoostsUsed'].forEach(key => pm.collectionVariables.set(key, '{}'));",
+                  "    pm.collectionVariables.set('battleSwitchFor', '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Take a turn (repeats until knockout)",
+          "id": "7cfbd041-3986-55da-ab1e-9c63171acd73",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{battleActionKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battles/{{battleId}}/actions",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battles",
+                "{{battleId}}",
+                "actions"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleTurnToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{{battleAction}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The script plays whichever side `currentTurnUserId` names: each player opens with their boost,\nthen attacks the opponent's active Tamagotchi. In the Collection Runner the request repeats\nitself until one side is knocked out (up to 150 actions). When sending by hand, click Send\nuntil the battle status is no longer ACTIVE."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Whoever's turn it is acts. The script reads the last battle state and picks the actor, target and token.",
+                  "const state = JSON.parse(pm.collectionVariables.get('battleState'));",
+                  "const aliceUserId = pm.collectionVariables.get('aliceUserId');",
+                  "const turnUserId = state.currentTurnUserId;",
+                  "const turnName = turnUserId === aliceUserId ? 'alice' : 'bob';",
+                  "const mySide = state.participants.find(p => p.userId === turnUserId);",
+                  "const theirSide = state.participants.find(p => p.userId !== turnUserId);",
+                  "const read = key => JSON.parse(pm.collectionVariables.get(key) || '{}');",
+                  "const actorPrefs = read('battleActorPrefs');",
+                  "const targetPrefs = read('battleTargetPrefs');",
+                  "const boostsUsed = read('battleBoostsUsed');",
+                  "const living = side => side.combatants.filter(c => !c.defeated);",
+                  "// The primary fights first; once the server has accepted an actor or target, keep using it.",
+                  "const pick = (side, prefs) =>",
+                  "    living(side).find(c => c.tamagotchiId === prefs[side.userId]) ||",
+                  "    living(side).find(c => c.role === 'PRIMARY') ||",
+                  "    living(side)[0];",
+                  "const actor = pick(mySide, actorPrefs);",
+                  "const target = pick(theirSide, targetPrefs);",
+                  "const actionId = pm.variables.replaceIn('{{$guid}}');",
+                  "let action = { actionId, type: 'ATTACK', actorTamagotchiId: actor.tamagotchiId, targetTamagotchiId: target.tamagotchiId };",
+                  "if (pm.collectionVariables.get('battleSwitchFor') === turnUserId) {",
+                  "    // Bring in the living Tamagotchi that is not the last one we fought with.",
+                  "    const incoming = living(mySide).find(c => c.tamagotchiId !== actorPrefs[turnUserId]) || living(mySide)[0];",
+                  "    action = { actionId, type: 'SWITCH_ACTIVE', actorTamagotchiId: incoming.tamagotchiId };",
+                  "} else if (!boostsUsed[turnUserId]) {",
+                  "    // Each player opens with the boost they equipped from Alice's package.",
+                  "    action = {",
+                  "        actionId,",
+                  "        type: 'USE_BOOST',",
+                  "        actorTamagotchiId: actor.tamagotchiId,",
+                  "        boostPackageId: pm.collectionVariables.get('packageId'),",
+                  "        boostKey: turnName === 'alice' ? 'power_snack' : 'iron_shell'",
+                  "    };",
+                  "}",
+                  "pm.variables.set('battleAction', JSON.stringify(action));",
+                  "pm.variables.set('battleActionKey', actionId);",
+                  "pm.variables.set('battleTurnName', turnName);",
+                  "pm.variables.set('battleTurnToken', pm.collectionVariables.get(`${turnName}Token`));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const MAX_ACTIONS = 150;",
+                  "const read = key => JSON.parse(pm.collectionVariables.get(key) || '{}');",
+                  "const write = (key, value) => pm.collectionVariables.set(key, JSON.stringify(value));",
+                  "const sent = JSON.parse(pm.variables.get('battleAction'));",
+                  "const turnName = pm.variables.get('battleTurnName');",
+                  "const state = JSON.parse(pm.collectionVariables.get('battleState'));",
+                  "const turnUserId = state.currentTurnUserId;",
+                  "const opponentUserId = state.participants.find(p => p.userId !== turnUserId).userId;",
+                  "const actions = Number(pm.collectionVariables.get('battleActions') || 0) + 1;",
+                  "const rejections = Number(pm.collectionVariables.get('battleRejections') || 0);",
+                  "pm.collectionVariables.set('battleActions', actions);",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    const battle = body.battle;",
+                  "    pm.collectionVariables.set('battleState', JSON.stringify(battle));",
+                  "    pm.collectionVariables.set('battleRejections', 0);",
+                  "    if (sent.type === 'USE_BOOST') {",
+                  "        const used = read('battleBoostsUsed');",
+                  "        used[turnUserId] = true;",
+                  "        write('battleBoostsUsed', used);",
+                  "    }",
+                  "    if (sent.type === 'SWITCH_ACTIVE') {",
+                  "        pm.collectionVariables.set('battleSwitchFor', '');",
+                  "    }",
+                  "    const actorPrefs = read('battleActorPrefs');",
+                  "    actorPrefs[turnUserId] = sent.actorTamagotchiId;",
+                  "    write('battleActorPrefs', actorPrefs);",
+                  "    if (sent.targetTamagotchiId) {",
+                  "        const targetPrefs = read('battleTargetPrefs');",
+                  "        targetPrefs[opponentUserId] = sent.targetTamagotchiId;",
+                  "        write('battleTargetPrefs', targetPrefs);",
+                  "    }",
+                  "    const aliceUserId = pm.collectionVariables.get('aliceUserId');",
+                  "    const health = battle.participants.map(p => (p.userId === aliceUserId ? 'Alice ' : 'Bob ') +",
+                  "        p.combatants.map(c => `${c.role}:${c.currentHealth}${c.defeated ? ' (KO)' : ''}`).join(' / ')).join(' | ');",
+                  "    console.log(`turn ${battle.turnNumber}: ${turnName} ${sent.type}, damage ${body.damage} -> ${health}`);",
+                  "    pm.test(`Action ${actions}: ${turnName} ${sent.type} processed`, () => pm.expect(body.actionId).to.eql(sent.actionId));",
+                  "    if (battle.status !== 'ACTIVE') {",
+                  "        // Knockout: skip the forfeit fallback.",
+                  "        pm.execution.setNextRequest('Read the settled battle');",
+                  "    } else if (actions < MAX_ACTIONS) {",
+                  "        pm.execution.setNextRequest(pm.info.requestName);",
+                  "    }",
+                  "} else if (pm.response.code === 422 && actions < MAX_ACTIONS && rejections < 4) {",
+                  "    // Battle explains which Tamagotchi is active. Learn from it and act again.",
+                  "    pm.collectionVariables.set('battleRejections', rejections + 1);",
+                  "    const message = (pm.response.json().error || {}).message || '';",
+                  "    const otherLiving = (userId, tamagotchiId) => state.participants.find(p => p.userId === userId)",
+                  "        .combatants.find(c => !c.defeated && c.tamagotchiId !== tamagotchiId);",
+                  "    if (sent.type === 'USE_BOOST') {",
+                  "        const used = read('battleBoostsUsed');",
+                  "        used[turnUserId] = true;",
+                  "        write('battleBoostsUsed', used);",
+                  "    } else if (sent.type === 'SWITCH_ACTIVE') {",
+                  "        pm.collectionVariables.set('battleSwitchFor', '');",
+                  "    } else if (/active Tamagotchi may attack/i.test(message)) {",
+                  "        const other = otherLiving(turnUserId, sent.actorTamagotchiId);",
+                  "        const actorPrefs = read('battleActorPrefs');",
+                  "        if (other && actorPrefs[turnUserId] !== other.tamagotchiId) {",
+                  "            actorPrefs[turnUserId] = other.tamagotchiId;",
+                  "            write('battleActorPrefs', actorPrefs);",
+                  "        } else {",
+                  "            pm.collectionVariables.set('battleSwitchFor', turnUserId);",
+                  "        }",
+                  "    } else if (/must target/i.test(message)) {",
+                  "        const other = otherLiving(opponentUserId, sent.targetTamagotchiId);",
+                  "        if (other) {",
+                  "            const targetPrefs = read('battleTargetPrefs');",
+                  "            targetPrefs[opponentUserId] = other.tamagotchiId;",
+                  "            write('battleTargetPrefs', targetPrefs);",
+                  "        }",
+                  "    }",
+                  "    console.log(`${sent.type} rejected: ${message} Adjusting and acting again.`);",
+                  "    pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "    pm.test(`Action ${actions} processed`, () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bob forfeits (only if the fight stalls)",
+          "id": "b1bb2fac-6eb5-5d0d-805a-528d8d548e7e",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battles/{{battleId}}/forfeitures",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battles",
+                "{{battleId}}",
+                "forfeitures"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bobToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Normally skipped: it only runs if the turn loop gave up while the battle was still ACTIVE.",
+                  "if (JSON.parse(pm.collectionVariables.get('battleState')).status !== 'ACTIVE') {",
+                  "    pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Forfeit ends the battle', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('battleState', JSON.stringify(pm.response.json()));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read the settled battle",
+          "id": "ca481c17-0492-5a1c-b099-ecdf4e6baa1e",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/battle/api/v1/battles/{{battleId}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "battle",
+                "api",
+                "v1",
+                "battles",
+                "{{battleId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aliceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Polls while the battle is SETTLING. Battle marks it COMPLETED only after User Management and Tamagotchi confirm every settlement command."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const battle = pm.response.json();",
+                  "const polls = Number(pm.collectionVariables.get('battlePolls') || 0);",
+                  "if (pm.response.code === 200 && ['ACTIVE', 'SETTLING'].includes(battle.status) && polls < 20) {",
+                  "    // Settlement credits, grants XP and transfers the pet through the gateway. Give it a moment.",
+                  "    pm.collectionVariables.set('battlePolls', polls + 1);",
+                  "    console.log(`battle is ${battle.status}; checking again in a second`);",
+                  "    pm.execution.setNextRequest(pm.info.requestName);",
+                  "    setTimeout(() => {}, 1000);",
+                  "} else {",
+                  "    pm.collectionVariables.set('battlePolls', 0);",
+                  "    pm.test('Battle is over', () => {",
+                  "        pm.response.to.have.status(200);",
+                  "        pm.expect(['COMPLETED', 'FORFEITED']).to.include(battle.status);",
+                  "    });",
+                  "    pm.test('Settlement recorded currency, XP and the captured Tamagotchi', () => {",
+                  "        pm.expect(battle.result).to.be.an('object');",
+                  "        pm.expect(battle.result.transferredTamagotchiId).to.be.a('string');",
+                  "        pm.expect(battle.result.xpAwards).to.be.an('array').that.is.not.empty;",
+                  "    });",
+                  "    const names = {",
+                  "        [pm.collectionVariables.get('aliceUserId')]: 'alice',",
+                  "        [pm.collectionVariables.get('bobUserId')]: 'bob'",
+                  "    };",
+                  "    const winner = names[battle.winnerUserId];",
+                  "    const loser = names[battle.loserUserId];",
+                  "    const sideOf = userId => battle.participants.find(p => p.userId === userId);",
+                  "    const roleOf = (userId, role) => sideOf(userId).combatants.find(c => c.role === role).tamagotchiId;",
+                  "    pm.collectionVariables.set('winnerName', winner);",
+                  "    pm.collectionVariables.set('loserName', loser);",
+                  "    pm.collectionVariables.set('winnerUserId', battle.winnerUserId);",
+                  "    pm.collectionVariables.set('loserUserId', battle.loserUserId);",
+                  "    pm.collectionVariables.set('winnerToken', pm.collectionVariables.get(`${winner}Token`));",
+                  "    pm.collectionVariables.set('loserToken', pm.collectionVariables.get(`${loser}Token`));",
+                  "    pm.collectionVariables.set('winnerPrimaryId', roleOf(battle.winnerUserId, 'PRIMARY'));",
+                  "    pm.collectionVariables.set('loserNewPrimaryId', roleOf(battle.loserUserId, 'SECONDARY'));",
+                  "    if (battle.result) {",
+                  "        pm.collectionVariables.set('capturedTamagotchiId', battle.result.transferredTamagotchiId);",
+                  "        pm.collectionVariables.set('winnerRewardNumber', battle.result.winnerGlobalCurrency);",
+                  "        pm.collectionVariables.set('loserLossNumber', battle.result.loserGlobalCurrencyLoss);",
+                  "        pm.collectionVariables.set('battleSettledAt', battle.result.settledAt);",
+                  "        console.log(`${winner} won (${battle.status}): +${battle.result.winnerGlobalCurrency} coins and captured ` +",
+                  "            `${battle.result.transferredTamagotchiId}; ${loser} lost ${battle.result.loserGlobalCurrencyLoss} coins`);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Winner's roster shows the captured pet",
+          "id": "c950154d-12f9-55b3-a1ad-e10e77af82a4",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{winnerUserId}}/tamagotchis",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{winnerUserId}}",
+                "tamagotchis"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{winnerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Roster is returned', () => pm.response.to.have.status(200));",
+                  "const pets = pm.response.json();",
+                  "const captured = pets.find(p => p.tamagotchiId === pm.collectionVariables.get('capturedTamagotchiId'));",
+                  "const primary = pets.find(p => p.tamagotchiId === pm.collectionVariables.get('winnerPrimaryId'));",
+                  "pm.test(\"Loser's primary now belongs to the winner as SECONDARY\", () => {",
+                  "    pm.expect(captured, 'captured Tamagotchi').to.be.an('object');",
+                  "    pm.expect(captured.ownershipRole).to.eql('SECONDARY');",
+                  "});",
+                  "pm.test(\"Winner's primary earned battle XP\", () => pm.expect(primary.xp).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Winner's wallet",
+          "id": "0ccba6fc-a6b0-596f-a3ed-cbfe3d84cfd4",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{winnerUserId}}/balances",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{winnerUserId}}",
+                "balances"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{winnerToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const before = Number(pm.collectionVariables.get(pm.collectionVariables.get('winnerName') + 'BalanceBefore'));",
+                  "const reward = Number(pm.collectionVariables.get('winnerRewardNumber'));",
+                  "pm.test('Winner was credited the battle reward', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().globalBalance).to.eql(before + reward);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Loser's wallet",
+          "id": "ab271115-72ae-5494-abb1-946466c3ef8e",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/user-management/api/v1/users/{{loserUserId}}/balances",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "user-management",
+                "api",
+                "v1",
+                "users",
+                "{{loserUserId}}",
+                "balances"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{loserToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const before = Number(pm.collectionVariables.get(pm.collectionVariables.get('loserName') + 'BalanceBefore'));",
+                  "const loss = Number(pm.collectionVariables.get('loserLossNumber'));",
+                  "pm.test('Loser was debited the battle loss', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().globalBalance).to.eql(before - loss);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Loser promotes their secondary to primary",
+          "id": "a677395b-b9da-5726-bd80-edb9f7866417",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/tamagotchi/api/v1/users/{{loserUserId}}/primary-tamagotchi",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "tamagotchi",
+                "api",
+                "v1",
+                "users",
+                "{{loserUserId}}",
+                "primary-tamagotchi"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{loserToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tamagotchiId\": \"{{loserNewPrimaryId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Losing a battle takes away the primary Tamagotchi. Choosing a new one is a separate player action, and the raid in folder 3 needs it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Loser has a primary Tamagotchi again', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().ownershipRole).to.eql('PRIMARY');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deliver the battle result event to Notification",
+          "id": "d8ab498d-714f-58fc-85c5-159da8eeadf6",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/notification/api/v1/internal/events",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "notification",
+                "api",
+                "v1",
+                "internal",
+                "events"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{battleServiceToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"eventType\": \"battle.completed.v1\",\n  \"eventVersion\": 1,\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"producer\": \"battle-service\",\n  \"correlationId\": \"{{lastCorrelationId}}\",\n  \"data\": {\n    \"battleId\": \"{{battleId}}\",\n    \"winnerUserId\": \"{{winnerUserId}}\",\n    \"loserUserId\": \"{{loserUserId}}\",\n    \"winnerGlobalCurrency\": {{winnerRewardNumber}},\n    \"loserGlobalCurrencyLoss\": {{loserLossNumber}},\n    \"transferredTamagotchiId\": \"{{capturedTamagotchiId}}\",\n    \"settledAt\": \"{{battleSettledAt}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Delivers `battle.completed.v1` to both players as `battle-service`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notification accepts the battle.completed.v1 event from battle-service', () => pm.response.to.have.status(202));"
                 ]
               }
             }
