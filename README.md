@@ -333,15 +333,19 @@ Cross-service references use resource identifiers rather than direct database ac
 
 #### User Management Service
 
+User Management runs as two interchangeable instances with a shared mounted RSA signing key and byte-identical JWKS. Every response carries `X-Instance-Id`. Public `GET /health` always returns `200 {"status":"UP"}` without dependency checks. Public `GET /status` returns readiness, hostname, uptime, admission load, direct-dependency status and a millisecond UTC timestamp: Postgres unavailable means `503 DOWN`; utilization >= 0.8 or an unavailable/open Package Registry circuit means `200 DEGRADED`; otherwise `200 UP`. Both endpoints bypass admission and use `Cache-Control: no-store`; the old health route is removed. Postgres probes have a one-second deadline and cache; peer status comes from the local circuit breaker. Peer-calling operations can return `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` after three failures within 14 seconds.
+
 User Management Service owns user identity, authentication, social relationships, and currency balances. Passwords are accepted only by registration and authentication endpoints and are never returned. Internal balance commands require an authenticated service identity in addition to the common correlation and idempotency headers.
 
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
+| `GET /health` | Public probe | None | `200 {"status":"UP"}` | None |
+| `GET /status` | Public registry probe | None | `200 UP / DEGRADED` readiness telemetry | `503 DOWN` when Postgres is unavailable |
 | `GET /.well-known/jwks.json` | Public key discovery | None | `200 JwksDocument`, public cache for 300 seconds | `503`, `504` |
 | `POST /api/v1/oauth2/token` | Confidential service client; no bearer token | `OAuthTokenRequest` form | `200 OAuthTokenResponse` | `400 invalid_request`, `400 unsupported_grant_type`, `400 invalid_scope`, `401 invalid_client`, `429 temporarily_unavailable` |
-| `POST /api/v1/users` | Client | `CreateUserRequest` | `201 UserResponse` | `400`, `409 USERNAME_OR_EMAIL_TAKEN`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `POST /api/v1/users` | Client | `CreateUserRequest` | `201 UserResponse` | `400`, `409 USERNAME_OR_EMAIL_TAKEN`, `503 PACKAGE_REGISTRY_UNAVAILABLE / PEER_CIRCUIT_OPEN` |
 | `POST /api/v1/auth/sessions` | Client | `LoginRequest` | `200 AuthSessionResponse` | `400`, `401 INVALID_CREDENTIALS` |
 | `POST /api/v1/auth/session-refreshes` | Client | `RefreshSessionRequest` | `200 AuthSessionResponse` | `401 INVALID_REFRESH_TOKEN` |
 | `DELETE /api/v1/auth/sessions/current` | Client | None | `204` | `401 INVALID_IDENTITY` |
@@ -356,7 +360,7 @@ User Management Service owns user identity, authentication, social relationships
 | `GET /api/v1/users/{userId}/balances` | Account owner, Battle, or Monster Raid Service | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
 | `POST /api/v1/users/{userId}/balances` | Battle or Monster Raid Service | `BalanceTransactionRequest` | `200 BalanceTransactionResponse` | `400`, `403`, `404`, `422 INSUFFICIENT_BALANCE` |
 | `GET /api/v1/users/{userId}/packages` | Account owner or internal service | None | `200 PackageReference[]` | `403`, `404 USER_NOT_FOUND` |
-| `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE / PEER_CIRCUIT_OPEN` |
 
 Registration accepts an omitted or null `initialPackageId`. This creates an account with `packageIds: []` and only the global wallet, without calling Package Registry. If a package is supplied, it must exist and be ACTIVE. The account owner can later join an ACTIVE package with `PUT /api/v1/users/{userId}/packages/{packageId}`, which also creates its local wallet. Existing registration requests with a package remain valid.
 

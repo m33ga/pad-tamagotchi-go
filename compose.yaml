@@ -17,18 +17,25 @@ services:
       start_period: 5s
 
   user-management-api:
-    image: sanda2004/user-management-service:2.0.1
+    image: sanda2004/user-management-service:3.0.0
     pull_policy: always
+    deploy:
+      replicas: 2
+    networks: [internal]
+    environment:
+      REQUEST_TIMEOUT_SECONDS: 4
     env_file:
       - .env
     volumes:
       - ${JWT_PRIVATE_KEY_FILE:-./secrets/jwt-private.pem}:/run/secrets/jwt-private.pem:ro
       - ./config/service-clients.yaml:/app/config/service-clients.yaml:ro
     depends_on:
+      service-discovery:
+        condition: service_healthy
       user-management-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
