@@ -1051,6 +1051,8 @@ The transfer updates the existing Tamagotchi instead of creating a new entry. Th
 
 #### Battle Service
 
+Battle runs as two instances. `GET /health` is dependency-free liveness (`200 {"status":"UP"}`). `GET /status` exposes hostname, uptime, numeric load and direct-dependency telemetry: Postgres failure gives `503 DOWN`; utilization >= 0.8 or a failed/open peer gives `200 DEGRADED`; otherwise `200 UP`. Both probes use `Cache-Control: no-store` and bypass identity and admission. Postgres probes have a one-second deadline/cache; peer status comes from local circuit state. Every response includes `X-Instance-Id`. Peer-calling operations may return `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14`, or retain durable SETTLING recovery. Three independent breakers share a 14-second rolling failure window and open duration.
+
 Battle Service owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns and results in PostgreSQL.
 
 ##### Gateway Identity and Collaborators
@@ -1072,7 +1074,7 @@ Commands retain contract-defined idempotency keys and use the battle ID as the
 business reference so settlement can resume after a deadline.
 
 All handlers have a configurable deadline and concurrency budget, defaulting to
-10 seconds and 64 requests. Deadline expiry yields `504 REQUEST_TIMEOUT`.
+4 seconds and 64 requests. Deadline expiry yields `504 REQUEST_TIMEOUT`.
 Saturation yields immediate `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
 Both use the shared error envelope. The Battle API publishes no host port;
 [configuration](docs/configuration.md) describes its private OAuth settings.
@@ -1081,14 +1083,16 @@ Both use the shared error envelope. The Battle API publishes no host port;
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
-| `POST /api/v1/battle-requests` | Challenger | `CreateBattleRequest` | `201 BattleRequestResponse` | `400`, `403`, `404`, `409 BATTLE_REQUEST_EXISTS`, `422 INVALID_SELECTION` |
+| `GET /health` | Public probe | None | `200 UP` | None |
+| `GET /status` | Public registry probe | None | `200 UP / DEGRADED`, readiness telemetry | `503 DOWN` when Postgres is unavailable |
+| `POST /api/v1/battle-requests` | Challenger | `CreateBattleRequest` | `201 BattleRequestResponse` | `400`, `403`, `404`, `409 BATTLE_REQUEST_EXISTS`, `422 INVALID_SELECTION`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/battle-requests/{battleRequestId}` | Challenger or opponent | None | `200 BattleRequestResponse` | `403`, `404 BATTLE_REQUEST_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/battle-requests?direction={direction}&status={status}` | Account owner | Query parameters | `200 BattleRequestResponse[]` | `400`, `403` |
-| `POST /api/v1/battle-requests/{battleRequestId}/responses` | Opponent | `RespondToBattleRequest` | `200 BattleRequestDecisionResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED`, `422 INVALID_SELECTION` |
+| `POST /api/v1/battle-requests/{battleRequestId}/responses` | Opponent | `RespondToBattleRequest` | `200 BattleRequestDecisionResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED`, `422 INVALID_SELECTION`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/battles/{battleId}` | Participant | None | `200 BattleResponse` | `403`, `404 BATTLE_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/battles?status={status}&cursor={cursor}&limit={limit}` | Account owner | Query parameters | `200 BattlePageResponse` | `400`, `403` |
-| `POST /api/v1/battles/{battleId}/actions` | Current-turn participant | `CreateBattleActionRequest` | `200 BattleActionResponse` | `400`, `403`, `404`, `409 NOT_CURRENT_TURN`, `422 INVALID_ACTION` |
-| `POST /api/v1/battles/{battleId}/forfeitures` | Participant | None | `200 BattleResponse` | `403`, `404`, `409 BATTLE_NOT_ACTIVE` |
+| `POST /api/v1/battles/{battleId}/actions` | Current-turn participant | `CreateBattleActionRequest` | `200 BattleActionResponse` | `400`, `403`, `404`, `409 NOT_CURRENT_TURN`, `422 INVALID_ACTION`, `503 PEER_CIRCUIT_OPEN` |
+| `POST /api/v1/battles/{battleId}/forfeitures` | Participant | None | `200 BattleResponse` | `403`, `404`, `409 BATTLE_NOT_ACTIVE`, `503 PEER_CIRCUIT_OPEN` |
 
 ##### Battle Request Schemas
 

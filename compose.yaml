@@ -49,16 +49,23 @@ services:
       retries: 10
 
   battle-api:
-    image: sanda2004/battle-service:2.0.0
+    image: sanda2004/battle-service:3.0.0
     pull_policy: always
+    deploy:
+      replicas: 2
+    networks: [internal]
+    environment:
+      REQUEST_TIMEOUT_SECONDS: 4
     env_file:
       - .env
       - ./secrets/battle-service.env
     depends_on:
+      service-discovery:
+        condition: service_healthy
       battle-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
