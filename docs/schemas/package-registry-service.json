@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Package Registry Service API",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "description": "Owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External clients authenticate at the API Gateway with a bearer token. The gateway removes Authorization and supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers to this internal service; direct requests without X-Caller-Kind are rejected.\n\nPackage developer and moderator permissions come from the service database. Administrators are authenticated user IDs selected by the runtime ADMIN_USER_IDS allowlist, never by a caller-supplied role header. Registration writes and per-user registration listing allow only user-management-service; raid schedule reads allow monster-raid-service or an administrator. Every handler has a request deadline and fail-fast concurrency limit, producing 504 REQUEST_TIMEOUT or 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1.",
     "license": {
       "name": "MIT",
@@ -51,6 +51,27 @@
     }
   ],
   "paths": {
+    "/health": {
+      "get": {
+        "operationId": "packageRegistryLiveness",
+        "summary": "Instance liveness without dependency checks",
+        "security": [],
+        "responses": {
+          "200": { "description": "Liveness", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "const": "UP" } }, "required": ["status"] } } } }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "operationId": "packageRegistryReadiness",
+        "summary": "Instance readiness, load and PostgreSQL status",
+        "security": [],
+        "responses": {
+          "200": { "description": "UP or DEGRADED" },
+          "503": { "description": "DOWN because PostgreSQL is unreachable" }
+        }
+      }
+    },
     "/packages": {
       "get": {
         "operationId": "listPackages",
