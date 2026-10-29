@@ -1517,10 +1517,14 @@ Both transitions are evaluated whenever a raid is loaded, so every read and comm
 
 Notification Service owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.
 
+Notification Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Redis unreachable, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. An event that reaches both instances is delivered once: before sending a push, an instance claims the delivery in Redis with an atomic set-if-absent keyed by event, recipient and device, and the instance that loses the claim skips it. Delivery happens inside the request that carries the event, so there is no outbox relay or scheduler to run twice. The service calls no other service and has no circuit breaker.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
+| `GET /health` | Docker healthcheck, internal network only | None | `200 {"status":"UP"}` | None |
+| `GET /status` | Service Discovery, internal network only | None | `200` readiness document, `UP` or `DEGRADED` | `503 DOWN` when PostgreSQL is unreachable |
 | `GET /api/v1/users/{userId}/notification-devices` | Account owner | None | `200 NotificationDeviceResponse[]` | `403` |
 | `PUT /api/v1/users/{userId}/notification-devices/{deviceId}` | Account owner | `RegisterNotificationDeviceRequest` | `200 NotificationDeviceResponse` | `400`, `403` |
 | `DELETE /api/v1/users/{userId}/notification-devices/{deviceId}` | Account owner | None | `204` | `403`, `404 DEVICE_NOT_FOUND` |
