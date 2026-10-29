@@ -1466,12 +1466,22 @@ yields `403`. Map reads friend and enemy relationships from User Management
 through `GATEWAY_URL`, authenticating as the `map-service` client; an
 unreachable User Management yields `503 USER_SERVICE_UNAVAILABLE`.
 
+##### Instances, Probes and the Circuit Breaker
+
+Map runs as three interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. All of its state is in Redis: the latest location per user, the geo index and the proximity markers. Accepting a location is a single compare-and-write on its sequence number, and the marker that decides whether a proximity event is published is always written to the lower user id's set, so two instances handling the two users of a pair at once still publish one event. There are no startup migrations and no scheduled work.
+
+`GET /health` always answers `200 {"status":"UP"}` and checks nothing, Redis included. `GET /status` reports readiness to Service Discovery with the `redis` and `user-management` dependencies: Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or User Management down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
+
+User Management is never probed: its `/status` entry comes from the instance's circuit breaker. After three failures within 14 seconds the breaker opens for 14 seconds, covering the OAuth token fetch as well. While it is open, updating a location still stores it and takes the degraded proximity path at once instead of waiting out the 4 second timeout, and the map view answers `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling User Management.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
+| `GET /health` | Docker healthcheck, internal network only | None | `200 {"status":"UP"}` | None |
+| `GET /status` | Service Discovery, internal network only | None | `200` readiness document, `UP` or `DEGRADED` | `503 DOWN` when Redis is unreachable |
 | `PUT /api/v1/users/{userId}/location` | Account owner | `UpdateLocationRequest` | `200 LocationResponse` | `400`, `403`, `409 STALE_LOCATION_UPDATE` |
-| `GET /api/v1/users/{userId}/map` | Account owner | None | `200 MapViewResponse` | `403`, `404 USER_OR_LOCATION_NOT_FOUND`, `503 USER_SERVICE_UNAVAILABLE` |
+| `GET /api/v1/users/{userId}/map` | Account owner | None | `200 MapViewResponse` | `403`, `404 USER_OR_LOCATION_NOT_FOUND`, `503 USER_SERVICE_UNAVAILABLE`, `503 PEER_CIRCUIT_OPEN` |
 | `DELETE /api/v1/users/{userId}/location` | Account owner | None | `204` | `403`, `404 LOCATION_NOT_FOUND` |
 
 ##### Location Schemas
