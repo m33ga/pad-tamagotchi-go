@@ -273,10 +273,15 @@ services:
 
   notification-api:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-notification-service:v2.0.3
+    image: johnnyc05/pad-notification-service:v3.0.0
     pull_policy: always
-    # Reachable only through the gateway: no published port. The client
-    # credentials come from this service's own secrets file.
+    # Two interchangeable replicas, reachable only through the gateway: no
+    # published port, and no container_name, which Compose rejects alongside
+    # replicas. Each one registers itself with Service Discovery at startup.
+    # The client credentials come from this service's own secrets file.
+    deploy:
+      replicas: 2
+    networks: [internal]
     env_file:
       - .env
       - ./secrets/notification-service.env
@@ -287,14 +292,16 @@ services:
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
       REDIS_ADDR: notification-redis:6379
       REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
-      REQUEST_TIMEOUT_SECONDS: ${NOTIFICATION_REQUEST_TIMEOUT_SECONDS:-4}
+      REQUEST_TIMEOUT_SECONDS: 4
     depends_on:
+      service-discovery:
+        condition: service_healthy
       notification-db:
         condition: service_healthy
       notification-redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
