@@ -16,6 +16,10 @@ address, defaulting to localhost and its own published port. Optional
 `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` values override those addresses
 for remote clients.
 
+When upgrading an existing `.env`, replace `GUILD_CHAT_PORT` with
+`GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2`. Replace a custom
+`GUILD_PUBLIC_WS_URL` with the two instance-specific URL overrides above.
+
 ## Environment
 
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
