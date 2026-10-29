@@ -927,18 +927,22 @@ If a message cannot be processed, the sender receives `guild.chat.error.v1` with
 
 Tamagotchi Service owns every Tamagotchi and its current owner, role, combat type, level, XP, sprite reference, and package-local health statistics. A secondary Tamagotchi is a reference to the original entity after an ownership transfer; the service never creates a duplicate of it.
 
+Tamagotchi Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Package Registry down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. Package Registry is never probed: its `/status` entry comes from the instance's circuit breaker and carries `"circuit": "CLOSED"` or `"OPEN"`. After three Package Registry failures within 14 seconds, creating a Tamagotchi and updating its health statistics answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, until a trial call succeeds. The service runs no scheduled or background work such as statistic decay: statistics change only through requests, so two instances never apply the same change twice.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
+| `GET /health` | Docker healthcheck, internal network only | None | `200 {"status":"UP"}` | None |
+| `GET /status` | Service Discovery, internal network only | None | `200` readiness document, `UP` or `DEGRADED` | `503 DOWN` when PostgreSQL is unreachable |
 | `GET /api/v1/tamagotchi-combat-types` | Any authenticated caller | None | `200 CombatTypeResponse[]` | None |
-| `POST /api/v1/tamagotchis` | The user named in `ownerUserId` | `CreateTamagotchiRequest` | `201 TamagotchiResponse` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `409 PRIMARY_TAMAGOTCHI_EXISTS`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `POST /api/v1/tamagotchis` | The user named in `ownerUserId` | `CreateTamagotchiRequest` | `201 TamagotchiResponse` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `409 PRIMARY_TAMAGOTCHI_EXISTS`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/tamagotchis/{tamagotchiId}` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
 | `PATCH /api/v1/tamagotchis/{tamagotchiId}` | Account owner | `UpdateTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404` |
 | `GET /api/v1/users/{userId}/tamagotchis?role={role}` | Account owner, Battle, or Monster Raid Service | Query parameter | `200 TamagotchiResponse[]`, empty when the user has none | `400 INVALID_ROLE`, `403` |
 | `GET /api/v1/users/{userId}/primary-tamagotchi` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 PRIMARY_TAMAGOTCHI_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/primary-tamagotchi` | Account owner | `SetPrimaryTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `409 TAMAGOTCHI_NOT_OWNED` |
-| `PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats` | Account owner | `UpdateHealthStatsRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats` | Account owner | `UpdateHealthStatsRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/tamagotchis/{tamagotchiId}/combat-profile` | Battle or Monster Raid Service | None | `200 CombatProfileResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
 | `POST /api/v1/tamagotchis/{tamagotchiId}/xp-grants` | Battle or Monster Raid Service | `GrantXpRequest` | `200 GrantXpResponse` | `400`, `403`, `404`, `409 XP_ALREADY_GRANTED` |
 | `POST /api/v1/tamagotchi-ownership-transfers` | Battle Service | `TransferTamagotchiRequest` | `200 OwnershipTransferResponse` | `400`, `403`, `404`, `409 OWNERSHIP_ALREADY_TRANSFERRED`, `409 TAMAGOTCHI_NOT_OWNED`, `422 INVALID_TRANSFER` |

@@ -231,10 +231,15 @@ services:
 
   tamagotchi-api:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v2.0.2
+    image: johnnyc05/pad-tamagotchi-service:v3.0.0
     pull_policy: always
-    # Reachable only through the gateway: no published port. The client
-    # credentials come from this service's own secrets file.
+    # Two interchangeable replicas, reachable only through the gateway: no
+    # published port, and no container_name, which Compose rejects alongside
+    # replicas. Each one registers itself with Service Discovery at startup.
+    # The client credentials come from this service's own secrets file.
+    deploy:
+      replicas: 2
+    networks: [internal]
     env_file:
       - .env
       - ./secrets/tamagotchi-service.env
@@ -245,13 +250,15 @@ services:
       POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD}
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
-      REQUEST_TIMEOUT_SECONDS: ${TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS:-4}
+      REQUEST_TIMEOUT_SECONDS: 4
       PackageRegistry__UseMock: ${USE_MOCK_PACKAGE_REGISTRY:-false}
     depends_on:
+      service-discovery:
+        condition: service_healthy
       tamagotchi-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
