@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tamagotchi Service API",
-    "version": "2.0.0",
-    "description": "Owns every Tamagotchi and its current owner, ownership role, combat type, level, XP, sprite reference, and package-local health statistics. A secondary Tamagotchi is a reference to the original entity after an ownership transfer; the service never creates a duplicate of it. Package-local health statistics are validated against the definitions returned by Package Registry Service.\n\nThe service publishes no queue events.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/tamagotchi` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received, echoed on every response and forwarded on the calls the request causes.",
+    "version": "3.0.0",
+    "description": "Owns every Tamagotchi and its current owner, ownership role, combat type, level, XP, sprite reference, and package-local health statistics. A secondary Tamagotchi is a reference to the original entity after an ownership transfer; the service never creates a duplicate of it. Package-local health statistics are validated against the definitions returned by Package Registry Service.\n\nThe service publishes no queue events.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/tamagotchi` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received, echoed on every response and forwarded on the calls the request causes.\n\n## Two Instances\n\nThe deployment runs two interchangeable instances and the gateway balances requests across them. Every response carries `X-Instance-Id`, the hostname of the instance that answered. Each instance registers itself with Service Discovery at startup and deregisters on shutdown. `GET /health` and `GET /status`, under Operations, sit at the service root rather than under `/api/v1` and are not exposed through the gateway.\n\nCalls to Package Registry pass a circuit breaker, one per instance. After three failures within 14 seconds, the operations that need Package Registry answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it; after 14 seconds a single trial call decides whether calls resume. A failure is a timeout, a connection error or a 5xx answer; a 4xx answer from Package Registry never counts.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -40,6 +40,10 @@
     {
       "name": "Progression",
       "description": "Combat profiles and XP grants"
+    },
+    {
+      "name": "Operations",
+      "description": "Liveness and readiness at the service root, for Docker and Service Discovery"
     }
   ],
   "paths": {
@@ -177,13 +181,13 @@
             }
           },
           "503": {
-            "description": "PACKAGE_REGISTRY_UNAVAILABLE: Package Registry Service could not be reached to validate the statistics, or CONCURRENCY_LIMIT_REACHED: the service is already serving its maximum number of requests (sent with Retry-After: 1)",
+            "description": "PACKAGE_REGISTRY_UNAVAILABLE: Package Registry Service could not be reached to validate the statistics; PEER_CIRCUIT_OPEN: Package Registry failed three times within 14 seconds, so this instance did not call it (sent with Retry-After: 14); or CONCURRENCY_LIMIT_REACHED: the service is already serving its maximum number of requests (sent with Retry-After: 1)",
             "headers": {
               "Retry-After": {
-                "description": "Seconds to wait before retrying",
+                "description": "Seconds to wait before retrying: 14 for PEER_CIRCUIT_OPEN, 1 for CONCURRENCY_LIMIT_REACHED",
                 "schema": {
                   "type": "integer",
-                  "examples": [1]
+                  "examples": [14, 1]
                 }
               }
             },
@@ -618,13 +622,13 @@
             }
           },
           "503": {
-            "description": "PACKAGE_REGISTRY_UNAVAILABLE: Package Registry Service could not be reached to validate the statistics, or CONCURRENCY_LIMIT_REACHED: the service is already serving its maximum number of requests (sent with Retry-After: 1)",
+            "description": "PACKAGE_REGISTRY_UNAVAILABLE: Package Registry Service could not be reached to validate the statistics; PEER_CIRCUIT_OPEN: Package Registry failed three times within 14 seconds, so this instance did not call it (sent with Retry-After: 14); or CONCURRENCY_LIMIT_REACHED: the service is already serving its maximum number of requests (sent with Retry-After: 1)",
             "headers": {
               "Retry-After": {
-                "description": "Seconds to wait before retrying",
+                "description": "Seconds to wait before retrying: 14 for PEER_CIRCUIT_OPEN, 1 for CONCURRENCY_LIMIT_REACHED",
                 "schema": {
                   "type": "integer",
-                  "examples": [1]
+                  "examples": [14, 1]
                 }
               }
             },
@@ -866,6 +870,178 @@
           }
         },
         "x-allowed-callers": ["battle-service"]
+      }
+    },
+    "/health": {
+      "servers": [
+        {
+          "url": "/",
+          "description": "Service root on the internal network, outside /api/v1; not exposed through the API Gateway"
+        }
+      ],
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness",
+        "description": "Answers `200 {\"status\":\"UP\"}` whenever the process serves HTTP and checks nothing else. A liveness probe that checked dependencies would restart every instance at once when a shared dependency failed, and a restart cannot bring the dependency back. Docker's healthcheck calls it. It needs no identity, bypasses the concurrency limit and is never cached.",
+        "tags": ["Operations"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process is serving HTTP",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "servers": [
+        {
+          "url": "/",
+          "description": "Service root on the internal network, outside /api/v1; not exposed through the API Gateway"
+        }
+      ],
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Readiness and telemetry",
+        "description": "Polled directly by Service Discovery every 4 seconds to decide whether this instance receives traffic. The status is the first rule that matches: PostgreSQL unreachable gives `DOWN` with `503`; utilization at or above 0.8, or Package Registry `DOWN` or its circuit open, gives `DEGRADED` with `200`; otherwise `UP` with `200`. Load never produces `DOWN`, so a busy instance is never mistaken for a dead one. PostgreSQL is checked with a one second deadline and the result is reused for one second. Package Registry is never probed: its entry comes from this instance's circuit breaker, `DOWN` while the circuit is open or after a failed call, and it is listed only when the real registry is used (`USE_MOCK_PACKAGE_REGISTRY=false`). It needs no identity, bypasses the concurrency limit and answers while every permit is taken.",
+        "tags": ["Operations"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "`UP` or `DEGRADED`: the instance can serve",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                },
+                "examples": {
+                  "up": {
+                    "summary": "Everything reachable",
+                    "value": {
+                      "status": "UP",
+                      "service": "tamagotchi",
+                      "instanceId": "423314ca53fe",
+                      "uptimeSeconds": 842,
+                      "load": {
+                        "inFlight": 3,
+                        "limit": 64,
+                        "utilization": 0.05
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "package-registry",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        }
+                      ],
+                      "checkedAt": "2026-10-28T12:34:36.413Z"
+                    }
+                  },
+                  "degraded": {
+                    "summary": "Package Registry circuit open",
+                    "value": {
+                      "status": "DEGRADED",
+                      "service": "tamagotchi",
+                      "instanceId": "423314ca53fe",
+                      "uptimeSeconds": 842,
+                      "load": {
+                        "inFlight": 3,
+                        "limit": 64,
+                        "utilization": 0.05
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "package-registry",
+                          "status": "DOWN",
+                          "circuit": "OPEN"
+                        }
+                      ],
+                      "checkedAt": "2026-10-28T12:34:36.413Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DOWN`: PostgreSQL is unreachable, so nothing can be served",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                },
+                "examples": {
+                  "down": {
+                    "summary": "PostgreSQL unreachable",
+                    "value": {
+                      "status": "DOWN",
+                      "service": "tamagotchi",
+                      "instanceId": "423314ca53fe",
+                      "uptimeSeconds": 842,
+                      "load": {
+                        "inFlight": 0,
+                        "limit": 64,
+                        "utilization": 0.0
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "DOWN"
+                        },
+                        {
+                          "name": "package-registry",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        }
+                      ],
+                      "checkedAt": "2026-10-28T12:34:36.413Z"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -1400,6 +1576,121 @@
             "format": "date-time",
             "description": "Transfer completion time"
           }
+        }
+      },
+      "LivenessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "UP"
+          }
+        }
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "service", "instanceId", "uptimeSeconds", "load", "dependencies", "checkedAt"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["UP", "DEGRADED", "DOWN"]
+          },
+          "service": {
+            "type": "string",
+            "const": "tamagotchi",
+            "description": "Canonical service name, the route key in the gateway configuration"
+          },
+          "instanceId": {
+            "type": "string",
+            "description": "Hostname of this instance, the same value as X-Instance-Id"
+          },
+          "uptimeSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Whole seconds since the instance started"
+          },
+          "load": {
+            "$ref": "#/components/schemas/InstanceLoad"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencyStatus"
+            }
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC with milliseconds and a Z suffix"
+          }
+        }
+      },
+      "InstanceLoad": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inFlight", "limit", "utilization"],
+        "properties": {
+          "inFlight": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Requests this instance is serving now"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "MAX_CONCURRENCY of this instance"
+          },
+          "utilization": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "inFlight divided by limit, rounded to two decimals"
+          }
+        }
+      },
+      "DependencyStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": ["postgres", "package-registry"],
+            "description": "A direct dependency of this instance"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["UP", "DOWN"]
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Round trip of the check in milliseconds; omitted when the dependency is DOWN and for a peer service, which is never probed"
+          },
+          "circuit": {
+            "type": "string",
+            "enum": ["CLOSED", "OPEN"],
+            "description": "State of this instance's circuit breaker for the peer; present only for a peer service. A half-open circuit reports OPEN"
+          }
+        }
+      }
+    },
+    "headers": {
+      "InstanceId": {
+        "description": "Hostname of the instance that answered. Every response carries it, so a caller can tell the instances apart",
+        "schema": {
+          "type": "string",
+          "examples": ["423314ca53fe"]
+        }
+      },
+      "NoStore": {
+        "description": "Operational answers are never cached",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
         }
       }
     }
