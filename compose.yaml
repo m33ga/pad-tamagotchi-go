@@ -1,16 +1,48 @@
 services:
   api-gateway:
-    image: grdz/gateway:2.0.1
+    image: grdz/gateway:3.3.0
     pull_policy: always
+    # Client traffic arrives on edge; the services and the registry are on internal.
+    networks: [edge, internal]
     ports:
       - "${GATEWAY_PORT:-8000}:8080"
     volumes:
       - ./config/gateway.yaml:/app/config/gateway.yaml:ro
+    environment:
+      # remove takes a tripped instance out of rotation; log trips and reports but keeps routing.
+      GATEWAY_INSTANCE_BREAKER: ${GATEWAY_INSTANCE_BREAKER:-remove}
+    # A convenience, not a requirement: with the registry down the gateway starts on the
+    # static urls in config/gateway.yaml, and keeps its last catalogue once it has one.
     depends_on:
-      user-management-api:
+      service-discovery:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  service-discovery:
+    image: grdz/service-discovery:3.0.0
+    pull_policy: always
+    restart: unless-stopped
+    # Nothing calls it from outside. It joins edge only to reach the Discord webhook,
+    # because the internal network has no route to the internet, and its port is
+    # bound to loopback so the catalogue can be read from the host and nowhere else.
+    networks: [edge, internal]
+    ports:
+      - "127.0.0.1:8500:8080"
+    environment:
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      LOAD_ALERT_THRESHOLD: ${LOAD_ALERT_THRESHOLD:-0.8}
+      SELF_PRESERVATION: ${SELF_PRESERVATION:-off}
+    # Not optional: there is no heartbeat, so a registry that loses its state file
+    # loses the fleet until every service is restarted.
+    volumes:
+      - service-discovery-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -19,6 +51,7 @@ services:
   user-management-api:
     image: sanda2004/user-management-service:2.0.1
     pull_policy: always
+    networks: [internal]
     env_file:
       - .env
     volumes:
@@ -36,6 +69,7 @@ services:
 
   user-management-db:
     image: postgres:17-alpine
+    networks: [internal]
     environment:
       POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME}
       POSTGRES_USER: ${USER_MANAGEMENT_DB_USER}
@@ -73,6 +107,7 @@ services:
 
   battle-db:
     image: postgres:17-alpine
+    networks: [internal]
     environment:
       POSTGRES_DB: ${BATTLE_DB_NAME}
       POSTGRES_USER: ${BATTLE_DB_USER}
@@ -88,6 +123,7 @@ services:
   map-api:
     image: grdz/map-service:2.0.4
     pull_policy: always
+    networks: [internal]
     env_file:
       - .env
       - ./secrets/map-service.env
@@ -106,6 +142,7 @@ services:
 
   map-redis:
     image: redis:8-alpine
+    networks: [internal]
     command: ["redis-server", "--requirepass", "${MAP_REDIS_PASSWORD}"]
     environment:
       REDISCLI_AUTH: ${MAP_REDIS_PASSWORD}
@@ -120,6 +157,7 @@ services:
   monster-raid-api:
     image: grdz/monster-raid-service:2.0.4
     pull_policy: always
+    networks: [internal]
     env_file:
       - .env
       - ./secrets/monster-raid-service.env
@@ -144,6 +182,7 @@ services:
 
   monster-raid-db:
     image: postgres:17-alpine
+    networks: [internal]
     environment:
       POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
       POSTGRES_USER: ${MONSTER_RAID_DB_USER}
@@ -158,6 +197,7 @@ services:
 
   monster-raid-redis:
     image: redis:8-alpine
+    networks: [internal]
     command: ["redis-server", "--requirepass", "${MONSTER_RAID_REDIS_PASSWORD}"]
     environment:
       REDISCLI_AUTH: ${MONSTER_RAID_REDIS_PASSWORD}
@@ -172,6 +212,7 @@ services:
   guild-api:
     image: cosmak47/pad-guild-service:2.0.1
     pull_policy: always
+    networks: [edge, internal]
     env_file:
       - ./secrets/guild-service.env
     environment:
@@ -192,6 +233,7 @@ services:
 
   guild-db:
     image: postgres:17-alpine
+    networks: [internal]
     environment:
       POSTGRES_DB: ${GUILD_DB_NAME}
       POSTGRES_USER: ${GUILD_DB_USER}
@@ -207,6 +249,7 @@ services:
   package-registry-api:
     image: cosmak47/pad-package-registry-service:2.0.1
     pull_policy: always
+    networks: [internal]
     env_file:
       - ./secrets/package-registry-service.env
     environment:
@@ -224,6 +267,7 @@ services:
 
   package-registry-db:
     image: postgres:17-alpine
+    networks: [internal]
     environment:
       POSTGRES_DB: ${PACKAGE_REGISTRY_DB_NAME}
       POSTGRES_USER: ${PACKAGE_REGISTRY_DB_USER}
@@ -238,10 +282,15 @@ services:
 
   tamagotchi-api:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v2.0.2
+    image: johnnyc05/pad-tamagotchi-service:v3.0.0
     pull_policy: always
-    # Reachable only through the gateway: no published port. The client
-    # credentials come from this service's own secrets file.
+    # Two interchangeable replicas, reachable only through the gateway: no
+    # published port, and no container_name, which Compose rejects alongside
+    # replicas. Each one registers itself with Service Discovery at startup.
+    # The client credentials come from this service's own secrets file.
+    deploy:
+      replicas: 2
+    networks: [internal]
     env_file:
       - .env
       - ./secrets/tamagotchi-service.env
@@ -252,13 +301,15 @@ services:
       POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD}
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
-      REQUEST_TIMEOUT_SECONDS: ${TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS:-4}
+      REQUEST_TIMEOUT_SECONDS: 4
       PackageRegistry__UseMock: ${USE_MOCK_PACKAGE_REGISTRY:-false}
     depends_on:
+      service-discovery:
+        condition: service_healthy
       tamagotchi-db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -266,6 +317,7 @@ services:
 
   tamagotchi-db:
     image: postgres:17-alpine
+    networks: [internal]
     environment:
       POSTGRES_DB: ${TAMAGOTCHI_DB_NAME}
       POSTGRES_USER: ${TAMAGOTCHI_DB_USER}
@@ -280,10 +332,15 @@ services:
 
   notification-api:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-notification-service:v2.0.3
+    image: johnnyc05/pad-notification-service:v3.0.0
     pull_policy: always
-    # Reachable only through the gateway: no published port. The client
-    # credentials come from this service's own secrets file.
+    # Two interchangeable replicas, reachable only through the gateway: no
+    # published port, and no container_name, which Compose rejects alongside
+    # replicas. Each one registers itself with Service Discovery at startup.
+    # The client credentials come from this service's own secrets file.
+    deploy:
+      replicas: 2
+    networks: [internal]
     env_file:
       - .env
       - ./secrets/notification-service.env
@@ -294,14 +351,16 @@ services:
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
       REDIS_ADDR: notification-redis:6379
       REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
-      REQUEST_TIMEOUT_SECONDS: ${NOTIFICATION_REQUEST_TIMEOUT_SECONDS:-4}
+      REQUEST_TIMEOUT_SECONDS: 4
     depends_on:
+      service-discovery:
+        condition: service_healthy
       notification-db:
         condition: service_healthy
       notification-redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/_health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -309,6 +368,7 @@ services:
 
   notification-db:
     image: postgres:17-alpine
+    networks: [internal]
     environment:
       POSTGRES_DB: ${NOTIFICATION_DB_NAME}
       POSTGRES_USER: ${NOTIFICATION_DB_USER}
@@ -323,6 +383,7 @@ services:
 
   notification-redis:
     image: redis:8-alpine
+    networks: [internal]
     command: ["redis-server", "--requirepass", "${NOTIFICATION_REDIS_PASSWORD}", "--appendonly", "yes"]
     environment:
       REDISCLI_AUTH: ${NOTIFICATION_REDIS_PASSWORD}
@@ -334,7 +395,15 @@ services:
       timeout: 5s
       retries: 10
 
+networks:
+  # Containers with a published port: the gateway, the Guild chat listener and the registry.
+  edge:
+  # Every container. No route to the internet, and nothing on it is published.
+  internal:
+    internal: true
+
 volumes:
+  service-discovery-data:
   user-management-data:
   battle-data:
   map-redis-data:
