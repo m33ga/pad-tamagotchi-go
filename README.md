@@ -235,6 +235,62 @@ Errors use an appropriate `4xx` or `5xx` status and the following common body. O
 
 Common error statuses are `400` for an invalid request, `401` for missing or invalid authentication, `403` for insufficient permissions, `404` for a missing resource, `409` for a state conflict, `422` for a rejected domain operation, `429` for rate limiting, and `503` when a required dependency is unavailable.
 
+### Operational Endpoints
+
+Every service, the gateway and Service Discovery included, serves the same two endpoints at the root of its own listener, outside `/api/v1`. Both are unauthenticated, exempt from the concurrency limiter and sent with `Cache-Control: no-store`. They are internal: the gateway refuses to forward either one (see [Gateway](#gateway)), so only Docker and Service Discovery reach them.
+
+| Endpoint | Purpose | Caller | Answer |
+|---|---|---|---|
+| `GET /health` | Liveness | the Docker `healthcheck` | `200 {"status":"UP"}`, always, for as long as the process serves HTTP |
+| `GET /status` | Readiness and telemetry | Service Discovery, every 4 seconds | the document below; `200` when `UP` or `DEGRADED`, `503` when `DOWN` |
+
+**A liveness endpoint checks nothing.** `/health` touches no database, cache or peer and has no other return value. A liveness probe that checks a shared dependency restarts every replica at once the moment that dependency fails, and a restart does not bring the dependency back. Readiness belongs to `/status`.
+
+```json
+{
+  "status": "UP",
+  "service": "map",
+  "instanceId": "3f9a1c2e8b11",
+  "uptimeSeconds": 1423,
+  "load": { "inFlight": 12, "limit": 64, "utilization": 0.19 },
+  "dependencies": [
+    { "name": "redis",           "status": "UP",   "latencyMs": 2 },
+    { "name": "user-management", "status": "DOWN", "circuit": "OPEN" }
+  ],
+  "checkedAt": "2026-10-15T09:12:05.331Z"
+}
+```
+
+| Field | Type | Rule |
+|---|---|---|
+| `status` | enum | `UP`, `DEGRADED` or `DOWN`, computed below |
+| `service` | string | the canonical service name ([Instance Identity and Load Balancing](#instance-identity-and-load-balancing)), a compile-time constant |
+| `instanceId` | string | the container hostname |
+| `uptimeSeconds` | integer | seconds since the process started serving |
+| `load.inFlight` | integer | requests currently held by the concurrency limiter |
+| `load.limit` | integer | the service's `MAX_CONCURRENCY` |
+| `load.utilization` | number, two decimals | `inFlight / limit`, `0.0` when the limit is 0 |
+| `dependencies[].name` | string | an own datastore (`postgres`, `redis`) or a peer's canonical service name |
+| `dependencies[].status` | enum | `UP` or `DOWN` |
+| `dependencies[].latencyMs` | integer, optional | omitted when `DOWN` |
+| `dependencies[].circuit` | enum, optional | `CLOSED` or `OPEN`, peers only |
+| `checkedAt` | timestamp | ISO 8601 UTC with milliseconds |
+
+Services may add blocks of their own (the gateway reports its instance pools, Service Discovery its registry summary) but never change these fields.
+
+The status is computed in order, the first match winning:
+
+| Condition | Status | HTTP |
+|---|---|---|
+| an own datastore is unreachable, so the instance cannot serve | `DOWN` | `503` |
+| `load.utilization` at or above `0.8` | `DEGRADED` | `200` |
+| a peer is `DOWN` or its circuit is open | `DEGRADED` | `200` |
+| otherwise | `UP` | `200` |
+
+**Load never produces `DOWN`.** A saturated instance taken out of rotation pushes its share onto the others, which saturate in turn, and the service goes from slow to absent within a few intervals. Load lowers an instance's routing priority and raises an alert; it never removes it. **A failing peer never produces `DOWN` either**, because the instance can still serve everything that does not need that peer, and taking it out would spread one service's outage to another.
+
+Each datastore probe has its own one second deadline and its result is cached for one second, so frequent polling cannot turn the endpoint into an amplifier. A service probes only its own datastores and never calls a peer's `/status`: peer entries come from the local circuit breaker state, not from a live call.
+
 ### Authentication and Request Flow
 
 User Management is the only token issuer. Clients log in to obtain a user token.
@@ -284,6 +340,104 @@ expiry returns 504 `REQUEST_TIMEOUT` in the common error envelope. Concurrency
 admission is bounded and immediate: saturation returns 503
 `CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1` instead of queueing.
 
+### Instance Identity and Load Balancing
+
+Each service runs as several interchangeable instances behind the gateway. Every service has one **canonical service name**. It is the route key in [`config/gateway.yaml`](config/gateway.yaml), and the same string is used in registration, in `/status`, in the `service` field of every log line and in headers. It is a compile-time constant, never configuration.
+
+| Canonical name | Gateway prefix | Instances |
+|---|---|---:|
+| `user-management` | `/user-management` | 2 |
+| `battle` | `/battle` | 2 |
+| `tamagotchi` | `/tamagotchi` | 2 |
+| `notification` | `/notification` | 2 |
+| `map` | `/map` | 3 |
+| `monster-raid` | `/monster-raid` | 3 |
+| `guild` | `/guild` | 2 |
+| `package-registry` | `/package-registry` | 2 |
+| `api-gateway` | none, it is the ingress | 1 |
+| `service-discovery` | none, internal only | 1 |
+
+An instance's **instance id** is its container hostname, which Docker sets to the short container id. It is unique per replica and Docker's embedded DNS resolves it from any container on the same network, so an instance's address is `http://<instanceId>:8080` and neither value is configured.
+
+| Header | Set by | On | Value |
+|---|---|---|---|
+| `X-Instance-Id` | every service | every response, errors included | the instance id of the instance that produced it |
+| `X-Gateway-Upstream` | the gateway | every proxied response | `<service>/<instanceId>`, the instance that actually answered |
+
+**A caller addresses a service by name, never an instance.** Service-to-service calls go to `GATEWAY_URL/<prefix>/...` and the gateway picks the instance: round-robin over the instances Service Discovery reports, preferring `UP` ones and falling back to `DEGRADED` ones, skipping instances that are `DOWN`, quarantined or at their concurrency limit. No service keeps instance addresses, pins a caller to an instance or reads the catalogue, so every instance of a service must be able to serve every request. Shared state therefore lives in the service's datastore, never in process memory.
+
+### Control Plane and Data Plane
+
+Traffic falls into two planes, which take different paths on purpose.
+
+| Plane | What | Path |
+|---|---|---|
+| Data plane | anything acting on behalf of a user or carrying business state: client requests, service-to-service calls, token issuance | through the gateway, without exception |
+| Control plane | registration and deregistration, health probing, catalogue reads, the gateway's breaker reports | direct on the internal network to `http://service-discovery:8080` or to an instance address; never through the gateway |
+
+The control plane bypass is deliberate, not a regression of the gateway rule. The gateway resolves a service name to *some* instance, so a health probe sent through it would check a random instance and attribute the result to the one that was asked about. It would also be circular: the gateway's instance list comes from the registry, so the registry cannot learn about instances by going through the gateway. Control plane endpoints carry no user data and are unreachable from outside: services publish no ports, and Service Discovery publishes only on the host's loopback.
+
+| Conversation | Direction | When |
+|---|---|---|
+| Registration | instance to Service Discovery | once at startup, and a deregistration once at shutdown |
+| Probing | Service Discovery to instance, `GET /status` | every 4 seconds |
+| Catalogue | gateway to Service Discovery, conditional on `ETag` | every 4 seconds |
+
+**Registration.** Once its listener accepts connections, an instance posts `{"service": "<canonical name>", "instanceId": "<hostname>", "address": "http://<hostname>:8080"}` to `{SERVICE_DISCOVERY_URL}/api/v1/registrations`. `SERVICE_DISCOVERY_URL` defaults in code to `http://service-discovery:8080` and is never set in `.env`. `201` or `200` means registered and logs `registration_sent`. `409` (the instance id is registered under another service) and `422` (a malformed body) are configuration bugs: logged at `ERROR` and not retried. Anything else, an unreachable registry included, logs `registration_failed` with the next delay and retries with exponential backoff from 1 second to a 30 second cap, forever. Registration runs in the background and never blocks or fails startup. There is no heartbeat: Service Discovery establishes liveness by probing `/status`, so registration happens exactly once and has to be reliable.
+
+**Deregistration.** On `SIGTERM`, before the listener closes, an instance sends `DELETE {SERVICE_DISCOVERY_URL}/api/v1/registrations/{instanceId}` with a 2 second timeout, treats `404` as success, logs `deregistration_sent`, and never delays shutdown by more than those 2 seconds. The instance leaves the catalogue at once, which is why a planned stop or restart produces no failed requests and no alert.
+
+### Failure Handling
+
+**One rule for every failure detector: three failures within fourteen seconds.** The count is windowed, not consecutive: a success in between does not reset it, only the window expiring does. Every timing constant derives from the platform request deadline, `REQUEST_TIMEOUT_SECONDS = 4`:
+
+| Constant | Value | Why |
+|---|---:|---|
+| Service request deadline | 4 s | below the gateway's per-upstream timeout, so a slow request ends with the service's own error |
+| Gateway per-upstream timeout | 5 s | |
+| Gateway end-to-end deadline | 10 s | |
+| Failure window | 14 s | `3.5 x 4`, so three timed-out calls fit inside one window |
+| Failure threshold | 3 | |
+| Probe interval and catalogue poll | 4 s | at most `14 / 3 = 4.67` s, or three failed probes cannot fit in the window |
+| Probe timeout | 2 s | |
+| Gateway quarantine recovery | 30 s | continuous `UP` in the catalogue |
+| Registry deletion | 120 s | after an instance goes `DOWN` |
+
+**What counts as a failure.** A circuit breaker counts what proves the callee unhealthy and nothing that a healthy callee would answer.
+
+| Outcome | Counts | Why |
+|---|---|---|
+| connection refused, DNS failure, reset before a response | yes | nothing is listening |
+| timeout after 4 seconds | yes | |
+| `500`, `502`, `504`, including the gateway's `502 UPSTREAM_UNAVAILABLE` and `504 UPSTREAM_TIMEOUT` | yes | |
+| any other `5xx`, including the gateway's `503 NO_HEALTHY_UPSTREAM` | yes | with no routable instance the peer is unavailable as far as the caller can tell |
+| `503 PEER_CIRCUIT_OPEN` | no | the callee is healthy and failing fast because one of *its* peers is down |
+| any `4xx`, `429` included | no | a `404` or a `409` is a correct answer from a healthy callee |
+
+**Peer circuit breaker.** Each service keeps one breaker per peer service name, derived from the gateway prefix it calls; never per gateway, per endpoint or per instance, since a service only ever sees the gateway's single address. It is implemented once, at the service's single outbound HTTP chokepoint.
+
+```
+CLOSED --3 failures in 14 s--> OPEN --14 s--> HALF_OPEN --trial succeeds--> CLOSED
+                                 ^                 |
+                                 +--trial fails----+
+```
+
+While `OPEN`, the service does not make the call: it returns `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14`, or takes its existing degradation path where the call site has one. `HALF_OPEN` allows exactly one trial call and concurrent callers fail fast. Transitions log `circuit_opened` at `ERROR` and `circuit_closed` at `INFO`, and the state feeds `dependencies[].circuit` in `/status`. The value is latency: without a breaker every request to a dead peer pays the full 4 second timeout to learn what the previous request already knew.
+
+**Three scopes of removal.** A failing component is taken out of service at three scopes, by three owners. Keeping them apart is what stops a load balancer and a registry from fighting each other.
+
+| | Mechanism | Owner | Removes | Until |
+|---|---|---|---|---|
+| A | Peer circuit breaker | each calling service | one peer service, for that caller | 14 s, then one trial call |
+| B | Instance quarantine | the gateway | one instance, from the gateway's rotation | 30 s of continuous `UP` in the catalogue |
+| C | Registry eviction | Service Discovery | one instance, for everyone | its probes pass again; deleted after 120 s `DOWN` |
+
+- **Only Service Discovery writes the registry.** The gateway's view is one consumer's view: an instance it cannot reach may be serving everyone else correctly. When its breaker trips it quarantines the instance locally and reports `CIRCUIT_OPEN` to Service Discovery, which runs one immediate probe and changes the registry only on the probe's result. A service never deregisters anyone but itself, and only on graceful shutdown.
+- **Membership and health are separate.** A `DOWN` instance stays listed and marked rather than vanishing, so failing and gone can be told apart. A catalogue refresh never clears the gateway's own quarantine, or the breaker would be undone every 4 seconds.
+- **Load never removes anything.** See [Operational Endpoints](#operational-endpoints).
+
+Alerts go to Discord from Service Discovery only, and only for unhealthy instances: an instance evicted, recovered or deleted, critical load and its recovery, and self-preservation engaging when it is switched on. A tripped circuit breaker, in a service or in the gateway, is logged and never alerted on. A trip that reflects a dead instance reaches Discord anyway, as the eviction raised by Service Discovery's own probes.
+
 ### Asynchronous Event Contract
 
 Every event sent through the queue uses the following envelope:
@@ -328,6 +482,44 @@ Every event sent through the queue uses the following envelope:
 MongoDB is not part of the selected architecture. An S3-compatible object store keeps blobs, images and large JSON documents. Services store only the corresponding object key or URL in their own database; Package Registry Service owns shared package and monster assets, while Tamagotchi Service stores references to creature assets.
 
 Cross-service references use resource identifiers rather than direct database access. APIs and events may include the data snapshot required to complete an operation. Package Registry Service is the authority for package definitions and registrations; User Management Service keeps only the package references needed in a user profile. Tamagotchi Service remains the authority for Tamagotchi ownership, including transfers after battles.
+
+### Logging
+
+Every service, the gateway and Service Discovery write one JSON object per line to stdout, with camelCase keys, so that lines from several instances of several services can be read together and correlated.
+
+```json
+{"timestamp":"2026-10-15T09:12:05.331Z","level":"INFO","service":"map",
+ "instanceId":"3f9a1c2e8b11","event":"request","correlationId":"8f14e45fceea167a",
+ "method":"GET","path":"/api/v1/locations","status":200,"durationMs":14,"message":"..."}
+```
+
+| Field | Present | Rule |
+|---|---|---|
+| `timestamp` | always | ISO 8601 UTC with milliseconds and a `Z` suffix |
+| `level` | always | `DEBUG`, `INFO`, `WARN` or `ERROR` |
+| `service` | always | the canonical service name |
+| `instanceId` | always | the container hostname |
+| `event` | always | a value from the vocabulary below |
+| `message` | always | human readable; structured data goes in fields, not in the message |
+| `correlationId`, `method`, `path`, `status`, `durationMs` | request-scoped lines | `correlationId` is the `X-Correlation-ID` of the request |
+| `errorCode` | failures | the error code of the common error envelope |
+| `peer`, `failures`, `windowSeconds` | breaker events | |
+
+The `event` values are fixed, because they are what we search for:
+
+| Event | Level | When |
+|---|---|---|
+| `startup`, `shutdown` | `INFO` | the process is ready to serve; `SIGTERM` was received |
+| `request` | `INFO` | exactly one per handled request, after the response |
+| `upstream_call` | `DEBUG` | an outbound call completed |
+| `upstream_timeout` | `WARN` | an outbound call timed out |
+| `limit_reached` | `WARN` | the concurrency limiter rejected a request |
+| `registration_sent`, `registration_failed`, `deregistration_sent` | `INFO`, `WARN` or `ERROR`, `INFO` | see [Control Plane and Data Plane](#control-plane-and-data-plane); `registration_failed` is `ERROR` for `409` and `422` |
+| `circuit_opened`, `circuit_closed` | `ERROR`, `INFO` | a peer circuit breaker changed state |
+
+The gateway and Service Discovery add events of their own, such as `instance_quarantined` and `instance_evicted`, listed in their specifications. When a line is about another service, its name goes in `serviceName`, because `service` always names the writer.
+
+**Never logged, at any level:** a bearer token, an `Authorization` header, a client secret, a private key, the Discord webhook URL, or a request or response body. User identifiers such as `X-User-ID` appear only at `DEBUG`.
 
 ### Service API Contracts
 
@@ -931,18 +1123,22 @@ If a message cannot be processed, the sender receives `guild.chat.error.v1` with
 
 Tamagotchi Service owns every Tamagotchi and its current owner, role, combat type, level, XP, sprite reference, and package-local health statistics. A secondary Tamagotchi is a reference to the original entity after an ownership transfer; the service never creates a duplicate of it.
 
+Tamagotchi Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Package Registry down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. Package Registry is never probed: its `/status` entry comes from the instance's circuit breaker and carries `"circuit": "CLOSED"` or `"OPEN"`. After three Package Registry failures within 14 seconds, creating a Tamagotchi and updating its health statistics answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, until a trial call succeeds. The service runs no scheduled or background work such as statistic decay: statistics change only through requests, so two instances never apply the same change twice.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
+| `GET /health` | Docker healthcheck, internal network only | None | `200 {"status":"UP"}` | None |
+| `GET /status` | Service Discovery, internal network only | None | `200` readiness document, `UP` or `DEGRADED` | `503 DOWN` when PostgreSQL is unreachable |
 | `GET /api/v1/tamagotchi-combat-types` | Any authenticated caller | None | `200 CombatTypeResponse[]` | None |
-| `POST /api/v1/tamagotchis` | The user named in `ownerUserId` | `CreateTamagotchiRequest` | `201 TamagotchiResponse` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `409 PRIMARY_TAMAGOTCHI_EXISTS`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `POST /api/v1/tamagotchis` | The user named in `ownerUserId` | `CreateTamagotchiRequest` | `201 TamagotchiResponse` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `409 PRIMARY_TAMAGOTCHI_EXISTS`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/tamagotchis/{tamagotchiId}` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
 | `PATCH /api/v1/tamagotchis/{tamagotchiId}` | Account owner | `UpdateTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404` |
 | `GET /api/v1/users/{userId}/tamagotchis?role={role}` | Account owner, Battle, or Monster Raid Service | Query parameter | `200 TamagotchiResponse[]`, empty when the user has none | `400 INVALID_ROLE`, `403` |
 | `GET /api/v1/users/{userId}/primary-tamagotchi` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 PRIMARY_TAMAGOTCHI_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/primary-tamagotchi` | Account owner | `SetPrimaryTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `409 TAMAGOTCHI_NOT_OWNED` |
-| `PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats` | Account owner | `UpdateHealthStatsRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE` |
+| `PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats` | Account owner | `UpdateHealthStatsRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/tamagotchis/{tamagotchiId}/combat-profile` | Battle or Monster Raid Service | None | `200 CombatProfileResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
 | `POST /api/v1/tamagotchis/{tamagotchiId}/xp-grants` | Battle or Monster Raid Service | `GrantXpRequest` | `200 GrantXpResponse` | `400`, `403`, `404`, `409 XP_ALREADY_GRANTED` |
 | `POST /api/v1/tamagotchi-ownership-transfers` | Battle Service | `TransferTamagotchiRequest` | `200 OwnershipTransferResponse` | `400`, `403`, `404`, `409 OWNERSHIP_ALREADY_TRANSFERRED`, `409 TAMAGOTCHI_NOT_OWNED`, `422 INVALID_TRANSFER` |
@@ -1521,10 +1717,14 @@ Both transitions are evaluated whenever a raid is loaded, so every read and comm
 
 Notification Service owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.
 
+Notification Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Redis unreachable, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. An event that reaches both instances is delivered once: before sending a push, an instance claims the delivery in Redis with an atomic set-if-absent keyed by event, recipient and device, and the instance that loses the claim skips it. Delivery happens inside the request that carries the event, so there is no outbox relay or scheduler to run twice. The service calls no other service and has no circuit breaker.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
+| `GET /health` | Docker healthcheck, internal network only | None | `200 {"status":"UP"}` | None |
+| `GET /status` | Service Discovery, internal network only | None | `200` readiness document, `UP` or `DEGRADED` | `503 DOWN` when PostgreSQL is unreachable |
 | `GET /api/v1/users/{userId}/notification-devices` | Account owner | None | `200 NotificationDeviceResponse[]` | `403` |
 | `PUT /api/v1/users/{userId}/notification-devices/{deviceId}` | Account owner | `RegisterNotificationDeviceRequest` | `200 NotificationDeviceResponse` | `400`, `403` |
 | `DELETE /api/v1/users/{userId}/notification-devices/{deviceId}` | Account owner | None | `204` | `403`, `404 DEVICE_NOT_FOUND` |
@@ -1714,7 +1914,7 @@ Lab release process:
 
 ## Gateway
 
-The API Gateway is the single HTTP entry point for clients and synchronous service calls. It verifies UMS-issued bearer tokens with the public JWKS, removes the service prefix, and forwards the remaining path and query string unchanged. For example, `POST http://localhost:8000/battle/api/v1/battle-requests` reaches Battle as `POST /api/v1/battle-requests`. The root `/` has no service route; use `/readyz` to check gateway readiness.
+The API Gateway is the single HTTP entry point for clients and synchronous service calls. It verifies UMS-issued bearer tokens with the public JWKS, removes the service prefix, and forwards the remaining path and query string unchanged. For example, `POST http://localhost:8000/battle/api/v1/battle-requests` reaches Battle as `POST /api/v1/battle-requests`. The root `/` has no service route; `/health` and `/status` are the gateway's own endpoints.
 
 | Service | Prefix | Collection |
 |---|---|---|
@@ -1750,36 +1950,47 @@ Only these configured operations are callable without a token:
 | POST | `/user-management/api/v1/auth/session-refreshes` | Session refresh |
 | POST | `/user-management/api/v1/oauth2/token` | Service client credentials |
 
-The gateway also owns the unauthenticated `/healthz` and `/readyz` probes. Upstream health and documentation paths remain protected unless explicitly configured otherwise.
+The gateway also owns the unauthenticated `/health` and `/status` endpoints, which replace `/healthz` and `/readyz`; those no longer exist. Besides the shared fields of [Operational Endpoints](#operational-endpoints), `/status` reports where instance addresses come from and the gateway's view of every instance pool. A service's own `/health` and `/status` are never forwarded: any request whose path after the prefix is exactly `/health` or `/status` gets `404 ROUTE_NOT_FOUND`, for every service, whatever `config/gateway.yaml` lists. It answers `404` rather than `403` so that the response does not confirm the endpoint exists. Upstream documentation paths remain protected unless explicitly configured otherwise.
 
 ### Gateway Errors
 
-Gateway failures use the shared `error` envelope with `code`, `message`, `correlationId` and optional `details`. Upstream response statuses and bodies pass through unchanged.
+Gateway failures use the shared `error` envelope with `code`, `message`, `correlationId` and optional `details`. Upstream response statuses and bodies pass through unchanged, including a service's own `503 PEER_CIRCUIT_OPEN`, which any service returns while its circuit breaker for a peer is open (see [Failure Handling](#failure-handling)). `NOT_READY` no longer exists: readiness is reported by `/status`.
 
 | HTTP status | Code | Meaning |
 |---|---|---|
 | 401 | `MISSING_TOKEN` | A protected operation has no bearer token |
 | 401 | `INVALID_TOKEN` | Invalid scheme, token, signature, expiry or claims |
-| 404 | `ROUTE_NOT_FOUND` | No configured service prefix matches |
+| 404 | `ROUTE_NOT_FOUND` | No configured service prefix matches, or the path after the prefix is `/health` or `/status` |
 | 405 | `METHOD_NOT_ALLOWED` | Unsupported forwarding method |
-| 502 | `UPSTREAM_UNAVAILABLE` | The upstream cannot be reached |
+| 502 | `UPSTREAM_UNAVAILABLE` | The chosen instance could not be reached, after the one retry on another instance where it applies |
 | 503 | `CONCURRENCY_LIMIT_REACHED` | Caller or service budget exhausted; `Retry-After: 1` |
-| 503 | `NOT_READY` | JWKS have not been loaded successfully |
+| 503 | `NO_HEALTHY_UPSTREAM` | Every instance of the target service is unroutable, or none is registered; `Retry-After: 1` |
 | 504 | `UPSTREAM_TIMEOUT` | The upstream request timed out |
 | 504 | `REQUEST_TIMEOUT` | The gateway request deadline expired |
 | 500 | `GATEWAY_ERROR` | Unexpected gateway failure |
 
-See the [gateway specification](gateway/docs/spec.md) for routing, token claims, header filtering and concurrency error details. Gateway development and image publishing are documented in its [README](gateway/README.md).
+`UPSTREAM_UNAVAILABLE` and `NO_HEALTHY_UPSTREAM` stay distinct: the first means an instance was chosen and could not be reached, the second that no instance could be chosen at all.
+
+### Load Balancing
+
+The gateway reads instance addresses from Service Discovery, polling its catalogue every 4 seconds, and routes each request round-robin across the instances of the target service, preferring `UP` instances and using `DEGRADED` ones only when no `UP` instance is available. `X-Gateway-Upstream: <service>/<instanceId>` on every proxied response names the instance that served it. Each service's `max_concurrency` applies per instance, and an instance at its limit is skipped. A request that could not connect at all is retried once on the next instance, provided its body has not been read.
+
+An instance that fails three times in fourteen seconds is quarantined and receives no traffic. It is reported to Service Discovery, which probes it at once, and it returns to rotation only after thirty continuous seconds reported `UP`. `GATEWAY_INSTANCE_BREAKER=log` keeps the trip, the log line and the report but goes on routing to the instance, so the two behaviours can be demonstrated in turn on the same deployment.
+
+Routing policy stays in [`config/gateway.yaml`](config/gateway.yaml): prefixes, public operations, timeouts, limits and authentication. Only instance addresses come from the registry, and only under names that file already lists. Its `url:` entries are a cold-start fallback, used until the first catalogue read and never again; if the registry becomes unreachable later, the gateway keeps routing on the last catalogue it read.
+
+See the [gateway specification](gateway/docs/spec.md) for routing, token claims, header filtering, load balancing, the instance circuit breaker and concurrency error details. Gateway development and image publishing are documented in its [README](gateway/README.md).
 
 [Back to top](#table-of-contents)
 
 ## Deployment
 
-Docker Compose runs the gateway and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway image is pinned to `grdz/gateway:2.0.1` directly in Compose, alongside the service images. All containers share the default Compose network. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway and registry images are pinned to `grdz/gateway:3.3.0` and `grdz/service-discovery:3.0.0` directly in Compose, alongside the service images. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild and Service Discovery also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
 | API Gateway | [`grdz/gateway`](https://hub.docker.com/r/grdz/gateway) | `http://localhost:8000` |
+| Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to `ws://localhost:8081/ws/v1/guilds/{guildId}/chat`; its REST API uses the gateway.
 
@@ -1793,8 +2004,9 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 |---|---:|
 | API Gateway | 8000 |
 | Guild chat socket | 8081 |
+| Service Discovery, loopback only | 8500 |
 
-`GATEWAY_PORT` and `GUILD_CHAT_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. The Guild socket listener uses container port 8082, separately from its REST listener on 8081. Its advertised URL defaults to `ws://localhost:8081`; set `GUILD_PUBLIC_WS_URL` in `.env` when clients use another host or you change `GUILD_CHAT_PORT`.
+`GATEWAY_PORT` and `GUILD_CHAT_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The Guild socket listener uses container port 8082, separately from its REST listener on 8081. Its advertised URL defaults to `ws://localhost:8081`; set `GUILD_PUBLIC_WS_URL` in `.env` when clients use another host or you change `GUILD_CHAT_PORT`.
 
 ### Run the Services
 
@@ -1804,7 +2016,7 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
    test -f .env || cp .env.example .env
    ```
 
-2. Replace the placeholder values in `.env`. Preserve the passwords of existing database volumes. Follow [Configuration](docs/configuration.md) for service settings and private credentials.
+2. Replace the placeholder values in `.env`, and set `DISCORD_WEBHOOK_URL` if alerts should reach Discord; left empty, they are only logged. Preserve the passwords of existing database volumes. Follow [Configuration](docs/configuration.md) for service settings and private credentials.
 
 3. Run `python3 scripts/configure_services_auth.py`, then pull and start the deployment:
 
@@ -1816,11 +2028,12 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 4. Verify gateway readiness and container health:
 
    ```bash
-   curl --fail http://localhost:8000/readyz
+   curl --fail http://localhost:8000/status
+   curl http://127.0.0.1:8500/api/v1/services
    docker compose ps
    ```
 
-   The gateway waits for healthy User Management, and its healthcheck uses `/readyz` to require successful JWKS discovery.
+   The gateway waits for a healthy Service Discovery, and its Docker healthcheck uses `/health`. `/status` answers `503` until the gateway has loaded the JWKS from User Management.
 
 5. Stop the containers, keeping the stored data:
 
@@ -1830,15 +2043,15 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 
 ### Endpoints
 
-Every API is reached at `/<service-prefix>/api/v1` through the gateway. Health checks sit outside that prefix and differ by stack: the C# services answer on `/_health`, Map and Monster Raid on `/health`, and Guild and Package Registry on `/healthz`.
+Every API is reached at `/<service-prefix>/api/v1` through the gateway. Every service answers `/health` and `/status` as described in [Operational Endpoints](#operational-endpoints); both are internal, and the gateway refuses to forward them.
 
-Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:8000/monster-raid/docs](http://localhost:8000/monster-raid/docs). Both are public routes on the gateway and need no token. Upstream health routes still require one. The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
+Map and Monster Raid also publish their generated OpenAPI document at `/openapi.json` and a Swagger UI at `/docs`, for example [http://localhost:8000/monster-raid/docs](http://localhost:8000/monster-raid/docs). Both are public routes on the gateway and need no token. Upstream `/health` and `/status` are never forwarded. The committed specification of every service is browsable under [`docs/schemas`](docs/schemas).
 
 ### Storage
 
 Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
 
-Data persists in ten named volumes: `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+Data persists in eleven named volumes: `service-discovery-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
 
 No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, and Guild and Package Registry ship idempotent migrations inside their images.
 
@@ -1879,6 +2092,7 @@ The Registry administrator's UMS ID must be in `PACKAGE_REGISTRY_ADMIN_USER_IDS`
 | Monster Raid Service | [Gurduza Mihai](https://github.com/m33ga) | Go | PostgreSQL, Redis |
 | Package Registry Service | [Usurelu Cosmin](https://github.com/CosmaK-47) | Go | PostgreSQL |
 | Notification Service | [Cobzari Ion](https://github.com/J0hnny05) | C# | PostgreSQL, Redis |
+| Service Discovery | [Gurduza Mihai](https://github.com/m33ga) | Python | JSON state file |
 
 ### User Management Service
 
@@ -1927,6 +2141,12 @@ The Monster Raid Service manages cooperative raids, including monster health, pa
 The Package Registry Service manages application packages and package-specific game configuration. It stores package information, developers, moderators and package-specific Tamagotchi statistics.
 
 **PostgreSQL** is used because package configuration can contain flexible attributes that can be stored using JSON/JSONB fields while still benefiting from relational data and transactional consistency.
+
+### Service Discovery
+
+Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the gateway routes from, and posts alerts to Discord. It is the only component that writes the registry.
+
+A **JSON state file** on the `service-discovery-data` volume is used because the registry is small, written only on membership and health changes, and read back only at startup. A database would add a dependency for no benefit, while the file lets the registry survive its own restart without losing the fleet. Its specification is in the [`discovery`](discovery/docs/spec.md) submodule.
 
 [Back to top](#table-of-contents)
 
