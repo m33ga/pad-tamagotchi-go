@@ -25,3 +25,6 @@
 [submodule "gateway"]
 	path = gateway
 	url = https://github.com/m33ga/gateway.git
+[submodule "discovery"]
+	path = discovery
+	url = https://github.com/m33ga/discovery.git
