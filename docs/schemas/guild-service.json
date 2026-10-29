@@ -49,9 +49,38 @@
         "summary": "Instance liveness without dependency checks",
         "security": [],
         "responses": {
-          "200": { "description": "Liveness", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "const": "UP" } }, "required": ["status"] } } } }
+          "200": {
+            "description": "Liveness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "UP"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          }
         }
-      }
+      },
+      "servers": [
+        {
+          "url": "http://{instance}:8081",
+          "description": "Direct internal REST listener; these probes are not forwarded by the Gateway.",
+          "variables": {
+            "instance": {
+              "default": "guild-api-1",
+              "description": "Use the specific instance hostname advertised by Service Discovery."
+            }
+          }
+        }
+      ]
     },
     "/status": {
       "get": {
@@ -59,10 +88,40 @@
         "summary": "Instance readiness, load and direct dependencies",
         "security": [],
         "responses": {
-          "200": { "description": "UP or DEGRADED" },
-          "503": { "description": "DOWN because PostgreSQL is unreachable" }
+          "200": {
+            "description": "UP or DEGRADED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceStatus"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "DOWN because PostgreSQL is unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceStatus"
+                }
+              }
+            }
+          }
         }
-      }
+      },
+      "servers": [
+        {
+          "url": "http://{instance}:8081",
+          "description": "Direct internal REST listener; these probes are not forwarded by the Gateway.",
+          "variables": {
+            "instance": {
+              "default": "guild-api-1",
+              "description": "Use the specific instance hostname advertised by Service Discovery."
+            }
+          }
+        }
+      ]
     },
     "/guilds": {
       "get": {
@@ -1295,6 +1354,98 @@
       }
     },
     "schemas": {
+      "InstanceStatus": {
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "instanceId",
+          "uptimeSeconds",
+          "load",
+          "dependencies",
+          "checkedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "UP",
+              "DEGRADED",
+              "DOWN"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "const": "guild"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "uptimeSeconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "load": {
+            "type": "object",
+            "required": [
+              "inFlight",
+              "limit",
+              "utilization"
+            ],
+            "properties": {
+              "inFlight": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "utilization": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "status"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "UP",
+                    "DOWN"
+                  ]
+                },
+                "latencyMs": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "circuit": {
+                  "type": "string",
+                  "enum": [
+                    "CLOSED",
+                    "OPEN"
+                  ]
+                }
+              }
+            }
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "required": [

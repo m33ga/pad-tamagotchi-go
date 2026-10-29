@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Notification Service API",
-    "version": "2.0.0",
-    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/notification` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received and echoed on every response; for an event, the envelope's correlationId is kept on the notifications it produces.",
+    "version": "3.0.0",
+    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/notification` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received and echoed on every response; for an event, the envelope's correlationId is kept on the notifications it produces.\n\n## Two Instances\n\nThe deployment runs two interchangeable instances and the gateway balances requests across them. Every response carries `X-Instance-Id`, the hostname of the instance that answered. Each instance registers itself with Service Discovery at startup and deregisters on shutdown. `GET /health` and `GET /status`, under Operations, sit at the service root rather than under `/api/v1` and are not exposed through the gateway.\n\nAn event that reaches both instances, such as a producer's retry routed to the other instance, is delivered once: before sending a push, an instance claims the delivery in Redis with an atomic set-if-absent on the event, recipient and device, and the instance that loses the claim skips it. The service makes no calls to other services, so it has no circuit breaker.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -36,6 +36,10 @@
     {
       "name": "Events",
       "description": "Domain events delivered by producing services until a broker is deployed"
+    },
+    {
+      "name": "Operations",
+      "description": "Liveness and readiness at the service root, for Docker and Service Discovery"
     }
   ],
   "paths": {
@@ -403,6 +407,177 @@
           "monster-raid-service"
         ]
       }
+    },
+    "/health": {
+      "servers": [
+        {
+          "url": "/",
+          "description": "Service root on the internal network, outside /api/v1; not exposed through the API Gateway"
+        }
+      ],
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness",
+        "description": "Answers `200 {\"status\":\"UP\"}` whenever the process serves HTTP and checks nothing else. A liveness probe that checked dependencies would restart every instance at once when a shared dependency failed, and a restart cannot bring the dependency back. Docker's healthcheck calls it. It needs no identity, bypasses the concurrency limit and is never cached.",
+        "tags": ["Operations"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process is serving HTTP",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "servers": [
+        {
+          "url": "/",
+          "description": "Service root on the internal network, outside /api/v1; not exposed through the API Gateway"
+        }
+      ],
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Readiness and telemetry",
+        "description": "Polled directly by Service Discovery every 4 seconds to decide whether this instance receives traffic. The status is the first rule that matches: PostgreSQL unreachable gives `DOWN` with `503`; utilization at or above 0.8, or Redis unreachable, gives `DEGRADED` with `200`, since devices and preferences still work and only delivery waits; otherwise `UP` with `200`. Load never produces `DOWN`, so a busy instance is never mistaken for a dead one. Each dependency is checked with a one second deadline and the result is reused for one second. It needs no identity, bypasses the concurrency limit and answers while every permit is taken.",
+        "tags": ["Operations"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "`UP` or `DEGRADED`: the instance can serve",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                },
+                "examples": {
+                  "up": {
+                    "summary": "Everything reachable",
+                    "value": {
+                      "status": "UP",
+                      "service": "notification",
+                      "instanceId": "b5132063425b",
+                      "uptimeSeconds": 611,
+                      "load": {
+                        "inFlight": 2,
+                        "limit": 64,
+                        "utilization": 0.03
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "redis",
+                          "status": "UP",
+                          "latencyMs": 1
+                        }
+                      ],
+                      "checkedAt": "2026-10-28T10:11:24.954Z"
+                    }
+                  },
+                  "degraded": {
+                    "summary": "Redis unreachable",
+                    "value": {
+                      "status": "DEGRADED",
+                      "service": "notification",
+                      "instanceId": "b5132063425b",
+                      "uptimeSeconds": 611,
+                      "load": {
+                        "inFlight": 2,
+                        "limit": 64,
+                        "utilization": 0.03
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "redis",
+                          "status": "DOWN"
+                        }
+                      ],
+                      "checkedAt": "2026-10-28T10:11:24.954Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DOWN`: PostgreSQL is unreachable, so nothing can be served",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                },
+                "examples": {
+                  "down": {
+                    "summary": "PostgreSQL unreachable",
+                    "value": {
+                      "status": "DOWN",
+                      "service": "notification",
+                      "instanceId": "b5132063425b",
+                      "uptimeSeconds": 611,
+                      "load": {
+                        "inFlight": 0,
+                        "limit": 64,
+                        "utilization": 0.0
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "DOWN"
+                        },
+                        {
+                          "name": "redis",
+                          "status": "UP",
+                          "latencyMs": 1
+                        }
+                      ],
+                      "checkedAt": "2026-10-28T10:11:24.954Z"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -750,6 +925,116 @@
             "type": "object",
             "description": "Event-specific payload carrying the recipient fields"
           }
+        }
+      },
+      "LivenessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "UP"
+          }
+        }
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "service", "instanceId", "uptimeSeconds", "load", "dependencies", "checkedAt"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["UP", "DEGRADED", "DOWN"]
+          },
+          "service": {
+            "type": "string",
+            "const": "notification",
+            "description": "Canonical service name, the route key in the gateway configuration"
+          },
+          "instanceId": {
+            "type": "string",
+            "description": "Hostname of this instance, the same value as X-Instance-Id"
+          },
+          "uptimeSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Whole seconds since the instance started"
+          },
+          "load": {
+            "$ref": "#/components/schemas/InstanceLoad"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencyStatus"
+            }
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC with milliseconds and a Z suffix"
+          }
+        }
+      },
+      "InstanceLoad": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inFlight", "limit", "utilization"],
+        "properties": {
+          "inFlight": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Requests this instance is serving now"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "MAX_CONCURRENCY of this instance"
+          },
+          "utilization": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "inFlight divided by limit, rounded to two decimals"
+          }
+        }
+      },
+      "DependencyStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": ["postgres", "redis"],
+            "description": "A direct dependency of this instance"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["UP", "DOWN"]
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Round trip of the check in milliseconds; omitted when the dependency is DOWN"
+          }
+        }
+      }
+    },
+    "headers": {
+      "InstanceId": {
+        "description": "Hostname of the instance that answered. Every response carries it, so a caller can tell the instances apart",
+        "schema": {
+          "type": "string",
+          "examples": ["423314ca53fe"]
+        }
+      },
+      "NoStore": {
+        "description": "Operational answers are never cached",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
         }
       }
     }

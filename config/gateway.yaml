@@ -1,5 +1,12 @@
 # Gateway configuration for the Tamagotchi Go compose deployment.
-# Reference: docs/spec.md, section 12. Every key not present here has a default.
+# Reference: gateway/docs/spec.md, section 15. Every key not present here has a default.
+#
+# Routing policy lives here and only here: path prefixes, public operations, timeouts,
+# concurrency limits and authentication. Instance addresses come from Service Discovery
+# (gateway/docs/spec.md, section 10). The url: entries below are NOT live: they are a
+# cold-start fallback, used only until the first successful catalogue read and never
+# again after it. A service that registers under a name that is not a key under
+# services: is ignored, so a service cannot register itself into another's prefix.
 
 auth:
   jwks_url: http://user-management-api:8080/.well-known/jwks.json
@@ -33,6 +40,6 @@ services:
       - GET /docs                             # Swagger UI
       - GET /openapi.json                     # generated contract
   guild:
-    url: http://guild-api:8081
+    url: http://guild-api-1:8081
   package-registry:
     url: http://package-registry-api:8082

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Monster Raid Service API",
-    "version": "2.0.0",
-    "description": "Owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress.\n\nThe service publishes the `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.",
+    "version": "3.0.0",
+    "description": "Owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress.\n\nThe service publishes the `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.\n\nThe service runs as three interchangeable instances behind the gateway. Every response carries `X-Instance-Id`, and each instance registers itself with Service Discovery, which polls `/status`. Every peer call goes through a circuit breaker: three failures within 14 seconds open it for 14 seconds, then one trial call decides. Each peer has its own breaker, so Guild being down never stops calls to Tamagotchi. Crediting rewards through User Management keeps its existing deferred-settlement path while that circuit is open, and reading a raid or its result never needs a peer.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -32,6 +32,10 @@
     {
       "name": "Attacks",
       "description": "Participant attacks against the raid monster"
+    },
+    {
+      "name": "Operations",
+      "description": "Liveness and readiness probes, internal network only"
     }
   ],
   "paths": {
@@ -119,7 +123,26 @@
             }
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "GUILD_SERVICE_UNAVAILABLE: Guild Service could not be reached; PEER_CIRCUIT_OPEN: Guild failed three times within 14 seconds, so this instance did not call it (sent with Retry-After: 14); or CONCURRENCY_LIMIT_REACHED: the service is already handling as many requests as it admits (sent with Retry-After: 1)",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying: 14 for PEER_CIRCUIT_OPEN, 1 for CONCURRENCY_LIMIT_REACHED, absent otherwise",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "14",
+                    "1"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -214,7 +237,26 @@
             }
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "GUILD_SERVICE_UNAVAILABLE or PACKAGE_REGISTRY_UNAVAILABLE: Guild or Package Registry could not be reached; PEER_CIRCUIT_OPEN: Guild or Package Registry failed three times within 14 seconds, so this instance did not call it (sent with Retry-After: 14); or CONCURRENCY_LIMIT_REACHED: the service is already handling as many requests as it admits (sent with Retry-After: 1)",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying: 14 for PEER_CIRCUIT_OPEN, 1 for CONCURRENCY_LIMIT_REACHED, absent otherwise",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "14",
+                    "1"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -378,7 +420,26 @@
             }
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "GUILD_SERVICE_UNAVAILABLE: Guild Service could not be reached; PEER_CIRCUIT_OPEN: Guild failed three times within 14 seconds, so this instance did not call it (sent with Retry-After: 14); or CONCURRENCY_LIMIT_REACHED: the service is already handling as many requests as it admits (sent with Retry-After: 1)",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying: 14 for PEER_CIRCUIT_OPEN, 1 for CONCURRENCY_LIMIT_REACHED, absent otherwise",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "14",
+                    "1"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -563,7 +624,26 @@
             }
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "TAMAGOTCHI_SERVICE_UNAVAILABLE: Tamagotchi Service could not be reached; PEER_CIRCUIT_OPEN: Tamagotchi failed three times within 14 seconds, so this instance did not call it (sent with Retry-After: 14); or CONCURRENCY_LIMIT_REACHED: the service is already handling as many requests as it admits (sent with Retry-After: 1)",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying: 14 for PEER_CIRCUIT_OPEN, 1 for CONCURRENCY_LIMIT_REACHED, absent otherwise",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "14",
+                    "1"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -641,6 +721,242 @@
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
+          }
+        }
+      }
+    },
+    "/health": {
+      "servers": [
+        {
+          "url": "/",
+          "description": "Service root on the internal network, outside /api/v1; not exposed through the API Gateway"
+        }
+      ],
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness",
+        "description": "Answers `200 {\"status\":\"UP\"}` whenever the process serves HTTP and checks nothing else, PostgreSQL or Redis included. A liveness probe that checked dependencies would restart every instance at once when a shared dependency failed, and a restart cannot bring the dependency back. Docker's healthcheck calls it. It needs no identity, bypasses the concurrency limit and is never cached.",
+        "tags": [
+          "Operations"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process is serving HTTP",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "servers": [
+        {
+          "url": "/",
+          "description": "Service root on the internal network, outside /api/v1; not exposed through the API Gateway"
+        }
+      ],
+      "get": {
+        "operationId": "getStatus",
+        "summary": "Readiness and telemetry",
+        "description": "Polled directly by Service Discovery every 4 seconds to decide whether this instance receives traffic. The status is the first rule that matches: PostgreSQL or Redis unreachable gives `DOWN` with `503`; utilization at or above 0.8, or a peer `DOWN` or its circuit open, gives `DEGRADED` with `200`; otherwise `UP` with `200`. Neither load nor a failing peer ever produces `DOWN`. Each datastore probe has its own one second deadline, the probes run concurrently and the result is reused for one second. Peers are never probed: their entries come from this instance's circuit breakers, `DOWN` while the circuit is open. It needs no identity, bypasses the concurrency limit and answers while every permit is taken.",
+        "tags": [
+          "Operations"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "`UP` or `DEGRADED`: the instance can serve",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                },
+                "examples": {
+                  "up": {
+                    "summary": "Everything reachable",
+                    "value": {
+                      "status": "UP",
+                      "service": "monster-raid",
+                      "instanceId": "3f9a1c2e8b11",
+                      "uptimeSeconds": 1423,
+                      "load": {
+                        "inFlight": 12,
+                        "limit": 64,
+                        "utilization": 0.19
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "redis",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "guild",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "package-registry",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "tamagotchi",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "user-management",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        }
+                      ],
+                      "checkedAt": "2026-10-29T09:12:05.331Z"
+                    }
+                  },
+                  "degraded": {
+                    "summary": "guild circuit open",
+                    "value": {
+                      "status": "DEGRADED",
+                      "service": "monster-raid",
+                      "instanceId": "3f9a1c2e8b11",
+                      "uptimeSeconds": 1423,
+                      "load": {
+                        "inFlight": 12,
+                        "limit": 64,
+                        "utilization": 0.19
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "redis",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "guild",
+                          "status": "DOWN",
+                          "circuit": "OPEN"
+                        },
+                        {
+                          "name": "package-registry",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "tamagotchi",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "user-management",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        }
+                      ],
+                      "checkedAt": "2026-10-29T09:12:05.331Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DOWN`: PostgreSQL or Redis is unreachable, so nothing can be served",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              },
+              "X-Instance-Id": {
+                "$ref": "#/components/headers/InstanceId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                },
+                "examples": {
+                  "down": {
+                    "summary": "Redis unreachable",
+                    "value": {
+                      "status": "DOWN",
+                      "service": "monster-raid",
+                      "instanceId": "3f9a1c2e8b11",
+                      "uptimeSeconds": 1423,
+                      "load": {
+                        "inFlight": 0,
+                        "limit": 64,
+                        "utilization": 0.0
+                      },
+                      "dependencies": [
+                        {
+                          "name": "postgres",
+                          "status": "UP",
+                          "latencyMs": 2
+                        },
+                        {
+                          "name": "redis",
+                          "status": "DOWN"
+                        },
+                        {
+                          "name": "guild",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "package-registry",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "tamagotchi",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        },
+                        {
+                          "name": "user-management",
+                          "status": "UP",
+                          "circuit": "CLOSED"
+                        }
+                      ],
+                      "checkedAt": "2026-10-29T09:12:05.331Z"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -802,10 +1118,10 @@
         }
       },
       "ServiceUnavailable": {
-        "description": "A peer could not be reached (GUILD_SERVICE_UNAVAILABLE, PACKAGE_REGISTRY_UNAVAILABLE, TAMAGOTCHI_SERVICE_UNAVAILABLE), or CONCURRENCY_LIMIT_REACHED when the service is already handling as many requests as it admits.",
+        "description": "CONCURRENCY_LIMIT_REACHED: the service is already handling as many requests as it admits and rejects the request at once instead of queueing it",
         "headers": {
           "Retry-After": {
-            "description": "1 on CONCURRENCY_LIMIT_REACHED",
+            "description": "Seconds to wait before retrying",
             "schema": {
               "type": "string",
               "const": "1"
@@ -1399,6 +1715,156 @@
             "format": "date-time",
             "description": "Time at which the terminal state was stored"
           }
+        }
+      },
+      "LivenessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "UP"
+          }
+        }
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "service",
+          "instanceId",
+          "uptimeSeconds",
+          "load",
+          "dependencies",
+          "checkedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "UP",
+              "DEGRADED",
+              "DOWN"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "const": "monster-raid",
+            "description": "Canonical service name, the route key in the gateway configuration"
+          },
+          "instanceId": {
+            "type": "string",
+            "description": "Hostname of this instance, the same value as X-Instance-Id"
+          },
+          "uptimeSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Whole seconds since the instance started serving"
+          },
+          "load": {
+            "$ref": "#/components/schemas/InstanceLoad"
+          },
+          "dependencies": {
+            "type": "array",
+            "description": "Always `postgres`, `redis`, `guild`, `package-registry`, `tamagotchi`, `user-management`",
+            "items": {
+              "$ref": "#/components/schemas/DependencyStatus"
+            }
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "UTC with milliseconds and a Z suffix"
+          }
+        }
+      },
+      "InstanceLoad": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inFlight",
+          "limit",
+          "utilization"
+        ],
+        "properties": {
+          "inFlight": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Requests currently held by the concurrency limiter"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "MAX_CONCURRENCY"
+          },
+          "utilization": {
+            "type": "number",
+            "minimum": 0,
+            "description": "inFlight / limit rounded to two decimals, 0.0 when the limit is 0"
+          }
+        }
+      },
+      "DependencyStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "postgres",
+              "redis",
+              "guild",
+              "package-registry",
+              "tamagotchi",
+              "user-management"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "UP",
+              "DOWN"
+            ]
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Datastores only, omitted when DOWN"
+          },
+          "circuit": {
+            "type": "string",
+            "enum": [
+              "CLOSED",
+              "OPEN"
+            ],
+            "description": "Peers only: the state of this instance's circuit breaker for that peer. A half-open circuit is reported as OPEN"
+          }
+        }
+      }
+    },
+    "headers": {
+      "InstanceId": {
+        "description": "Hostname of the instance that answered. Every response carries it, errors included, so a caller can tell the instances apart",
+        "schema": {
+          "type": "string",
+          "examples": [
+            "3f9a1c2e8b11"
+          ]
+        }
+      },
+      "NoStore": {
+        "description": "Operational answers are never cached",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
         }
       }
     }
