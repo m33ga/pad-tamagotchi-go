@@ -748,6 +748,8 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS`—the former caller-supplied role header is not accepted.
 
+Lab 3 runs two Package Registry instances on the internal network. Each registers its REST address with Service Discovery and exposes internal `GET /health` (liveness, always `200 {"status":"UP"}`) and `GET /status` (readiness/load/PostgreSQL, `200` for `UP`/`DEGRADED`, `503` for `DOWN`). These operational endpoints are not client routes through the gateway; `/healthz` is removed. Each response includes `X-Instance-Id`. PostgreSQL serializes startup migrations so both replicas may start together.
+
 `POST /packages/{packageId}/registrations` and `GET /users/{userId}/package-registrations` require `X-Service-Name: user-management-service`. Raid schedule reads accept `X-Service-Name: monster-raid-service` or a configured administrator. Every handler has a bounded deadline and fail-fast concurrency limit, returning `504 REQUEST_TIMEOUT` or `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
 
 ##### Endpoint Catalog
@@ -949,6 +951,8 @@ Package Registry Service owns package metadata, package membership, package-spec
 
 Guild Service owns guild identity, membership, roles, permissions, and Guild Chat. Guilds, memberships, membership requests and chat messages are stored in PostgreSQL. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package.
 
+Lab 3 runs two explicit Guild instances. Both register their REST address with Service Discovery and expose internal `GET /health` (liveness) and `GET /status` (readiness, load, PostgreSQL, peer circuits and chat fan-out); `/healthz` is removed. REST responses include `X-Instance-Id`. User Management and Package Registry calls each have a separate circuit breaker; an open one returns `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without disconnecting existing chat sockets.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
@@ -1067,7 +1071,7 @@ Guild Service owns guild identity, membership, roles, permissions, and Guild Cha
 
 Guild members first make the authenticated REST call `POST /guild/api/v1/guilds/{guildId}/chat-sessions` through the gateway. The service verifies the trusted `X-User-ID` membership and returns `url`, `ticket`, and `expiresAt`. The ticket contains 32 random bytes encoded base64url, is bound to the guild and user, expires after 60 seconds, and is stored only as a hash.
 
-The client then connects directly to `{url}?ticket={ticket}`. The dedicated WebSocket listener atomically deletes a matching ticket before upgrading; missing, expired, reused, or wrong-guild tickets return `401`. Connection identity comes only from the stored ticket, and the handshake does not accept a bearer token. REST remains on the internal listener; only the separate socket listener is published, so public clients cannot forge trusted gateway headers against REST.
+The client then connects directly to `{url}?ticket={ticket}`. The returned URL is instance-specific: it uses the published socket port of the Guild instance that answered negotiation (`8081` or `8083` by default). The dedicated WebSocket listener atomically deletes a matching ticket from shared PostgreSQL before upgrading; missing, expired, reused, or wrong-guild tickets return `401`. Connection identity comes only from the stored ticket, and the handshake does not accept a bearer token. PostgreSQL `LISTEN`/`NOTIFY` fans persisted messages and aggregated presence out to sockets connected to either instance. REST remains on the internal listener; only the separate socket listener is published, so public clients cannot forge trusted gateway headers against REST.
 
 The client sends:
 
@@ -2016,7 +2020,7 @@ Docker Compose runs the gateway, Service Discovery and all eight services from a
 | API Gateway | [`grdz/gateway`](https://hub.docker.com/r/grdz/gateway) | `http://localhost:8000` |
 | Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
 
-All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to `ws://localhost:8081/ws/v1/guilds/{guildId}/chat`; its REST API uses the gateway.
+All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
 ### Requirements
 
@@ -2027,10 +2031,11 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | Published endpoint | Default host port |
 |---|---:|
 | API Gateway | 8000 |
-| Guild chat socket | 8081 |
+| Guild chat socket, instance 1 | 8081 |
+| Guild chat socket, instance 2 | 8083 |
 | Service Discovery, loopback only | 8500 |
 
-`GATEWAY_PORT` and `GUILD_CHAT_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The Guild socket listener uses container port 8082, separately from its REST listener on 8081. Its advertised URL defaults to `ws://localhost:8081`; set `GUILD_PUBLIC_WS_URL` in `.env` when clients use another host or you change `GUILD_CHAT_PORT`.
+`GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
 
 ### Run the Services
 

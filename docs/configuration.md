@@ -2,15 +2,23 @@
 
 The deployment uses one `compose.yaml` and two networks. `internal` carries all
 traffic between containers and is declared `internal: true`, so nothing on it can
-reach the internet. `edge` is joined only by the three containers that publish a
-port: the gateway, Guild for its chat socket, and Service Discovery, which also
+reach the internet. `edge` is joined only by the four containers that publish a
+port: the gateway, the two Guild chat instances, and Service Discovery, which also
 needs it to reach the Discord webhook. Every container names its networks
 explicitly.
 
-Only `GATEWAY_PORT` and `GUILD_CHAT_PORT` are published to the network. Service
-Discovery publishes `127.0.0.1:8500`, reachable from the host and nowhere else.
+Only `GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` are published to the
+network. Service Discovery publishes `127.0.0.1:8500`, reachable from the host and
+nowhere else.
 Guild's REST listener stays on container port 8081 and its separate socket
-listener uses port 8082. `GUILD_PUBLIC_WS_URL` is the socket address clients receive.
+listener uses port 8082. Each negotiation returns its serving instance's socket
+address, defaulting to localhost and its own published port. Optional
+`GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` values override those addresses
+for remote clients.
+
+When upgrading an existing `.env`, replace `GUILD_CHAT_PORT` with
+`GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2`. Replace a custom
+`GUILD_PUBLIC_WS_URL` with the two instance-specific URL overrides above.
 
 ## Environment
 
@@ -124,14 +132,24 @@ Guild and Package Registry load only their own `secrets/<client-id>.env` file,
 not the shared `.env`. Both accept the generated `OAUTH_CLIENT_ID` and
 `OAUTH_CLIENT_SECRET` aliases. Compose maps other required settings explicitly.
 Their REST APIs and databases have no published host ports. Only Guild's separate
-WebSocket listener is published; set `GUILD_PUBLIC_WS_URL` to a client-reachable
-`ws://` or `wss://` base URL.
+WebSocket listeners are published, at ports 8081 and 8083 by default. Each instance
+has its own public address; use the URL returned by negotiation. Set
+`GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` to client-reachable `ws://` or
+`wss://` base URLs when clients use another host.
 
-`GUILD_REQUEST_TIMEOUT` and `PACKAGE_REGISTRY_REQUEST_TIMEOUT` default to
-`4s`, below the gateway's default `5s` upstream timeout. Their independent
-`*_MAX_CONCURRENCY` limits default to 64; timed-out work retains its slot until
+Both services use `REQUEST_TIMEOUT_SECONDS: 4` in Compose, below the gateway's
+default `5s` upstream timeout. Their per-instance `MAX_CONCURRENCY` limits default
+to 64; timed-out work retains its slot until
 it stops. `PACKAGE_REGISTRY_ADMIN_USER_IDS` is a comma-separated allowlist of
 existing UMS user UUIDs. An empty value grants no administrator access.
+
+Guild runs as `guild-api-1` and `guild-api-2`, sharing PostgreSQL messages, tickets
+and presence. LISTEN/NOTIFY delivers chat across instances, and broadcasts check
+current membership. Package Registry uses `deploy.replicas: 2` and a shared
+PostgreSQL database. Both services serialize startup migrations, register their
+REST listener with Discovery, and expose `/health` and `/status` internally. The
+gateway's static Guild fallback points to `guild-api-1` until Discovery supplies
+the live instance list.
 
 ## Storage and Rotation
 

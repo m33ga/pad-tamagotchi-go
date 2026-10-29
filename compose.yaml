@@ -235,22 +235,49 @@ services:
       timeout: 5s
       retries: 10
 
-  guild-api:
-    image: cosmak47/pad-guild-service:2.0.1
+  guild-api-1:
+    image: cosmak47/pad-guild-service:3.0.0
     pull_policy: always
     networks: [edge, internal]
     env_file:
       - ./secrets/guild-service.env
     environment:
       DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
-      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL:-ws://localhost:8081}
+      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL_1:-ws://localhost:${GUILD_CHAT_PORT_1:-8081}}
+      REQUEST_TIMEOUT_SECONDS: 4
     ports:
-      - "${GUILD_CHAT_PORT:-8081}:8082"
+      - "${GUILD_CHAT_PORT_1:-8081}:8082"
     depends_on:
       guild-db:
         condition: service_healthy
+      service-discovery:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8081/healthz"]
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  guild-api-2:
+    image: cosmak47/pad-guild-service:3.0.0
+    pull_policy: always
+    networks: [edge, internal]
+    env_file:
+      - ./secrets/guild-service.env
+    environment:
+      DATABASE_URL: postgres://${GUILD_DB_USER}:${GUILD_DB_PASSWORD}@guild-db:5432/${GUILD_DB_NAME}?sslmode=disable
+      PUBLIC_WS_URL: ${GUILD_PUBLIC_WS_URL_2:-ws://localhost:${GUILD_CHAT_PORT_2:-8083}}
+      REQUEST_TIMEOUT_SECONDS: 4
+    ports:
+      - "${GUILD_CHAT_PORT_2:-8083}:8082"
+    depends_on:
+      guild-db:
+        condition: service_healthy
+      service-discovery:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8081/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -273,19 +300,24 @@ services:
       retries: 10
 
   package-registry-api:
-    image: cosmak47/pad-package-registry-service:2.0.1
+    image: cosmak47/pad-package-registry-service:3.0.0
     pull_policy: always
+    deploy:
+      replicas: 2
     networks: [internal]
     env_file:
       - ./secrets/package-registry-service.env
     environment:
       DATABASE_URL: postgres://${PACKAGE_REGISTRY_DB_USER}:${PACKAGE_REGISTRY_DB_PASSWORD}@package-registry-db:5432/${PACKAGE_REGISTRY_DB_NAME}?sslmode=disable
       ADMIN_USER_IDS: ${PACKAGE_REGISTRY_ADMIN_USER_IDS:-}
+      REQUEST_TIMEOUT_SECONDS: 4
     depends_on:
       package-registry-db:
         condition: service_healthy
+      service-discovery:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8082/healthz"]
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8082/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -422,7 +454,7 @@ services:
       retries: 10
 
 networks:
-  # Containers with a published port: the gateway, the Guild chat listener and the registry.
+  # Published listeners: the gateway, both Guild sockets and loopback-only Discovery.
   edge:
   # Every container. No route to the internet, and nothing on it is published.
   internal:

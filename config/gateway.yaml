@@ -40,6 +40,6 @@ services:
       - GET /docs                             # Swagger UI
       - GET /openapi.json                     # generated contract
   guild:
-    url: http://guild-api:8081
+    url: http://guild-api-1:8081
   package-registry:
     url: http://package-registry-api:8082

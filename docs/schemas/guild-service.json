@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Guild Service API",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "description": "Owns guild identity, membership, roles, permissions, and Guild Chat. External REST clients authenticate at the API Gateway with a bearer token. The gateway removes Authorization and supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers to this internal service; a direct request without X-Caller-Kind is rejected. User Management and Package Registry calls also pass through the gateway with guild-service client credentials.\n\nGuild Chat is negotiated with POST /guilds/{guildId}/chat-sessions. The returned ticket is 32 random bytes encoded base64url, expires after 60 seconds and is consumed atomically once by the direct WebSocket handshake. The WebSocket protocol at `/ws/v1/guilds/{guildId}/chat?ticket=...` cannot be expressed in OpenAPI and is documented in the repository README.\n\nEvery REST handler has a request deadline and fail-fast concurrency limit. Saturation returns 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1; expiry returns 504 REQUEST_TIMEOUT. The service publishes the `guild.invitation.created.v1` queue event.",
     "license": {
       "name": "MIT",
@@ -43,6 +43,86 @@
     }
   ],
   "paths": {
+    "/health": {
+      "get": {
+        "operationId": "guildLiveness",
+        "summary": "Instance liveness without dependency checks",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Liveness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "UP"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "servers": [
+        {
+          "url": "http://{instance}:8081",
+          "description": "Direct internal REST listener; these probes are not forwarded by the Gateway.",
+          "variables": {
+            "instance": {
+              "default": "guild-api-1",
+              "description": "Use the specific instance hostname advertised by Service Discovery."
+            }
+          }
+        }
+      ]
+    },
+    "/status": {
+      "get": {
+        "operationId": "guildReadiness",
+        "summary": "Instance readiness, load and direct dependencies",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "UP or DEGRADED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceStatus"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "DOWN because PostgreSQL is unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "servers": [
+        {
+          "url": "http://{instance}:8081",
+          "description": "Direct internal REST listener; these probes are not forwarded by the Gateway.",
+          "variables": {
+            "instance": {
+              "default": "guild-api-1",
+              "description": "Use the specific instance hostname advertised by Service Discovery."
+            }
+          }
+        }
+      ]
+    },
     "/guilds": {
       "get": {
         "operationId": "listGuilds",
@@ -157,7 +237,7 @@
             }
           },
           "503": {
-            "$ref": "#/components/responses/ConcurrencyLimitReached"
+            "$ref": "#/components/responses/ConcurrencyOrPeerCircuitOpen"
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -272,7 +352,7 @@
             }
           },
           "503": {
-            "$ref": "#/components/responses/ConcurrencyLimitReached"
+            "$ref": "#/components/responses/ConcurrencyOrPeerCircuitOpen"
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -756,7 +836,7 @@
             }
           },
           "503": {
-            "$ref": "#/components/responses/ConcurrencyLimitReached"
+            "$ref": "#/components/responses/ConcurrencyOrPeerCircuitOpen"
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -1044,7 +1124,7 @@
       "post": {
         "operationId": "createGuildChatSession",
         "summary": "Negotiate a direct Guild Chat WebSocket connection",
-        "description": "Requires an authenticated user who is an active member. Returns a configured public socket URL and a 60-second, single-use ticket bound to the guild and user. The socket handshake consumes the ticket atomically and does not accept a bearer token.",
+        "description": "Requires an authenticated user who is an active member. Returns this Guild instance's own public socket URL and a 60-second, single-use ticket bound to the guild and user. Each instance has a distinct reachable WebSocket address. The socket handshake consumes the ticket atomically and does not accept a bearer token.",
         "tags": [
           "Chat Sessions"
         ],
@@ -1244,6 +1324,24 @@
           }
         }
       },
+      "ConcurrencyOrPeerCircuitOpen": {
+        "description": "CONCURRENCY_LIMIT_REACHED when the local in-flight limit is reached (Retry-After: 1), or PEER_CIRCUIT_OPEN when the required User Management or Package Registry peer breaker is open (Retry-After: 14).",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer",
+              "enum": [1, 14]
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
       "RequestTimeout": {
         "description": "The request deadline expired. The error code is REQUEST_TIMEOUT.",
         "content": {
@@ -1256,6 +1354,98 @@
       }
     },
     "schemas": {
+      "InstanceStatus": {
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "instanceId",
+          "uptimeSeconds",
+          "load",
+          "dependencies",
+          "checkedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "UP",
+              "DEGRADED",
+              "DOWN"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "const": "guild"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "uptimeSeconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "load": {
+            "type": "object",
+            "required": [
+              "inFlight",
+              "limit",
+              "utilization"
+            ],
+            "properties": {
+              "inFlight": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "utilization": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "status"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "UP",
+                    "DOWN"
+                  ]
+                },
+                "latencyMs": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "circuit": {
+                  "type": "string",
+                  "enum": [
+                    "CLOSED",
+                    "OPEN"
+                  ]
+                }
+              }
+            }
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "required": [
