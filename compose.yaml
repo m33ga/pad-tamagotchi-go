@@ -127,8 +127,13 @@ services:
       retries: 10
 
   map-api:
-    image: grdz/map-service:2.0.4
+    image: grdz/map-service:3.0.0
     pull_policy: always
+    # Three interchangeable replicas, reachable only through the gateway: no
+    # published port, and no container_name, which Compose rejects alongside
+    # replicas. Each one registers itself with Service Discovery at startup.
+    deploy:
+      replicas: 3
     networks: [internal]
     env_file:
       - .env
@@ -136,7 +141,12 @@ services:
     environment:
       REDIS_ADDR: map-redis:6379
       REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
+      # Below the gateway's 5 second upstream timeout, so a slow request ends
+      # with this service's own REQUEST_TIMEOUT rather than the gateway's.
+      REQUEST_TIMEOUT_SECONDS: 4
     depends_on:
+      service-discovery:
+        condition: service_healthy
       map-redis:
         condition: service_healthy
     healthcheck:
