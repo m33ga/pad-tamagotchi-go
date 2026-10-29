@@ -161,8 +161,13 @@ services:
       retries: 10
 
   monster-raid-api:
-    image: grdz/monster-raid-service:2.0.4
+    image: grdz/monster-raid-service:3.0.0
     pull_policy: always
+    # Three interchangeable replicas, reachable only through the gateway: no
+    # published port, and no container_name, which Compose rejects alongside
+    # replicas. Each one registers itself with Service Discovery at startup.
+    deploy:
+      replicas: 3
     networks: [internal]
     env_file:
       - .env
@@ -174,7 +179,12 @@ services:
       POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
       REDIS_ADDR: monster-raid-redis:6379
       REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
+      # Below the gateway's 5 second upstream timeout, so a slow request ends
+      # with this service's own REQUEST_TIMEOUT rather than the gateway's.
+      REQUEST_TIMEOUT_SECONDS: 4
     depends_on:
+      service-discovery:
+        condition: service_healthy
       monster-raid-db:
         condition: service_healthy
       monster-raid-redis:

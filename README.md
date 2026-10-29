@@ -1555,16 +1555,26 @@ authenticating as the `monster-raid-service` client. Each reward command sends
 the raid ID as both its `Idempotency-Key` and business reference, so a
 settlement interrupted by an unreachable peer resumes without crediting twice.
 
+##### Instances, Probes and Circuit Breakers
+
+Monster Raid runs as three interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. Startup migrations run under a PostgreSQL session advisory lock: one instance applies them while the others log `migration_lock_waiting`, and an instance registers with Service Discovery only once its migrations have finished. Raid state changes are compare-and-set on the expected status, so when several instances evaluate the same expired, defeated or settling raid only one of them wins the transition, clears the monster HP and publishes the event; the others re-read the raid. There is no timer: expiry and settlement are evaluated when a raid is read or attacked. Joins are counted in SQL, monster HP and the five attacks per second per participant limit are atomic Redis scripts, so both hold across all three instances.
+
+`GET /health` always answers `200 {"status":"UP"}` and checks nothing, neither PostgreSQL nor Redis. `GET /status` reports readiness to Service Discovery with `postgres`, `redis`, `guild`, `package-registry`, `tamagotchi` and `user-management`, the datastores probed concurrently: PostgreSQL or Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or a peer down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
+
+Peers are never probed: each has its own circuit breaker, so Guild being down never stops calls to Tamagotchi. After three failures within 14 seconds a breaker opens for 14 seconds. While it is open, the operations that need that peer answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, and crediting rewards through User Management takes its existing deferred-settlement path.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
 |---|---|---|---|---|
-| `GET /api/v1/guilds/{guildId}/raids?status={status}&cursor={cursor}&limit={limit}` | Authenticated caller | Query parameters | `200 RaidPageResponse` | `400`, `404 GUILD_NOT_FOUND` |
-| `POST /api/v1/guilds/{guildId}/raids` | Authenticated caller | `CreateRaidRequest` | `201 RaidResponse` | `400`, `404 SCHEDULE_OR_GUILD_NOT_FOUND`, `409 ACTIVE_GUILD_RAID_EXISTS`, `422 SCHEDULE_NOT_ACTIVE` |
+| `GET /health` | Docker healthcheck, internal network only | None | `200 {"status":"UP"}` | None |
+| `GET /status` | Service Discovery, internal network only | None | `200` readiness document, `UP` or `DEGRADED` | `503 DOWN` when PostgreSQL or Redis is unreachable |
+| `GET /api/v1/guilds/{guildId}/raids?status={status}&cursor={cursor}&limit={limit}` | Authenticated caller | Query parameters | `200 RaidPageResponse` | `400`, `404 GUILD_NOT_FOUND`, `503 PEER_CIRCUIT_OPEN` |
+| `POST /api/v1/guilds/{guildId}/raids` | Authenticated caller | `CreateRaidRequest` | `201 RaidResponse` | `400`, `404 SCHEDULE_OR_GUILD_NOT_FOUND`, `409 ACTIVE_GUILD_RAID_EXISTS`, `422 SCHEDULE_NOT_ACTIVE`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/raids/{raidId}` | Authenticated caller | None | `200 RaidResponse` | `404 RAID_NOT_FOUND` |
-| `POST /api/v1/raids/{raidId}/participants` | Guild member | `JoinRaidRequest` | `201 RaidParticipantResponse` | `400`, `403 NOT_GUILD_MEMBER, USER_CALLER_REQUIRED`, `404`, `409 PARTICIPANT_EXISTS`, `422 RAID_NOT_ACTIVE`, `422 PARTICIPANT_LIMIT_REACHED` |
+| `POST /api/v1/raids/{raidId}/participants` | Guild member | `JoinRaidRequest` | `201 RaidParticipantResponse` | `400`, `403 NOT_GUILD_MEMBER, USER_CALLER_REQUIRED`, `404`, `409 PARTICIPANT_EXISTS`, `422 RAID_NOT_ACTIVE`, `422 PARTICIPANT_LIMIT_REACHED`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/raids/{raidId}/participants?cursor={cursor}&limit={limit}` | Authenticated caller | Query parameters | `200 RaidParticipantPageResponse` | `400`, `404 RAID_NOT_FOUND` |
-| `POST /api/v1/raids/{raidId}/attacks` | Raid participant | `CreateRaidAttackRequest` | `200 RaidAttackResponse` | `400`, `403 NOT_RAID_PARTICIPANT, USER_CALLER_REQUIRED`, `404`, `409 ATTACK_ALREADY_PROCESSED`, `422 RAID_NOT_ACTIVE`, `422 TAMAGOTCHI_UNAVAILABLE`, `429 ATTACK_RATE_LIMITED` |
+| `POST /api/v1/raids/{raidId}/attacks` | Raid participant | `CreateRaidAttackRequest` | `200 RaidAttackResponse` | `400`, `403 NOT_RAID_PARTICIPANT, USER_CALLER_REQUIRED`, `404`, `409 ATTACK_ALREADY_PROCESSED`, `422 RAID_NOT_ACTIVE`, `422 TAMAGOTCHI_UNAVAILABLE`, `429 ATTACK_RATE_LIMITED`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/raids/{raidId}/result` | Authenticated caller | None | `200 RaidResultResponse` | `404 RAID_NOT_FOUND`, `409 RAID_NOT_FINISHED` |
 
 Creating a raid is idempotent for the combination of `guildId` and `scheduleId`: if concurrent requests attempt to create the same guild raid, only one active instance is stored.
