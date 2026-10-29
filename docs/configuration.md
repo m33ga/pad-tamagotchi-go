@@ -1,15 +1,23 @@
 # Configuration
 
-The deployment uses one `compose.yaml` and the default Compose network.
-Only `GATEWAY_PORT` and `GUILD_CHAT_PORT` are published to the host. Guild's
-REST listener stays on container port 8081 and its separate socket listener uses
-port 8082. `GUILD_PUBLIC_WS_URL` is the socket address clients receive.
+The deployment uses one `compose.yaml` and two networks. `internal` carries all
+traffic between containers and is declared `internal: true`, so nothing on it can
+reach the internet. `edge` is joined only by the three containers that publish a
+port: the gateway, Guild for its chat socket, and Service Discovery, which also
+needs it to reach the Discord webhook. Every container names its networks
+explicitly.
+
+Only `GATEWAY_PORT` and `GUILD_CHAT_PORT` are published to the network. Service
+Discovery publishes `127.0.0.1:8500`, reachable from the host and nowhere else.
+Guild's REST listener stays on container port 8081 and its separate socket
+listener uses port 8082. `GUILD_PUBLIC_WS_URL` is the socket address clients receive.
 
 ## Environment
 
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
-The published gateway image `grdz/gateway:2.0.1` is pinned directly in Compose.
+The gateway and Service Discovery images, `grdz/gateway:3.3.0` and
+`grdz/service-discovery:3.0.0`, are pinned directly in Compose.
 `SERVICE_PLATFORM` selects the Tamagotchi and Notification container architecture.
 It defaults to `linux/amd64`, which also works through emulation on Apple Silicon.
 Set `linux/arm64` when the selected service images provide that architecture.
@@ -28,13 +36,38 @@ keys through JWKS.
 `REQUEST_TIMEOUT_SECONDS` and `MAX_CONCURRENCY` configure service admission and
 deadlines. Gateway budgets and upstream timeouts are configured separately in
 `config/gateway.yaml`, along with route URLs and the public-operation allowlist.
-Tamagotchi and Notification override the shared deadline with
-`TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS` and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS`,
-4 seconds by default, below the gateway's 5 second upstream timeout so a slow
-request ends with the service's own `504 REQUEST_TIMEOUT`. Tamagotchi follows
+Every service uses a 4 second request deadline, below the gateway's 5 second
+upstream timeout, so a slow request ends with the service's own
+`504 REQUEST_TIMEOUT`. The per-service overrides `TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS`
+and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi follows
 `USE_MOCK_PACKAGE_REGISTRY` like User Management: `true` keeps its built-in
 registry mock, `false` validates health statistics against Package Registry
 through the gateway.
+
+## Service Discovery
+
+Service Discovery needs one secret and nothing else.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DISCORD_WEBHOOK_URL` | empty | Where alerts are posted. Empty means alerts are logged only, with one `alerts_log_only` warning at startup |
+| `LOAD_ALERT_THRESHOLD` | `0.8` | Utilization at or above which an instance raises `load_critical`; it recovers below `0.6` |
+| `SELF_PRESERVATION` | `off` | Not in `.env.example`. `on` suspends evictions while more than half of a service's instances fail at once; off, a single failing instance is always evicted |
+| `GATEWAY_INSTANCE_BREAKER` | `remove` | Not in `.env.example`. `remove` takes an instance that failed 3 times in 14 s out of the gateway's rotation; `log` trips, logs and reports in the same way but keeps routing to it |
+
+To obtain a webhook URL, open the Discord channel's settings, then
+**Integrations > Webhooks > New Webhook**, and copy its URL into your local `.env`.
+The URL is a credential: anyone holding it can post to the channel. Never commit
+it, paste it into an issue or a pull request, or put it in a Postman environment.
+If it leaks, delete the webhook in Discord and create a new one.
+
+`SERVICE_DISCOVERY_URL` does not appear in `.env.example` either. Every service,
+the gateway included, defaults it in code to `http://service-discovery:8080`, the
+deployment address, so it exists only as an override.
+
+The registry keeps its state in the `service-discovery-data` volume. There is no
+heartbeat: an instance registers once at startup, so a registry that loses that
+volume forgets the fleet until every service is restarted.
 
 ## Generate Client Credentials
 
