@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Battle Service API",
-    "version": "2.0.0",
-    "description": "Owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns, and results in PostgreSQL.\n\nThe service publishes the `battle.request.created.v1` and `battle.completed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.\n\nExternal requests use bearer tokens through the gateway. The internal container trusts only gateway-generated identity headers and does not parse or verify tokens. X-Caller-Kind is required internally; user routes require X-User-ID. A valid service caller is authenticated but cannot perform player operations. Sessions and scopes are optional. Missing or malformed identity returns 401 INVALID_IDENTITY. Handlers have a configurable deadline (default 10 seconds) and concurrency budget (default 64), yielding 504 REQUEST_TIMEOUT or immediate 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1.",
+    "version": "3.0.0",
+    "description": "Owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns, and results in PostgreSQL.\n\nThe service publishes the `battle.request.created.v1` and `battle.completed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.\n\nExternal requests use bearer tokens through the gateway. The internal container trusts only gateway-generated identity headers and does not parse or verify tokens. X-Caller-Kind is required internally; user routes require X-User-ID. A valid service caller is authenticated but cannot perform player operations. Sessions and scopes are optional. Missing or malformed identity returns 401 INVALID_IDENTITY. Handlers have a configurable deadline (default 4 seconds) and concurrency budget (default 64), yielding 504 REQUEST_TIMEOUT or immediate 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1. Battle runs as two instances. Every response carries X-Instance-Id, the container hostname.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -116,7 +116,22 @@
             "$ref": "#/components/responses/GatewayIdentityRequired"
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "DEPENDENCY_UNAVAILABLE, PEER_CIRCUIT_OPEN, or CONCURRENCY_LIMIT_REACHED. Open circuits fail immediately with Retry-After: 14; existing settlement degradation keeps durable SETTLING work for recovery.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "14 for PEER_CIRCUIT_OPEN; 1 for CONCURRENCY_LIMIT_REACHED."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -374,7 +389,22 @@
             "$ref": "#/components/responses/GatewayIdentityRequired"
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "DEPENDENCY_UNAVAILABLE, PEER_CIRCUIT_OPEN, or CONCURRENCY_LIMIT_REACHED. Open circuits fail immediately with Retry-After: 14; existing settlement degradation keeps durable SETTLING work for recovery.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "14 for PEER_CIRCUIT_OPEN; 1 for CONCURRENCY_LIMIT_REACHED."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -555,7 +585,7 @@
       "post": {
         "operationId": "createBattleAction",
         "summary": "Perform a battle action",
-        "description": "Callable only by the participant whose turn it is. Deduplicated by the client-generated actionId.",
+        "description": "Callable only by the participant whose turn it is. Deduplicated by the client-generated actionId. Peer commands use a durable settlement idempotency key across replica failover; incomplete settlement remains SETTLING and is retried safely.",
         "tags": [
           "Battles"
         ],
@@ -639,7 +669,22 @@
             "$ref": "#/components/responses/GatewayIdentityRequired"
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "DEPENDENCY_UNAVAILABLE, PEER_CIRCUIT_OPEN, or CONCURRENCY_LIMIT_REACHED. Open circuits fail immediately with Retry-After: 14; existing settlement degradation keeps durable SETTLING work for recovery.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "14 for PEER_CIRCUIT_OPEN; 1 for CONCURRENCY_LIMIT_REACHED."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
@@ -651,7 +696,7 @@
       "post": {
         "operationId": "forfeitBattle",
         "summary": "Forfeit an active battle",
-        "description": "Callable only by battle participants. The forfeiting participant loses the battle.",
+        "description": "Callable only by battle participants. The forfeiting participant loses the battle. Peer commands use a durable settlement idempotency key across replica failover; incomplete settlement remains SETTLING and is retried safely.",
         "tags": [
           "Battles"
         ],
@@ -709,12 +754,121 @@
             "$ref": "#/components/responses/GatewayIdentityRequired"
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "DEPENDENCY_UNAVAILABLE, PEER_CIRCUIT_OPEN, or CONCURRENCY_LIMIT_REACHED. Open circuits fail immediately with Retry-After: 14; existing settlement degradation keeps durable SETTLING work for recovery.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "14 for PEER_CIRCUIT_OPEN; 1 for CONCURRENCY_LIMIT_REACHED."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "504": {
             "$ref": "#/components/responses/RequestTimeout"
           }
         }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Dependency-free liveness. Always 200 UP while serving HTTP.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Dependency-free liveness. Always 200 UP while serving HTTP.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Instance-Id": {
+                "description": "Unique container hostname for the serving replica.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "http://battle-api:8080",
+            "description": "Internal origin; public registry/container probe outside the API base path."
+          }
+        ]
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Postgres DOWN gives 503 DOWN; load >= 0.8 or an unavailable/open peer gives 200 DEGRADED; otherwise 200 UP. Each Postgres probe has a one-second deadline and is cached for one second; peers use only local circuit state.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Postgres DOWN gives 503 DOWN; load >= 0.8 or an unavailable/open peer gives 200 DEGRADED; otherwise 200 UP. Each Postgres probe has a one-second deadline and is cached for one second; peers use only local circuit state.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Instance-Id": {
+                "description": "Unique container hostname for the serving replica.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Postgres unavailable: DOWN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-Instance-Id": {
+                "description": "Unique container hostname for the serving replica.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "servers": [
+          {
+            "url": "http://battle-api:8080",
+            "description": "Internal origin; public registry/container probe outside the API base path."
+          }
+        ]
       }
     }
   },
@@ -1605,6 +1759,125 @@
             "type": "string",
             "format": "date-time",
             "description": "Settlement completion time"
+          }
+        }
+      },
+      "LivenessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "UP"
+          }
+        }
+      },
+      "DependencyStatus": {
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "postgres",
+              "tamagotchi",
+              "user-management",
+              "package-registry"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "UP",
+              "DOWN"
+            ]
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Measured direct dependency latency; omitted when DOWN."
+          },
+          "circuit": {
+            "type": "string",
+            "enum": [
+              "CLOSED",
+              "OPEN"
+            ],
+            "description": "Peers only, from the local breaker; no live peer probe."
+          }
+        }
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "instanceId",
+          "uptimeSeconds",
+          "load",
+          "dependencies",
+          "checkedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "UP",
+              "DEGRADED",
+              "DOWN"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "const": "battle"
+          },
+          "instanceId": {
+            "type": "string",
+            "description": "Container hostname / Environment.MachineName."
+          },
+          "uptimeSeconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "load": {
+            "type": "object",
+            "required": [
+              "inFlight",
+              "limit",
+              "utilization"
+            ],
+            "properties": {
+              "inFlight": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "utilization": {
+                "type": "number",
+                "multipleOf": 0.01,
+                "minimum": 0
+              }
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DependencyStatus"
+            }
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 UTC with milliseconds."
           }
         }
       }
