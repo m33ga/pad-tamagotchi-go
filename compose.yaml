@@ -340,7 +340,7 @@ services:
 
   tamagotchi-api:
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v3.0.0
+    image: johnnyc05/pad-tamagotchi-service:v3.0.1
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
