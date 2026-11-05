@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package tamagotchigo.tamagotchi.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "TamagotchiGo.Tamagotchi.V1";
+
+// Internal API of Tamagotchi, called by other services through the broker. Every RPC mirrors the
+// REST operation named in its comment: same fields, same authorization by the caller's verified
+// service name, same error codes, returned as `google.rpc.ErrorInfo.reason` with the status from
+// the HTTP-to-gRPC table in the CPR README.
+service Tamagotchi {
+  // Mirrors `GET /api/v1/tamagotchis/{tamagotchiId}`. Callers: battle, monster-raid.
+  // Errors: NOT_FOUND `TAMAGOTCHI_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetTamagotchi(GetTamagotchiRequest) returns (GetTamagotchiResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/users/{userId}/tamagotchis`. Callers: battle, monster-raid.
+  // Errors: INVALID_ARGUMENT `INVALID_ROLE`, PERMISSION_DENIED.
+  rpc ListUserTamagotchis(ListUserTamagotchisRequest) returns (ListUserTamagotchisResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/users/{userId}/primary-tamagotchi`. Callers: battle, monster-raid.
+  // Errors: NOT_FOUND `PRIMARY_TAMAGOTCHI_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetPrimaryTamagotchi(GetPrimaryTamagotchiRequest) returns (GetPrimaryTamagotchiResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/tamagotchis/{tamagotchiId}/combat-profile`. Callers: battle,
+  // monster-raid. Errors: NOT_FOUND `TAMAGOTCHI_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetCombatProfile(GetCombatProfileRequest) returns (GetCombatProfileResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `POST /api/v1/tamagotchis/{tamagotchiId}/xp-grants`. Callers: battle (raid XP arrives
+  // through `raid.completed.v1`). Errors: INVALID_ARGUMENT, NOT_FOUND, ALREADY_EXISTS
+  // `XP_ALREADY_GRANTED`, PERMISSION_DENIED.
+  rpc GrantXp(GrantXpRequest) returns (GrantXpResponse);
+
+  // Mirrors `POST /api/v1/tamagotchi-ownership-transfers`. Callers: battle. Errors:
+  // INVALID_ARGUMENT, NOT_FOUND, ALREADY_EXISTS `OWNERSHIP_ALREADY_TRANSFERRED`, ABORTED
+  // `TAMAGOTCHI_NOT_OWNED`, FAILED_PRECONDITION `INVALID_TRANSFER`, PERMISSION_DENIED.
+  rpc TransferOwnership(TransferOwnershipRequest) returns (TransferOwnershipResponse);
+}
+
+enum OwnershipRole {
+  OWNERSHIP_ROLE_UNSPECIFIED = 0;
+  OWNERSHIP_ROLE_PRIMARY = 1;
+  OWNERSHIP_ROLE_SECONDARY = 2;
+}
+
+enum CombatType {
+  COMBAT_TYPE_UNSPECIFIED = 0;
+  COMBAT_TYPE_FLAME = 1;
+  COMBAT_TYPE_NATURE = 2;
+  COMBAT_TYPE_EARTH = 3;
+  COMBAT_TYPE_ELECTRIC = 4;
+  COMBAT_TYPE_WATER = 5;
+  COMBAT_TYPE_SHADOW = 6;
+}
+
+enum XpSource {
+  XP_SOURCE_UNSPECIFIED = 0;
+  XP_SOURCE_BATTLE = 1;
+  XP_SOURCE_RAID = 2;
+}
+
+enum TransferReason {
+  TRANSFER_REASON_UNSPECIFIED = 0;
+  TRANSFER_REASON_BATTLE_REWARD = 1;
+}
+
+message TamagotchiInfo {
+  string tamagotchi_id = 1;
+  string owner_user_id = 2;
+  string package_id = 3;
+  string name = 4;
+  OwnershipRole ownership_role = 5;
+  CombatType combat_type = 6;
+  int32 level = 7;
+  int64 xp = 8;
+  string sprite_url = 9;
+  // Package-local statistics; values are integers, decimals or booleans per the package's
+  // statistic definitions.
+  google.protobuf.Struct health_stats = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+}
+
+message GetTamagotchiRequest {
+  string tamagotchi_id = 1;
+}
+
+message GetTamagotchiResponse {
+  TamagotchiInfo tamagotchi = 1;
+}
+
+message ListUserTamagotchisRequest {
+  string user_id = 1;
+  // Absent means both roles.
+  optional OwnershipRole role = 2;
+}
+
+message ListUserTamagotchisResponse {
+  // Empty when the user has none.
+  repeated TamagotchiInfo tamagotchis = 1;
+}
+
+message GetPrimaryTamagotchiRequest {
+  string user_id = 1;
+}
+
+message GetPrimaryTamagotchiResponse {
+  TamagotchiInfo tamagotchi = 1;
+}
+
+message GetCombatProfileRequest {
+  string tamagotchi_id = 1;
+}
+
+message GetCombatProfileResponse {
+  string tamagotchi_id = 1;
+  string owner_user_id = 2;
+  string package_id = 3;
+  CombatType combat_type = 4;
+  int32 level = 5;
+  google.protobuf.Struct health_stats = 6;
+}
+
+message GrantXpRequest {
+  string tamagotchi_id = 1;
+  // Positive.
+  int64 amount = 2;
+  XpSource source = 3;
+  // Battle or raid identifier used for deduplication.
+  string reference_id = 4;
+}
+
+message GrantXpResponse {
+  string tamagotchi_id = 1;
+  int32 previous_level = 2;
+  int32 new_level = 3;
+  int64 total_xp = 4;
+  google.protobuf.Timestamp processed_at = 5;
+}
+
+message TransferOwnershipRequest {
+  string tamagotchi_id = 1;
+  string from_user_id = 2;
+  string to_user_id = 3;
+  TransferReason reason = 4;
+  // Completed battle identifier used for deduplication.
+  string reference_id = 5;
+}
+
+message TransferOwnershipResponse {
+  string transfer_id = 1;
+  string tamagotchi_id = 2;
+  string from_user_id = 3;
+  string to_user_id = 4;
+  // Always `OWNERSHIP_ROLE_SECONDARY`.
+  OwnershipRole new_ownership_role = 5;
+  google.protobuf.Timestamp transferred_at = 6;
+}

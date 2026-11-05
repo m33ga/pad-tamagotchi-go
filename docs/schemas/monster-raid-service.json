@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Monster Raid Service API",
-    "version": "3.0.0",
-    "description": "Owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress.\n\nThe service publishes the `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.\n\nThe service runs as three interchangeable instances behind the gateway. Every response carries `X-Instance-Id`, and each instance registers itself with Service Discovery, which polls `/status`. Every peer call goes through a circuit breaker: three failures within 14 seconds open it for 14 seconds, then one trial call decides. Each peer has its own breaker, so Guild being down never stops calls to Tamagotchi. Crediting rewards through User Management keeps its existing deferred-settlement path while that circuit is open, and reading a raid or its result never needs a peer.",
+    "version": "4.0.0",
+    "description": "Owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress.\n\nThe service publishes the `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1` events to message broker topics through a transactional outbox. Event payload schemas are included under components for reference; events travel as the common event envelope in a broker `Publish`, not over HTTP. Raid rewards are settled by User Management (currency) and Tamagotchi (XP) from `raid.completed.v1`.\n\nThe service runs as three interchangeable instances behind the message broker. Every response carries `X-Instance-Id`, and each instance registers itself with Service Discovery, which polls `/status`. Every peer call goes through a circuit breaker: three failures within 14 seconds open it for 14 seconds, then one trial call decides. Each peer has its own breaker, so Guild being down never stops calls to Tamagotchi. Reading a raid or its result never needs a peer.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -60,7 +60,6 @@
               "type": "string",
               "enum": [
                 "ACTIVE",
-                "SETTLING",
                 "COMPLETED",
                 "FAILED"
               ]
@@ -1253,11 +1252,10 @@
             "type": "string",
             "enum": [
               "ACTIVE",
-              "SETTLING",
               "COMPLETED",
               "FAILED"
             ],
-            "description": "Current raid lifecycle state. When monster HP reaches zero the raid enters SETTLING and performs idempotent reward commands keyed by raidId; it becomes COMPLETED only after all required reward commands succeed. If the deadline arrives while monster HP is above zero, the raid becomes FAILED and no rewards are distributed"
+            "description": "Current raid lifecycle state. When monster HP reaches zero the raid becomes COMPLETED with its rewards stored, and raid.completed.v1 carries them to User Management and Tamagotchi, which apply them. If the deadline arrives while monster HP is above zero, the raid becomes FAILED and no rewards are distributed"
           },
           "monster": {
             "$ref": "#/components/schemas/RaidMonsterState",
@@ -1484,7 +1482,7 @@
             "type": "string",
             "enum": [
               "ACTIVE",
-              "SETTLING"
+              "COMPLETED"
             ],
             "description": "State after applying the attack"
           },
@@ -1559,12 +1557,12 @@
           "globalCurrency": {
             "type": "integer",
             "minimum": 0,
-            "description": "Currency credited through User Management Service"
+            "description": "Currency awarded; User Management credits it from raid.completed.v1"
           },
           "xp": {
             "type": "integer",
             "minimum": 0,
-            "description": "XP granted through Tamagotchi Service"
+            "description": "XP awarded; Tamagotchi grants it from raid.completed.v1"
           }
         }
       },
@@ -1675,7 +1673,7 @@
       },
       "RaidFinishedEventV1": {
         "type": "object",
-        "description": "Shared payload of `raid.completed.v1` and `raid.failed.v1`, published only after the corresponding terminal state is stored. Notification Service consumes both to notify guild members and participants.",
+        "description": "Shared payload of `raid.completed.v1` and `raid.failed.v1`, published only after the corresponding terminal state is stored. Notification Service consumes both to notify guild members and participants; User Management and Tamagotchi consume `raid.completed.v1` to credit currency and grant XP from `rewards`, deduplicated by `raidId`.",
         "required": [
           "raidId",
           "guildId",
@@ -1714,6 +1712,13 @@
             "type": "string",
             "format": "date-time",
             "description": "Time at which the terminal state was stored"
+          },
+          "rewards": {
+            "type": "array",
+            "description": "Currency and XP per participant. Required in raid.completed.v1, absent in raid.failed.v1",
+            "items": {
+              "$ref": "#/components/schemas/RaidParticipantReward"
+            }
           }
         }
       },

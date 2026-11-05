@@ -1,0 +1,34 @@
+name: Proto
+
+on:
+  pull_request:
+    paths:
+      - "docs/schemas/proto/**"
+      - ".github/workflows/proto.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/schemas/proto/**"
+      - ".github/workflows/proto.yml"
+
+permissions:
+  contents: read
+
+env:
+  BUF: docker run --rm -v ${{ github.workspace }}/docs/schemas/proto:/workspace -w /workspace bufbuild/buf:1.50.0
+
+jobs:
+  buf:
+    name: Lint, format and build protos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint
+        run: $BUF lint --error-format=github-actions
+
+      - name: Format
+        run: $BUF format --diff --exit-code
+
+      - name: Build
+        run: $BUF build -o /dev/null

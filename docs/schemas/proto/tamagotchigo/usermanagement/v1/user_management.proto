@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package tamagotchigo.usermanagement.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "TamagotchiGo.UserManagement.V1";
+
+// Internal API of User Management, called by other services through the broker. Every RPC
+// mirrors the REST operation named in its comment: same fields, same authorization by the
+// caller's verified service name, same error codes, returned as `google.rpc.ErrorInfo.reason`
+// with the status from the HTTP-to-gRPC table in the CPR README.
+service UserManagement {
+  // Mirrors `GET /api/v1/users/{userId}`. Callers: any internal service.
+  // Errors: NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/users/{userId}/relationships`. Callers: map, guild.
+  // Errors: INVALID_ARGUMENT `INVALID_REQUEST`, NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
+  rpc ListRelationships(ListRelationshipsRequest) returns (ListRelationshipsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/users/{userId}/relationships/{otherUserId}`. Callers: map, guild.
+  // Errors: NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetRelationship(GetRelationshipRequest) returns (GetRelationshipResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/users/{userId}/balances`. Callers: battle.
+  // Errors: NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetBalances(GetBalancesRequest) returns (GetBalancesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `POST /api/v1/users/{userId}/balances`. Callers: battle. Send the idempotency key as
+  // `idempotency-key`; a repeated `reference_id` for the same user and reason is not applied twice.
+  // Errors: INVALID_ARGUMENT, NOT_FOUND `USER_NOT_FOUND`, FAILED_PRECONDITION
+  // `INSUFFICIENT_BALANCE`, PERMISSION_DENIED.
+  rpc CreateBalanceTransaction(CreateBalanceTransactionRequest) returns (CreateBalanceTransactionResponse);
+
+  // Mirrors `GET /api/v1/users/{userId}/packages`. Callers: any internal service.
+  // Errors: NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
+  rpc ListUserPackages(ListUserPackagesRequest) returns (ListUserPackagesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+// Relationship between two users. `NONE` only appears in `GetRelationship`.
+enum Relationship {
+  RELATIONSHIP_UNSPECIFIED = 0;
+  RELATIONSHIP_FRIEND = 1;
+  RELATIONSHIP_ENEMY = 2;
+  RELATIONSHIP_NONE = 3;
+}
+
+enum Currency {
+  CURRENCY_UNSPECIFIED = 0;
+  CURRENCY_GLOBAL = 1;
+  CURRENCY_LOCAL = 2;
+}
+
+enum TransactionReason {
+  TRANSACTION_REASON_UNSPECIFIED = 0;
+  TRANSACTION_REASON_BATTLE_REWARD = 1;
+  TRANSACTION_REASON_BATTLE_LOSS = 2;
+  TRANSACTION_REASON_RAID_REWARD = 3;
+  TRANSACTION_REASON_ADMIN_ADJUSTMENT = 4;
+}
+
+message User {
+  string user_id = 1;
+  string username = 2;
+  string email = 3;
+  repeated string package_ids = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message UserRelationship {
+  string other_user_id = 1;
+  Relationship relationship = 2;
+}
+
+message LocalBalance {
+  string package_id = 1;
+  int64 balance = 2;
+}
+
+message PackageReference {
+  string package_id = 1;
+  google.protobuf.Timestamp registered_at = 2;
+}
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message ListRelationshipsRequest {
+  string user_id = 1;
+  // Absent on the first page; then the previous page's `next_cursor`.
+  optional string cursor = 2;
+  // 1 to 100; absent means 50.
+  optional int32 limit = 3;
+  // `RELATIONSHIP_FRIEND` or `RELATIONSHIP_ENEMY`; absent means both.
+  optional Relationship status = 4;
+}
+
+message ListRelationshipsResponse {
+  repeated UserRelationship items = 1;
+  // Absent on the last page.
+  optional string next_cursor = 2;
+}
+
+message GetRelationshipRequest {
+  string user_id = 1;
+  string other_user_id = 2;
+}
+
+message GetRelationshipResponse {
+  string user_id = 1;
+  string other_user_id = 2;
+  Relationship relationship = 3;
+}
+
+message GetBalancesRequest {
+  string user_id = 1;
+}
+
+message GetBalancesResponse {
+  string user_id = 1;
+  int64 global_balance = 2;
+  repeated LocalBalance local_balances = 3;
+}
+
+message CreateBalanceTransactionRequest {
+  string user_id = 1;
+  Currency currency = 2;
+  // Required when `currency` is `CURRENCY_LOCAL`.
+  optional string package_id = 3;
+  // Signed amount in the currency's smallest unit.
+  int64 amount = 4;
+  TransactionReason reason = 5;
+  // Battle or raid identifier used for deduplication.
+  string reference_id = 6;
+}
+
+message CreateBalanceTransactionResponse {
+  string transaction_id = 1;
+  int64 resulting_balance = 2;
+  google.protobuf.Timestamp processed_at = 3;
+}
+
+message ListUserPackagesRequest {
+  string user_id = 1;
+}
+
+message ListUserPackagesResponse {
+  repeated PackageReference packages = 1;
+}

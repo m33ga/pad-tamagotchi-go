@@ -126,19 +126,19 @@ The architecture uses different communication patterns according to whether a ca
 
 ### Client-to-Service Communication
 
-Clients send HTTPS requests through the API Gateway. The gateway routes each request to the service that owns the requested functionality. Public APIs use versioned REST endpoints and JSON payloads because REST is supported consistently by both C# and Go and is easy to inspect and test. The trade-off is additional HTTP and JSON overhead compared with a binary protocol.
+Clients send HTTPS requests to the API Gateway. The gateway authenticates the caller, checks the route against its allowlist and hands the request to the [message broker](#message-broker) as a message addressed to the service that owns the functionality; the broker delivers it to one instance and returns that instance's reply. Public APIs use versioned REST endpoints and JSON payloads because REST is supported consistently by both C# and Go and is easy to inspect and test. The trade-off is additional HTTP and JSON overhead compared with a binary protocol.
 
 ### Synchronous Service-to-Service Communication
 
-Services use REST over HTTPS with JSON when the caller needs an immediate response before it can continue. Examples include validating a user, checking guild membership, retrieving Tamagotchi combat statistics, and loading package-specific rules.
+Services call each other through the message broker over gRPC when the caller needs an immediate response before it can continue. Examples include validating a user, checking guild membership, retrieving Tamagotchi combat statistics, and loading package-specific rules. The contracts are protobuf definitions in [`docs/schemas/proto`](docs/schemas/proto): binary messages over long-lived HTTP/2 connections cost less than JSON over HTTP/1.1, and the same definition generates the C# and the Go code.
 
-Synchronous calls keep request and response flows simple, but they also make the caller depend on the availability of the receiving service. Calls therefore use bounded timeouts. Only idempotent requests may be retried automatically, using exponential backoff.
+Synchronous calls keep request and response flows simple, but they also make the caller depend on the availability of the receiving service. Calls therefore use bounded timeouts. Only requests that are safe to repeat are retried automatically: reads, and commands that carry an idempotency key.
 
 ### Asynchronous Event Communication
 
-Services publish JSON domain events through a message queue when the producer does not require an immediate response. This is used for events such as a nearby player being detected, a guild invitation being created, a battle finishing, or a raid starting. Notification Service consumes relevant events and decides whether a Firebase push notification should be sent.
+Services publish JSON domain events to topics in the message broker when the producer does not require an immediate response. This is used for events such as a nearby player being detected, a guild invitation being created, a battle finishing, or a raid starting. A producer never knows who is interested: each service declares the topics it subscribes to when it registers with Service Discovery, and the broker delivers every event to one instance of each subscribing service. Notification Service subscribes to every user-facing event and decides whether a Firebase push notification should be sent; User Management and Tamagotchi also subscribe to `raid.completed.v1` to credit raid rewards.
 
-The queue decouples producers from consumers and allows events to be processed even when a consumer is temporarily unavailable. Because an event may be delivered more than once, every event has a unique `eventId` and consumers handle duplicate delivery idempotently. The concrete queue technology will be selected during implementation.
+The broker keeps a durable queue per subscribing service, so an event survives a broker restart or a subscriber outage and is delivered once the subscriber is back; an event that can never be delivered moves to a dead letter channel. Because an event may be delivered more than once, every event has a unique `eventId` and consumers handle duplicate delivery idempotently.
 
 ### Real-Time Client Communication
 
@@ -154,40 +154,43 @@ Each microservice owns its database and exposes its data only through its API or
 
 ### Service Interaction Matrix
 
-The following interactions correspond to the arrows in the architecture diagram and the real-time Guild Chat requirement.
+The following interactions correspond to the arrows in the architecture diagram and the real-time Guild Chat requirement. Every service-to-service row goes through the message broker.
 
 | Caller / Producer | Receiver / Consumer | Pattern | Purpose |
 |---|---|---|---|
-| Client | API Gateway | Synchronous HTTPS | Enter the system and route API requests to the responsible service |
+| Client | API Gateway | Synchronous HTTPS | Enter the system |
+| API Gateway | Any service | Broker `Send`, delivered as REST | Route an authenticated client request to the responsible service |
 | Client | Guild Service | WebSocket | Send and receive Guild Chat messages in real time |
-| Map Service | User Management Service | Synchronous REST | Resolve user identity and friend/enemy relationships for proximity results |
-| Map Service | Notification Service | Asynchronous queue event | Report that nearby players were detected |
-| User Management Service | Package Registry Service | Synchronous REST | Validate package information associated with a user |
-| User Management Service | Notification Service | Asynchronous queue event | Report newly created friend requests |
-| Guild Service | User Management Service | Synchronous REST | Validate users, relationships, and permissions used by guild operations |
-| Guild Service | Package Registry Service | Synchronous REST | Validate package-related membership information when required |
-| Guild Service | Notification Service | Asynchronous queue event | Report newly created guild invitations |
-| Monster Raid Service | Guild Service | Synchronous REST | Validate guild membership and raid eligibility |
-| Monster Raid Service | User Management Service | Synchronous REST | Credit participating users with global rewards |
-| Monster Raid Service | Tamagotchi Service | Synchronous REST | Obtain participating Tamagotchi combat properties |
-| Monster Raid Service | Package Registry Service | Synchronous REST | Obtain raid and package-specific combat configuration |
-| Monster Raid Service | Notification Service | Asynchronous queue event | Report that a raid started, completed, or failed |
-| Battle Service | User Management Service | Synchronous REST | Validate players and apply global currency rewards or losses |
-| Battle Service | Tamagotchi Service | Synchronous REST | Obtain combat properties, grant XP, and transfer Tamagotchi ownership |
-| Battle Service | Package Registry Service | Synchronous REST | Obtain package-specific combat bonus rules |
-| Battle Service | Notification Service | Asynchronous queue event | Report battle invitations and results |
-| Tamagotchi Service | Package Registry Service | Synchronous REST | Obtain definitions and interpretation rules for package-local statistics |
+| Map Service | User Management Service | gRPC through the broker | Resolve user identity and friend/enemy relationships for proximity results |
+| Map Service | Notification Service | Event through a broker topic | Report that nearby players were detected |
+| User Management Service | Package Registry Service | gRPC through the broker | Validate package information associated with a user |
+| User Management Service | Notification Service | Event through a broker topic | Report newly created friend requests |
+| Guild Service | User Management Service | gRPC through the broker | Validate users, relationships, and permissions used by guild operations |
+| Guild Service | Package Registry Service | gRPC through the broker | Validate package-related membership information when required |
+| Guild Service | Notification Service | Event through a broker topic | Report newly created guild invitations |
+| Monster Raid Service | Guild Service | gRPC through the broker | Validate guild membership and raid eligibility |
+| Monster Raid Service | Tamagotchi Service | gRPC through the broker | Obtain participating Tamagotchi combat properties |
+| Monster Raid Service | Package Registry Service | gRPC through the broker | Obtain raid and package-specific combat configuration |
+| Monster Raid Service | Notification Service | Event through a broker topic | Report that a raid started, completed, or failed |
+| Monster Raid Service | User Management Service | Event through a broker topic (`raid.completed.v1`) | Credit participating users with global rewards |
+| Monster Raid Service | Tamagotchi Service | Event through a broker topic (`raid.completed.v1`) | Grant XP to participating Tamagotchis |
+| Battle Service | User Management Service | gRPC through the broker | Validate players and apply global currency rewards or losses |
+| Battle Service | Tamagotchi Service | gRPC through the broker | Obtain combat properties, grant XP, and transfer Tamagotchi ownership |
+| Battle Service | Package Registry Service | gRPC through the broker | Obtain package-specific combat bonus rules |
+| Battle Service | Notification Service | Event through a broker topic | Report battle invitations and results |
+| Tamagotchi Service | Package Registry Service | gRPC through the broker | Obtain definitions and interpretation rules for package-local statistics |
 | Notification Service | Firebase Cloud Messaging | Provider API | Deliver push notifications to user devices |
 
 ### Common Communication Rules
 
 - REST endpoints are versioned under `/api/v1` and use `application/json`.
+- Calls between services use gRPC with the protobuf contracts in [`docs/schemas/proto`](docs/schemas/proto), sent through the message broker.
 - Resource paths use plural, lowercase, kebab-case nouns. The same resource collection keeps the same path across HTTP methods; the method expresses the operation.
 - State-changing decisions use noun subresources such as `/responses` or a `PATCH` to the resource instead of verb segments such as `/accept` or `/cancel`.
-- Event names include a version suffix, for example `guild.invitation.created.v1`.
+- Event names include a version suffix, for example `guild.invitation.created.v1`. The event name is also the broker topic.
 - Resource and event identifiers use UUID strings.
 - Timestamps use UTC ISO 8601 strings.
-- Clients and service callers present bearer JWTs to the gateway. Services receive trusted identity headers.
+- Clients present bearer JWTs to the gateway; services present their service token to the broker. Services receive trusted identity headers or metadata.
 - `X-Correlation-ID` traces one operation across services and events.
 - Commands that can be submitted more than once accept an `Idempotency-Key`.
 - Services return consistent JSON error objects containing `code`, `message`, and `correlationId`.
@@ -237,7 +240,7 @@ Common error statuses are `400` for an invalid request, `401` for missing or inv
 
 ### Operational Endpoints
 
-Every service, the gateway and Service Discovery included, serves the same two endpoints at the root of its own listener, outside `/api/v1`. Both are unauthenticated, exempt from the concurrency limiter and sent with `Cache-Control: no-store`. They are internal: the gateway refuses to forward either one (see [Gateway](#gateway)), so only Docker and Service Discovery reach them.
+Every service, the gateway and Service Discovery included, serves the same two endpoints at the root of its own listener, outside `/api/v1`. Both are unauthenticated, exempt from the concurrency limiter and sent with `Cache-Control: no-store`. They are internal: neither the gateway nor the message broker ever delivers either one (see [Gateway](#gateway)), so only Docker and Service Discovery reach them.
 
 | Endpoint | Purpose | Caller | Answer |
 |---|---|---|---|
@@ -276,7 +279,7 @@ Every service, the gateway and Service Discovery included, serves the same two e
 | `dependencies[].circuit` | enum, optional | `CLOSED` or `OPEN`, peers only |
 | `checkedAt` | timestamp | ISO 8601 UTC with milliseconds |
 
-Services may add blocks of their own (the gateway reports its instance pools, Service Discovery its registry summary) but never change these fields.
+Services may add blocks of their own (the message broker reports its queues and instance pools, Service Discovery its registry summary) but never change these fields.
 
 The status is computed in order, the first match winning:
 
@@ -298,42 +301,50 @@ Services obtain a service token using OAuth2 client credentials, cache it and
 refresh it when fewer than 30 seconds remain. The issuer signs its own outbound
 service tokens with `sub: user-management-service` and needs no client secret.
 
-All API calls go through the gateway at `/<service>/api/v1/...`. The gateway
-validates the signature and claims against the public JWKS, removes caller-supplied
-identity headers and `Authorization`, then sets the verified identity below.
-Services authorize these headers rather than verifying JWTs themselves. Missing
-`X-Caller-Kind` is rejected with 401; bearer tokens alone grant no direct access.
+Clients call the gateway at `/<service>/api/v1/...`; the gateway validates the
+signature and claims against the public JWKS, removes caller-supplied identity
+headers and `Authorization`, and passes the verified user identity to the message
+broker. Services present their service token to the broker on every `Send` and
+`Publish`; the broker validates it the same way. Either way the callee receives the
+verified identity below, as HTTP headers on a REST request or as gRPC metadata with
+lower-case names. Services authorize this identity rather than verifying JWTs
+themselves. Missing `X-Caller-Kind` is rejected with 401 (`UNAUTHENTICATED` over
+gRPC); bearer tokens alone grant no direct access. The broker accepts a user
+identity only from the gateway.
 
 | Header | Caller | Value |
 |---|---|---|
-| `X-Caller-Kind` | Every forwarded request | `user`, `service` or `anonymous` |
+| `X-Caller-Kind` | Every delivered request | `user`, `service` or `anonymous` |
 | `X-User-ID` | User | Authenticated user UUID |
 | `X-Session-ID` | User, when present | Session UUID |
 | `X-Service-Name` | Service | Authenticated service name |
 | `X-Scopes` | Service, when present | Space-separated scopes |
 
-Public operations are explicitly listed in [`config/gateway.yaml`](config/gateway.yaml).
-The gateway ignores bearer tokens on those operations and forwards anonymous
-identity. Registration, login, session refresh and client credentials are public
-POST operations; `GET /user-management/.well-known/jwks.json` is public key
-discovery. Health checks are internal probe endpoints and need no identity.
+Public client operations are explicitly listed in [`config/gateway.yaml`](config/gateway.yaml).
+The gateway ignores bearer tokens on those operations and passes anonymous
+identity. Registration, login and session refresh are public POST operations;
+`GET /user-management/.well-known/jwks.json` is public key discovery. Services
+obtain their token through the broker: the client credentials request
+(`POST /api/v1/oauth2/token` to `user-management`) and the JWKS read are the only
+`Send`s the broker accepts without a token. Health checks are internal probe
+endpoints and need no identity.
 
 All JWTs use RS256, `kid`, issuer and audience `tamagotchi-go`. User claims: `sub` user UUID, `sid` session UUID, `kind: user`, `iat`, `nbf`, `exp` after 900 seconds. Service claims: `sub` client ID, `kind: service`, optional/empty `scope`, `iat`, `nbf`, `exp` after 300 seconds, UUID `jti`. JWKS contains public RSA `kty`, `kid`, `use: sig`, `alg: RS256`, `n`, `e`, and can expose old and current keys concurrently. No symmetric keys or private parameters are published.
 
 | Client ID | Scopes |
 |---|---|
 | battle-service | tamagotchis:read, users.balances:write, packages:read |
-| monster-raid-service | tamagotchis:read, users.balances:write, guilds:read, packages:read |
+| monster-raid-service | tamagotchis:read, guilds:read, packages:read |
 | map-service | users:read |
 | guild-service | users:read, packages:read |
 | tamagotchi-service | packages:read |
 | package-registry-service | none |
 | notification-service | none |
+| api-gateway | none; identifies the gateway to the broker |
 
 Scopes follow `<resource>:<action>` and are advisory; callees authorize by service name. Each client authenticates with its own secret; disabled clients are rejected.
 
-Outbound service calls follow the same gateway authentication flow and preserve
-`X-Correlation-ID`. An identifier is generated only when absent. Retriable commands
+Outbound service calls go through the broker and preserve `X-Correlation-ID`. An identifier is generated only when absent. Retriable commands
 keep their `Idempotency-Key` across attempts. Each service bounds handlers with a
 configurable deadline and passes the remaining time to outbound calls. Deadline
 expiry returns 504 `REQUEST_TIMEOUT` in the common error envelope. Concurrency
@@ -342,7 +353,7 @@ admission is bounded and immediate: saturation returns 503
 
 ### Instance Identity and Load Balancing
 
-Each service runs as several interchangeable instances behind the gateway. Every service has one **canonical service name**. It is the route key in [`config/gateway.yaml`](config/gateway.yaml), and the same string is used in registration, in `/status`, in the `service` field of every log line and in headers. It is a compile-time constant, never configuration.
+Each service runs as several interchangeable instances behind the message broker. Every service has one **canonical service name**. It is the route key in [`config/gateway.yaml`](config/gateway.yaml), and the same string is used in registration, in `/status`, in the `service` field of every log line and in headers. It is a compile-time constant, never configuration.
 
 | Canonical name | Gateway prefix | Instances |
 |---|---|---:|
@@ -362,9 +373,9 @@ An instance's **instance id** is its container hostname, which Docker sets to th
 | Header | Set by | On | Value |
 |---|---|---|---|
 | `X-Instance-Id` | every service | every response, errors included | the instance id of the instance that produced it |
-| `X-Gateway-Upstream` | the gateway | every proxied response | `<service>/<instanceId>`, the instance that actually answered |
+| `X-Broker-Upstream` | the message broker | every reply to a `Send`, passed on by the gateway to clients | `<service>/<instanceId>`, the instance that actually answered |
 
-**A caller addresses a service by name, never an instance.** Service-to-service calls go to `GATEWAY_URL/<prefix>/...` and the gateway picks the instance: round-robin over the instances Service Discovery reports, preferring `UP` ones and falling back to `DEGRADED` ones, skipping instances that are `DOWN`, quarantined or at their concurrency limit. No service keeps instance addresses, pins a caller to an instance or reads the catalogue, so every instance of a service must be able to serve every request. Shared state therefore lives in the service's datastore, never in process memory.
+**A caller addresses a service by name, never an instance.** The gateway and every service send a message to a service name, and the broker picks the instance from the instances Service Discovery reports: preferring `UP` ones and falling back to `DEGRADED` ones, skipping instances that are `DOWN`, quarantined or at their concurrency limit, round-robin or by least load (see [Message Broker](#message-broker)). No service keeps instance addresses, pins a caller to an instance or reads the catalogue, so every instance of a service must be able to serve every request. Shared state therefore lives in the service's datastore, never in process memory.
 
 ### Control Plane and Data Plane
 
@@ -372,20 +383,90 @@ Traffic falls into two planes, which take different paths on purpose.
 
 | Plane | What | Path |
 |---|---|---|
-| Data plane | anything acting on behalf of a user or carrying business state: client requests, service-to-service calls, token issuance | through the gateway, without exception |
-| Control plane | registration and deregistration, health probing, catalogue reads, the gateway's breaker reports | direct on the internal network to `http://service-discovery:8080` or to an instance address; never through the gateway |
+| Data plane | anything acting on behalf of a user or carrying business state: client requests, service-to-service calls, events, token issuance | through the message broker, without exception; client requests enter at the gateway |
+| Control plane | registration and deregistration, health probing, catalogue reads, the broker's breaker reports | direct on the internal network to `http://service-discovery:8080` or to an instance address; never through the broker |
 
-The control plane bypass is deliberate, not a regression of the gateway rule. The gateway resolves a service name to *some* instance, so a health probe sent through it would check a random instance and attribute the result to the one that was asked about. It would also be circular: the gateway's instance list comes from the registry, so the registry cannot learn about instances by going through the gateway. Control plane endpoints carry no user data and are unreachable from outside: services publish no ports, and Service Discovery publishes only on the host's loopback.
+The control plane bypass is deliberate, not a regression of the data plane rule. The broker resolves a service name to *some* instance, so a health probe sent through it would check a random instance and attribute the result to the one that was asked about. It would also be circular: the broker's instance list comes from the registry, so the registry cannot learn about instances by going through the broker. Control plane endpoints carry no user data and are unreachable from outside: services publish no ports, and Service Discovery publishes only on the host's loopback.
 
 | Conversation | Direction | When |
 |---|---|---|
 | Registration | instance to Service Discovery | once at startup, and a deregistration once at shutdown |
 | Probing | Service Discovery to instance, `GET /status` | every 4 seconds |
-| Catalogue | gateway to Service Discovery, conditional on `ETag` | every 4 seconds |
+| Catalogue | message broker to Service Discovery, conditional on `ETag` | every 4 seconds |
 
-**Registration.** Once its listener accepts connections, an instance posts `{"service": "<canonical name>", "instanceId": "<hostname>", "address": "http://<hostname>:8080"}` to `{SERVICE_DISCOVERY_URL}/api/v1/registrations`. `SERVICE_DISCOVERY_URL` defaults in code to `http://service-discovery:8080` and is never set in `.env`. `201` or `200` means registered and logs `registration_sent`. `409` (the instance id is registered under another service) and `422` (a malformed body) are configuration bugs: logged at `ERROR` and not retried. Anything else, an unreachable registry included, logs `registration_failed` with the next delay and retries with exponential backoff from 1 second to a 30 second cap, forever. Registration runs in the background and never blocks or fails startup. There is no heartbeat: Service Discovery establishes liveness by probing `/status`, so registration happens exactly once and has to be reliable.
+**Registration.** Once its listener accepts connections, an instance posts `{"service": "<canonical name>", "instanceId": "<hostname>", "address": "http://<hostname>:8080"}` to `{SERVICE_DISCOVERY_URL}/api/v1/registrations`. Two optional fields complete it: `grpcAddress` (`"<hostname>:9090"`) when the instance serves gRPC, and `topics` (an array of exact event types, such as `["raid.completed.v1"]`) when its service subscribes to events. The catalogue returns both per instance; the broker reads them to deliver gRPC calls and events. `SERVICE_DISCOVERY_URL` defaults in code to `http://service-discovery:8080` and is never set in `.env`. `201` or `200` means registered and logs `registration_sent`. `409` (the instance id is registered under another service) and `422` (a malformed body) are configuration bugs: logged at `ERROR` and not retried. Anything else, an unreachable registry included, logs `registration_failed` with the next delay and retries with exponential backoff from 1 second to a 30 second cap, forever. Registration runs in the background and never blocks or fails startup. There is no heartbeat: Service Discovery establishes liveness by probing `/status`, so registration happens exactly once and has to be reliable.
 
 **Deregistration.** On `SIGTERM`, before the listener closes, an instance sends `DELETE {SERVICE_DISCOVERY_URL}/api/v1/registrations/{instanceId}` with a 2 second timeout, treats `404` as success, logs `deregistration_sent`, and never delays shutdown by more than those 2 seconds. The instance leaves the catalogue at once, which is why a planned stop or restart produces no failed requests and no alert.
+
+### Message Broker
+
+The message broker (canonical name `message-broker`) carries every request to a service, every call between services and every event. The gateway and every service talk to it through one gRPC interface, [`tamagotchigo.broker.v1.Broker`](docs/schemas/proto/tamagotchigo/broker/v1/broker.proto), with one envelope; nobody proxies HTTP or gRPC calls through it.
+
+| Call | Destination | Use |
+|---|---|---|
+| `Send(Message) returns (Reply)` | a service | a request that needs an answer; waits for the reply |
+| `Publish(Message) returns (Empty)` | a topic | an event; fire and forget |
+
+| `Message` field | Meaning |
+|---|---|
+| `message_id` | UUID set by the sender; the `eventId` for events |
+| `service` or `topic` | the destination: a canonical service name, or an event type such as `raid.completed.v1` |
+| `operation` | a REST operation `METHOD /path?query` (relative to the service root), a full gRPC method name such as `/tamagotchigo.usermanagement.v1.UserManagement/GetUser`, or the event type |
+| `headers` | lower-case: `x-correlation-id`, `idempotency-key`, `traceparent`; the gateway adds the verified user identity |
+| `content_type`, `body` | `application/json`, `application/protobuf` or `application/x-www-form-urlencoded`, and the bytes |
+| `deadline` | the remaining time of the sender's own request |
+
+A `Reply` carries `correlation_id` (the request's `message_id`), `status` (the HTTP status for a REST operation, the gRPC status code for a gRPC operation), `headers` (`x-instance-id`, `x-broker-upstream`, and for a failed gRPC operation `grpc-status-details-bin`), `content_type` and `body`. Every outcome of a delivery is a `Reply`, including the broker's own refusals; the `Send` call itself fails only for a missing or invalid token or a malformed message.
+
+| Sender | Call and operation | Delivered to one instance as |
+|---|---|---|
+| gateway | `Send`, REST operation, `service` from the route prefix | an ordinary REST request to the instance's `address` |
+| service | `Send`, REST operation | an ordinary REST request |
+| service | `Send`, gRPC operation, body = the request serialized with the callee's generated types | an ordinary gRPC call to the instance's `grpcAddress` |
+| service | `Publish`, `topic` = event type, body = the JSON event envelope | `EventConsumer.Deliver(Message)` on one instance of every subscribing service |
+
+Services stay plain servers: they receive ordinary REST requests and gRPC calls and implement no message handling, except `Deliver` when they subscribe to events.
+
+**Calls are request and reply messages.** Inside the broker a `Send` becomes a request message on the target service's queue `svc.<service>`. The queue's dispatchers take it when an instance has a free slot, pick the instance and deliver it; the answer becomes a reply message on the caller's reply queue `reply.<caller>`, matched by message id, and `Send` returns it. Each `Send` is handled by its own thread from arrival to reply. Request and reply messages live in memory and carry the sender's deadline: a request still queued when its deadline passes is answered with `504`, and a reply that arrives after its caller stopped waiting is dropped. When every instance is at its limit, requests wait in the queue instead of failing at once; a full queue answers `503`.
+
+**Failover is a re-queue.** A delivery that fails in a way that counts against the instance (see [Failure Handling](#failure-handling)) is recorded in that instance's circuit breaker. If the request is safe to repeat, it goes back to the front of the queue and is delivered to another instance within its deadline; otherwise the failure becomes the reply. A request is safe to repeat when the connection was never established, when the operation is idempotent (`GET`, `PUT`, `DELETE`, or a gRPC method marked `NO_SIDE_EFFECTS`), or when it carries an `idempotency-key`.
+
+**Instance selection.** The broker reads the Service Discovery catalogue every 4 seconds, prefers `UP` instances, falls back to `DEGRADED` ones, and skips instances that are `DOWN`, quarantined or at their concurrency limit. Among them it chooses round-robin or by least load (the lowest share of the instance's limit in use, with the utilization Service Discovery last reported as a tie-break). The per-instance circuit breaker and quarantine follow the rules in [Failure Handling](#failure-handling).
+
+**Identity.** Every `Send` and `Publish` carries the sender's service token as `authorization: Bearer <token>` gRPC metadata, verified against User Management's JWKS. The broker delivers the verified identity to the callee (`x-caller-kind`, `x-service-name`, `x-scopes`) and accepts a user identity only from the gateway; values a sender puts in those headers are discarded. The OAuth2 client credentials request and the JWKS read are the only `Send`s accepted without a token.
+
+**gRPC conventions.**
+
+| Item | Rule |
+|---|---|
+| Broker address | `MESSAGE_BROKER_ADDRESS`, default `message-broker:9090` in code, never in `.env`; one long-lived connection per process |
+| Serving gRPC | port `9090` on the internal network, announced as `grpcAddress` in the registration |
+| Request metadata on the callee | `x-caller-kind`, `x-service-name`, `x-scopes`, `x-correlation-id`, `idempotency-key`, `traceparent` |
+| Response metadata | `x-instance-id: <hostname>` |
+| Deadlines | every call carries the remaining time of the request that caused it |
+| Errors | a gRPC status from the table below, with a `google.rpc.ErrorInfo` whose `reason` is the error code of the REST contract (`USER_NOT_FOUND`, `PEER_CIRCUIT_OPEN`, ...) and whose `domain` is the canonical service name |
+
+| HTTP | gRPC | HTTP | gRPC |
+|---|---|---|---|
+| 400 | `INVALID_ARGUMENT` | 422 | `FAILED_PRECONDITION` |
+| 401 | `UNAUTHENTICATED` | 429 | `RESOURCE_EXHAUSTED` |
+| 403 | `PERMISSION_DENIED` | 500 | `INTERNAL` |
+| 404 | `NOT_FOUND` | 503 | `UNAVAILABLE` |
+| 409 | `ALREADY_EXISTS` for a duplicate, `ABORTED` for a conflict | 504 | `DEADLINE_EXCEEDED` |
+
+**Contracts.** The protobuf definitions live in [`docs/schemas/proto`](docs/schemas/proto), with the conventions for mapping the REST contracts onto them. Every RPC mirrors one REST operation: same fields, same authorization, same error codes. Each repository copies the files it uses and keeps them identical to this folder; a change is made here first and reviewed by the owners of the affected services.
+
+**Events and subscriptions.** A subscription belongs to a service, not an instance: the broker subscribes a service to the union of the `topics` its live instances registered, and keeps the subscription even while none of them is alive, queuing events meanwhile. A service that newly subscribes receives events published from then on. An event published to a topic without subscribers is logged and dropped. The broker adds `x-producer`, the publisher's verified service name, to every delivered event; consumers authorize on it, never on the envelope's `producer` field. Delivery is at least once and unordered, and the return of `Deliver` is the acknowledgement:
+
+| `Deliver` returns | The broker |
+|---|---|
+| `OK` | removes the event |
+| `INVALID_ARGUMENT`, `NOT_FOUND`, `FAILED_PRECONDITION`, `PERMISSION_DENIED` | moves it to the dead letter channel at once |
+| `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, or no answer | retries later with backoff, and moves it to the dead letter channel after the attempt limit |
+
+A consumer deduplicates by business reference, not only by `eventId`, returns `OK` only after its own commit, and never depends on event order. A producer whose event drives state in another service (a reward, a balance) writes it to a transactional outbox in the same transaction as its own state change, so an event is never lost between the commit and `Publish`.
+
+The broker's admin endpoints list its topics with their subscribers and queue depths, and the messages in the dead letter channel.
 
 ### Failure Handling
 
@@ -393,28 +474,28 @@ The control plane bypass is deliberate, not a regression of the gateway rule. Th
 
 | Constant | Value | Why |
 |---|---:|---|
-| Service request deadline | 4 s | below the gateway's per-upstream timeout, so a slow request ends with the service's own error |
-| Gateway per-upstream timeout | 5 s | |
+| Service request deadline | 4 s | below the broker's per-delivery timeout, so a slow request ends with the service's own error |
+| Broker per-delivery timeout | 5 s | |
 | Gateway end-to-end deadline | 10 s | |
 | Failure window | 14 s | `3.5 x 4`, so three timed-out calls fit inside one window |
 | Failure threshold | 3 | |
 | Probe interval and catalogue poll | 4 s | at most `14 / 3 = 4.67` s, or three failed probes cannot fit in the window |
 | Probe timeout | 2 s | |
-| Gateway quarantine recovery | 30 s | continuous `UP` in the catalogue |
+| Broker quarantine recovery | 30 s | continuous `UP` in the catalogue |
 | Registry deletion | 120 s | after an instance goes `DOWN` |
 
 **What counts as a failure.** A circuit breaker counts what proves the callee unhealthy and nothing that a healthy callee would answer.
 
 | Outcome | Counts | Why |
 |---|---|---|
-| connection refused, DNS failure, reset before a response | yes | nothing is listening |
-| timeout after 4 seconds | yes | |
-| `500`, `502`, `504`, including the gateway's `502 UPSTREAM_UNAVAILABLE` and `504 UPSTREAM_TIMEOUT` | yes | |
-| any other `5xx`, including the gateway's `503 NO_HEALTHY_UPSTREAM` | yes | with no routable instance the peer is unavailable as far as the caller can tell |
-| `503 PEER_CIRCUIT_OPEN` | no | the callee is healthy and failing fast because one of *its* peers is down |
-| any `4xx`, `429` included | no | a `404` or a `409` is a correct answer from a healthy callee |
+| connection refused, DNS failure, reset before a response, the broker unreachable | yes | nothing is listening |
+| timeout after 4 seconds, `DEADLINE_EXCEEDED` | yes | |
+| `500`, `502`, `504`; gRPC `INTERNAL`, `UNKNOWN` | yes | |
+| any other `5xx` or gRPC `UNAVAILABLE`, including the broker's `503 NO_HEALTHY_UPSTREAM` | yes | with no routable instance the peer is unavailable as far as the caller can tell |
+| `503 PEER_CIRCUIT_OPEN`, or `UNAVAILABLE` with reason `PEER_CIRCUIT_OPEN` | no | the callee is healthy and failing fast because one of *its* peers is down |
+| any `4xx`, `429` included, and every gRPC client error status | no | a `404` or a `409` is a correct answer from a healthy callee |
 
-**Peer circuit breaker.** Each service keeps one breaker per peer service name, derived from the gateway prefix it calls; never per gateway, per endpoint or per instance, since a service only ever sees the gateway's single address. It is implemented once, at the service's single outbound HTTP chokepoint.
+**Peer circuit breaker.** Each service keeps one breaker per peer service name, the destination of its `Send`; never per endpoint or per instance, since a service only ever addresses the broker. It is implemented once, at the service's single outbound HTTP chokepoint.
 
 ```
 CLOSED --3 failures in 14 s--> OPEN --14 s--> HALF_OPEN --trial succeeds--> CLOSED
@@ -429,18 +510,18 @@ While `OPEN`, the service does not make the call: it returns `503 PEER_CIRCUIT_O
 | | Mechanism | Owner | Removes | Until |
 |---|---|---|---|---|
 | A | Peer circuit breaker | each calling service | one peer service, for that caller | 14 s, then one trial call |
-| B | Instance quarantine | the gateway | one instance, from the gateway's rotation | 30 s of continuous `UP` in the catalogue |
+| B | Instance quarantine | the message broker | one instance, from the broker's rotation | 30 s of continuous `UP` in the catalogue |
 | C | Registry eviction | Service Discovery | one instance, for everyone | its probes pass again; deleted after 120 s `DOWN` |
 
-- **Only Service Discovery writes the registry.** The gateway's view is one consumer's view: an instance it cannot reach may be serving everyone else correctly. When its breaker trips it quarantines the instance locally and reports `CIRCUIT_OPEN` to Service Discovery, which runs one immediate probe and changes the registry only on the probe's result. A service never deregisters anyone but itself, and only on graceful shutdown.
-- **Membership and health are separate.** A `DOWN` instance stays listed and marked rather than vanishing, so failing and gone can be told apart. A catalogue refresh never clears the gateway's own quarantine, or the breaker would be undone every 4 seconds.
+- **Only Service Discovery writes the registry.** The broker's view is one consumer's view: an instance it cannot reach may be serving everyone else correctly. When its breaker trips it quarantines the instance locally and reports `CIRCUIT_OPEN` to Service Discovery, which runs one immediate probe and changes the registry only on the probe's result. A service never deregisters anyone but itself, and only on graceful shutdown.
+- **Membership and health are separate.** A `DOWN` instance stays listed and marked rather than vanishing, so failing and gone can be told apart. A catalogue refresh never clears the broker's own quarantine, or the breaker would be undone every 4 seconds.
 - **Load never removes anything.** See [Operational Endpoints](#operational-endpoints).
 
-Alerts go to Discord from Service Discovery only, and only for unhealthy instances: an instance evicted, recovered or deleted, critical load and its recovery, and self-preservation engaging when it is switched on. A tripped circuit breaker, in a service or in the gateway, is logged and never alerted on. A trip that reflects a dead instance reaches Discord anyway, as the eviction raised by Service Discovery's own probes.
+Alerts go to Discord from Service Discovery only, and only for unhealthy instances: an instance evicted, recovered or deleted, critical load and its recovery, and self-preservation engaging when it is switched on. A tripped circuit breaker, in a service or in the broker, is logged and never alerted on. A trip that reflects a dead instance reaches Discord anyway, as the eviction raised by Service Discovery's own probes.
 
 ### Asynchronous Event Contract
 
-Every event sent through the queue uses the following envelope:
+Every event is published with `Broker.Publish`: the topic is the event type, and the body is the following JSON envelope. Subscribers receive the same body in `Deliver`.
 
 ```json
 {
@@ -465,6 +546,17 @@ Every event sent through the queue uses the following envelope:
   "data": "Object. Event-specific payload defined in the event catalog"
 }
 ```
+
+`producer` is informative; the authoritative publisher is the `x-producer` header the broker sets from the publisher's token.
+
+| Topic | Producer | Subscribers |
+|---|---|---|
+| `user.friend-request.created.v1` | user-management | notification |
+| `map.proximity.detected.v1` | map | notification |
+| `guild.invitation.created.v1` | guild | notification |
+| `battle.request.created.v1`, `battle.completed.v1` | battle | notification |
+| `raid.started.v1`, `raid.failed.v1` | monster-raid | notification |
+| `raid.completed.v1` | monster-raid | notification, user-management, tamagotchi |
 
 ### Data Ownership and Storage
 
@@ -1249,7 +1341,7 @@ The transfer updates the existing Tamagotchi instead of creating a new entry. Th
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | Package Registry Service through the gateway | Read statistic definitions as the `tamagotchi-service` client | Validate package-local health statistics |
+| Outbound | Package Registry Service, gRPC through the broker | Read statistic definitions as the `tamagotchi-service` client | Validate package-local health statistics |
 | Inbound | Battle Service | Read combat profile, grant XP, and transfer ownership | Execute and settle PvP combat |
 | Inbound | Monster Raid Service | Read combat profile and grant XP | Calculate raid damage and distribute rewards |
 
@@ -1268,10 +1360,9 @@ is optional. Service callers supply `X-Service-Name` and optional `X-Scopes`, bu
 cannot perform player operations. Missing or malformed identity yields
 `401 INVALID_IDENTITY`; a disallowed caller yields `403`.
 
-Battle calls User Management, Tamagotchi and Package Registry through
-`GATEWAY_URL` using `/user-management`, `/tamagotchi` and `/package-registry`.
-Its `battle-service` client sends OAuth credentials in the token request's form
-body, caches the token and refreshes below 30 seconds remaining. A collaborator
+Battle calls User Management, Tamagotchi and Package Registry over gRPC through
+the message broker. Its `battle-service` client sends OAuth credentials in the
+token request's form body, caches the token and refreshes below 30 seconds remaining. A collaborator
 `401` causes one refresh and one retry. Every outbound request retains the
 inbound `X-Correlation-ID`; an identifier is generated only when absent.
 Commands retain contract-defined idempotency keys and use the battle ID as the
@@ -1467,7 +1558,7 @@ Map Service owns current location state and map visibility calculations. Clients
 Callers reach Map through `/map` with a bearer token. All three operations are
 owner-only: the `userId` in the path is compared with `X-User-ID` and a mismatch
 yields `403`. Map reads friend and enemy relationships from User Management
-through `GATEWAY_URL`, authenticating as the `map-service` client; an
+over gRPC through the message broker, authenticating as the `map-service` client; an
 unreachable User Management yields `503 USER_SERVICE_UNAVAILABLE`.
 
 ##### Instances, Probes and the Circuit Breaker
@@ -1564,18 +1655,18 @@ Callers reach Monster Raid through `/monster-raid` with a bearer token. The
 fallback that accepted a client-supplied `X-User-ID` is gone; the gateway sets
 that header and strips what the client sends. Joining and attacking require
 `X-Caller-Kind: user` and yield `403` for a service caller. Monster Raid calls
-Guild, Package Registry, Tamagotchi and User Management through `GATEWAY_URL`,
-authenticating as the `monster-raid-service` client. Each reward command sends
-the raid ID as both its `Idempotency-Key` and business reference, so a
-settlement interrupted by an unreachable peer resumes without crediting twice.
+Guild, Package Registry and Tamagotchi over gRPC through the message broker,
+authenticating as the `monster-raid-service` client. It no longer calls User
+Management: raid rewards are settled by User Management and Tamagotchi from the
+`raid.completed.v1` event.
 
 ##### Instances, Probes and Circuit Breakers
 
-Monster Raid runs as three interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. Startup migrations run under a PostgreSQL session advisory lock: one instance applies them while the others log `migration_lock_waiting`, and an instance registers with Service Discovery only once its migrations have finished. Raid state changes are compare-and-set on the expected status, so when several instances evaluate the same expired, defeated or settling raid only one of them wins the transition, clears the monster HP and publishes the event; the others re-read the raid. There is no timer: expiry and settlement are evaluated when a raid is read or attacked. Joins are counted in SQL, monster HP and the five attacks per second per participant limit are atomic Redis scripts, so both hold across all three instances.
+Monster Raid runs as three interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. Startup migrations run under a PostgreSQL session advisory lock: one instance applies them while the others log `migration_lock_waiting`, and an instance registers with Service Discovery only once its migrations have finished. Raid state changes are compare-and-set on the expected status, so when several instances evaluate the same expired or defeated raid only one of them wins the transition, clears the monster HP and writes the event to the outbox; the others re-read the raid. There is no timer: expiry and defeat are evaluated when a raid is read or attacked. Joins are counted in SQL, monster HP and the five attacks per second per participant limit are atomic Redis scripts, so both hold across all three instances.
 
-`GET /health` always answers `200 {"status":"UP"}` and checks nothing, neither PostgreSQL nor Redis. `GET /status` reports readiness to Service Discovery with `postgres`, `redis`, `guild`, `package-registry`, `tamagotchi` and `user-management`, the datastores probed concurrently: PostgreSQL or Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or a peer down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
+`GET /health` always answers `200 {"status":"UP"}` and checks nothing, neither PostgreSQL nor Redis. `GET /status` reports readiness to Service Discovery with `postgres`, `redis`, `guild`, `package-registry` and `tamagotchi`, the datastores probed concurrently: PostgreSQL or Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or a peer down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
 
-Peers are never probed: each has its own circuit breaker, so Guild being down never stops calls to Tamagotchi. After three failures within 14 seconds a breaker opens for 14 seconds. While it is open, the operations that need that peer answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, and crediting rewards through User Management takes its existing deferred-settlement path.
+Peers are never probed: each has its own circuit breaker, so Guild being down never stops calls to Tamagotchi. After three failures within 14 seconds a breaker opens for 14 seconds. While it is open, the operations that need that peer answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it.
 
 ##### Endpoint Catalog
 
@@ -1605,7 +1696,7 @@ Creating a raid is idempotent for the combination of `guildId` and `scheduleId`:
     "guildId": "UUID string; required. Guild participating in the raid",
     "scheduleId": "UUID string; required. Schedule from which the raid was created",
     "raidConfigurationId": "UUID string; required. Configuration snapshot source",
-    "status": "ACTIVE, SETTLING, COMPLETED, or FAILED; required. Current raid lifecycle state",
+    "status": "ACTIVE, COMPLETED, or FAILED; required. Current raid lifecycle state",
     "monster": "RaidMonsterState; required. Current monster state",
     "participantCount": "Non-negative integer; required. Number of joined participants",
     "startsAt": "UTC timestamp; required. Raid activation time",
@@ -1654,7 +1745,7 @@ Creating a raid is idempotent for the combination of `guildId` and `scheduleId`:
     "actionId": "UUID string; required. Processed action identifier",
     "damage": "Non-negative integer; required. Damage applied by this attack",
     "monsterCurrentHp": "Non-negative integer; required. Remaining health after the attack",
-    "raidStatus": "ACTIVE or SETTLING; required. State after applying the attack",
+    "raidStatus": "ACTIVE or COMPLETED; required. State after applying the attack",
     "processedAt": "UTC timestamp; required. Server processing time"
   }
 }
@@ -1686,23 +1777,21 @@ The snapshot is fixed when the raid starts, so a later configuration change cann
   "RaidParticipantReward": {
     "userId": "UUID string; required. Rewarded participant",
     "tamagotchiId": "UUID string; required. Tamagotchi receiving XP",
-    "globalCurrency": "Non-negative integer; required. Currency credited through User Management Service",
-    "xp": "Non-negative integer; required. XP granted through Tamagotchi Service"
+    "globalCurrency": "Non-negative integer; required. Currency awarded; User Management credits it from raid.completed.v1",
+    "xp": "Non-negative integer; required. XP awarded; Tamagotchi grants it from raid.completed.v1"
   }
 }
 ```
 
 ##### Completion and Failure Rules
 
-When monster HP reaches zero, the raid enters `SETTLING` and performs idempotent reward commands using `raidId` as the business reference:
+When monster HP reaches zero, one transaction stores the raid as `COMPLETED` with its result and per-participant rewards and writes `raid.completed.v1`, carrying those rewards, to a transactional outbox. User Management credits each participant's global currency and Tamagotchi grants each participating Tamagotchi its XP when they receive the event, both deduplicated by `raidId`. Rewards are therefore final in Monster Raid at once and applied in the other services shortly after; an outage of either only delays them.
 
-1. Credit each eligible participant through User Management Service.
-2. Grant XP to each participating Tamagotchi through Tamagotchi Service.
-3. Mark the raid `COMPLETED` only after all required reward commands succeed.
+If the deadline arrives while monster HP is above zero, the raid becomes `FAILED`, no rewards are distributed and `raid.failed.v1` goes to the outbox. Finished results and rewards are persisted in PostgreSQL; the corresponding current-HP entry is removed from Redis after the raid reaches a terminal state.
 
-If a dependency is unavailable, the raid remains `SETTLING` and retries cannot apply a reward twice. If the deadline arrives while monster HP is above zero, the raid becomes `FAILED` and no rewards are distributed. Finished results and rewards are persisted in PostgreSQL; the corresponding current-HP entry is removed from Redis after the raid reaches a terminal state.
+Both transitions are evaluated whenever a raid is loaded, so every read and command path observes the terminal state without a background scheduler. `GET /api/v1/raids/{raidId}/result` answers `409 RAID_NOT_FINISHED` until the terminal state is stored.
 
-Both transitions are evaluated whenever a raid is loaded, so every read and command path observes the terminal state without a background scheduler. Loading a raid that is still `SETTLING` retries only the reward commands that have not succeeded yet, and `GET /api/v1/raids/{raidId}/result` answers `409 RAID_NOT_FINISHED` until the terminal state is stored.
+Every raid event goes through the outbox. A relay in each instance publishes unsent rows with `Broker.Publish` and marks them sent, claiming rows with `SELECT ... FOR UPDATE SKIP LOCKED` so that the three instances never publish the same row; a broker outage only delays publishing.
 
 ##### Published Queue Events
 
@@ -1719,7 +1808,7 @@ Both transitions are evaluated whenever a raid is loaded, so every read and comm
 }
 ```
 
-`raid.completed.v1` and `raid.failed.v1` share the following payload and are published only after the corresponding terminal state is stored:
+`raid.completed.v1` and `raid.failed.v1` are published only after the corresponding terminal state is stored. They share the following payload; `rewards` is present only in `raid.completed.v1`. Notification Service consumes both; User Management and Tamagotchi consume `raid.completed.v1` to apply the rewards.
 
 ```json
 {
@@ -1727,7 +1816,8 @@ Both transitions are evaluated whenever a raid is loaded, so every read and comm
   "guildId": "UUID string; required. Participating guild",
   "status": "COMPLETED or FAILED; required. Final raid outcome",
   "participantUserIds": "Array of UUID strings; required. Users who participated",
-  "finishedAt": "UTC timestamp; required. Time at which the terminal state was stored"
+  "finishedAt": "UTC timestamp; required. Time at which the terminal state was stored",
+  "rewards": "Array of RaidParticipantReward; required in raid.completed.v1, absent in raid.failed.v1. Currency and XP per participant"
 }
 ```
 
@@ -1737,9 +1827,9 @@ Both transitions are evaluated whenever a raid is loaded, so every read and comm
 |---|---|---|---|
 | Outbound | Guild Service | Read guild, members, and membership | Resolve notification recipients and validate raid visibility and participant eligibility |
 | Outbound | Package Registry Service | Read active schedule, raid configuration, and statistic definitions | Initialize the raid and calculate package-specific damage |
-| Outbound | Tamagotchi Service | Read combat profiles and grant XP | Validate combatants, calculate damage, and settle XP rewards |
-| Outbound | User Management Service | Create balance transactions | Settle global-currency rewards |
-| Outbound | Notification Service through Queue | Publish raid lifecycle events | Notify guild members and participants asynchronously |
+| Outbound | Tamagotchi Service | Read combat profiles | Validate combatants and calculate damage |
+| Outbound | Notification Service through a broker topic | Publish raid lifecycle events | Notify guild members and participants asynchronously |
+| Outbound | User Management and Tamagotchi Services through a broker topic | Publish `raid.completed.v1` with rewards | Credit global currency and grant XP |
 
 #### Notification Service
 
@@ -1857,7 +1947,7 @@ PostgreSQL stores device registrations, preferences, notification history with d
 | Inbound | Guild Service through Queue | Consume invitation events | Deliver guild-invitation notifications |
 | Inbound | Battle Service through Queue | Consume battle request and result events | Deliver battle notifications |
 | Inbound | Monster Raid Service through Queue | Consume raid lifecycle events | Deliver raid notifications |
-| Inbound | Producing services through the gateway | `POST /api/v1/internal/events` until a broker is deployed | Deliver the same events without a queue |
+| Inbound | Producing services through broker topics | `EventConsumer.Deliver` for the eight topics above | Replaces `POST /api/v1/internal/events` |
 | Outbound | Firebase Cloud Messaging | Send push messages over the provider HTTPS API | Deliver notifications to registered client devices |
 
 [Back to top](#table-of-contents)
@@ -1942,7 +2032,7 @@ Lab release process:
 
 ## Gateway
 
-The API Gateway is the single HTTP entry point for clients and synchronous service calls. It verifies UMS-issued bearer tokens with the public JWKS, removes the service prefix, and forwards the remaining path and query string unchanged. For example, `POST http://localhost:8000/battle/api/v1/battle-requests` reaches Battle as `POST /api/v1/battle-requests`. The root `/` has no service route; `/health` and `/status` are the gateway's own endpoints.
+The API Gateway is the single HTTP entry point for clients. It accepts only the operations on its allowlist, verifies UMS-issued bearer tokens with the public JWKS, and hands each request to the [message broker](#message-broker) with `Broker.Send`: the prefix names the destination service, and the remaining method, path and query string become the operation. For example, `POST http://localhost:8000/battle/api/v1/battle-requests` reaches Battle as `POST /api/v1/battle-requests`. The broker's reply becomes the HTTP response. Services never call each other through the gateway. The root `/` has no service route; `/health` and `/status` are the gateway's own endpoints.
 
 | Service | Prefix | Collection |
 |---|---|---|
@@ -1957,18 +2047,15 @@ The API Gateway is the single HTTP entry point for clients and synchronous servi
 
 ### Identity Headers
 
-Clients send `Authorization: Bearer <access-token>`. The gateway removes `Authorization` and caller-supplied identity headers before forwarding. Public operations receive `X-Caller-Kind: anonymous`, even if the client supplied a token. Protected operations receive:
+Clients send `Authorization: Bearer <access-token>`. The gateway removes `Authorization` and caller-supplied identity headers. Public operations receive `X-Caller-Kind: anonymous`, even if the client supplied a token. Protected operations receive `X-Caller-Kind: user`, `X-User-ID` and `X-Session-ID`. The gateway authenticates its own `Send`s with its `api-gateway` service token; the broker accepts a user identity only from it.
 
-| Caller | Verified identity headers |
-|---|---|
-| User | `X-Caller-Kind: user`, `X-User-ID`, `X-Session-ID` |
-| Service | `X-Caller-Kind: service`, `X-Service-Name`, `X-Scopes` |
+The gateway sets `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`, propagates or generates `X-Correlation-ID`, and passes `Idempotency-Key` unchanged. Services authorize operations using the verified identity. Service callers present their tokens to the broker, not to the gateway (see [Authentication and Request Flow](#authentication-and-request-flow)).
 
-The gateway sets `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`, propagates or generates `X-Correlation-ID`, and passes `Idempotency-Key` unchanged. Services authorize operations using the verified identity. A service obtains its token by sending client credentials in the form body to `/user-management/api/v1/oauth2/token`, then calls its peer through `GATEWAY_URL/<prefix>/...`.
+### Allowed Operations
 
-### Public Operations
+The gateway forwards only the operations listed in [`config/gateway.yaml`](config/gateway.yaml), each as `METHOD /path-template` under its service, either as public or as authenticated. Every client operation of the [Service API Contracts](#service-api-contracts) is listed; any other request is `404 ROUTE_NOT_FOUND`, decided before authentication, so the gateway reveals nothing about which internal routes exist.
 
-Only these configured operations are callable without a token:
+Only these operations are callable without a token:
 
 | Method | Gateway path | Purpose |
 |---|---|---|
@@ -1976,38 +2063,42 @@ Only these configured operations are callable without a token:
 | POST | `/user-management/api/v1/users` | Account registration |
 | POST | `/user-management/api/v1/auth/sessions` | Login |
 | POST | `/user-management/api/v1/auth/session-refreshes` | Session refresh |
-| POST | `/user-management/api/v1/oauth2/token` | Service client credentials |
 
-The gateway also owns the unauthenticated `/health` and `/status` endpoints, which replace `/healthz` and `/readyz`; those no longer exist. Besides the shared fields of [Operational Endpoints](#operational-endpoints), `/status` reports where instance addresses come from and the gateway's view of every instance pool. A service's own `/health` and `/status` are never forwarded: any request whose path after the prefix is exactly `/health` or `/status` gets `404 ROUTE_NOT_FOUND`, for every service, whatever `config/gateway.yaml` lists. It answers `404` rather than `403` so that the response does not confirm the endpoint exists. Upstream documentation paths remain protected unless explicitly configured otherwise.
+Operations that only services call are not reachable through the gateway; services reach them through the broker, and those with a gRPC equivalent leave the service's REST API once every caller uses gRPC:
+
+| Service | Service-only operations |
+|---|---|
+| User Management | `POST /api/v1/users/{userId}/balances`; `POST /api/v1/oauth2/token` (the endpoint stays, for services through the broker) |
+| Package Registry | `POST /api/v1/packages/{packageId}/registrations`, `GET /api/v1/packages/{packageId}/registrations/{userId}`, `GET /api/v1/users/{userId}/package-registrations`, `GET /api/v1/packages/{packageId}/stat-definitions`, `GET /api/v1/packages/{packageId}/battle-boosts/{boostKey}` |
+| Tamagotchi | `GET /api/v1/tamagotchis/{tamagotchiId}/combat-profile`, `POST /api/v1/tamagotchis/{tamagotchiId}/xp-grants`, `POST /api/v1/tamagotchi-ownership-transfers` |
+| Notification | `POST /api/v1/internal/events` (replaced by broker topics) |
+
+The gateway also owns the unauthenticated `/health` and `/status` endpoints, which replace `/healthz` and `/readyz`; those no longer exist. Besides the shared fields of [Operational Endpoints](#operational-endpoints), `/status` reports the broker as its dependency. A service's own `/health` and `/status` are never forwarded: any request whose path after the prefix is exactly `/health` or `/status` gets `404 ROUTE_NOT_FOUND`, for every service, whatever `config/gateway.yaml` lists. It answers `404` rather than `403` so that the response does not confirm the endpoint exists. Upstream documentation paths remain protected unless explicitly configured otherwise.
 
 ### Gateway Errors
 
-Gateway failures use the shared `error` envelope with `code`, `message`, `correlationId` and optional `details`. Upstream response statuses and bodies pass through unchanged, including a service's own `503 PEER_CIRCUIT_OPEN`, which any service returns while its circuit breaker for a peer is open (see [Failure Handling](#failure-handling)). `NOT_READY` no longer exists: readiness is reported by `/status`.
+Gateway failures use the shared `error` envelope with `code`, `message`, `correlationId` and optional `details`. Reply statuses and bodies pass through unchanged, including the broker's own refusals and a service's own `503 PEER_CIRCUIT_OPEN`, which any service returns while its circuit breaker for a peer is open (see [Failure Handling](#failure-handling)). `NOT_READY` no longer exists: readiness is reported by `/status`.
 
 | HTTP status | Code | Meaning |
 |---|---|---|
 | 401 | `MISSING_TOKEN` | A protected operation has no bearer token |
 | 401 | `INVALID_TOKEN` | Invalid scheme, token, signature, expiry or claims |
-| 404 | `ROUTE_NOT_FOUND` | No configured service prefix matches, or the path after the prefix is `/health` or `/status` |
+| 404 | `ROUTE_NOT_FOUND` | The operation is not on the allowlist, or the path after the prefix is `/health` or `/status` |
 | 405 | `METHOD_NOT_ALLOWED` | Unsupported forwarding method |
-| 502 | `UPSTREAM_UNAVAILABLE` | The chosen instance could not be reached, after the one retry on another instance where it applies |
-| 503 | `CONCURRENCY_LIMIT_REACHED` | Caller or service budget exhausted; `Retry-After: 1` |
-| 503 | `NO_HEALTHY_UPSTREAM` | Every instance of the target service is unroutable, or none is registered; `Retry-After: 1` |
-| 504 | `UPSTREAM_TIMEOUT` | The upstream request timed out |
+| 502 | `UPSTREAM_UNAVAILABLE` | The message broker could not be reached |
+| 503 | `CONCURRENCY_LIMIT_REACHED` | Caller budget exhausted; `Retry-After: 1` |
+| 503 | `NO_HEALTHY_UPSTREAM` | Set by the broker: every instance of the target service is unroutable, or none is registered; `Retry-After: 1` |
+| 504 | `UPSTREAM_TIMEOUT` | The broker did not reply within the service's timeout |
 | 504 | `REQUEST_TIMEOUT` | The gateway request deadline expired |
 | 500 | `GATEWAY_ERROR` | Unexpected gateway failure |
 
-`UPSTREAM_UNAVAILABLE` and `NO_HEALTHY_UPSTREAM` stay distinct: the first means an instance was chosen and could not be reached, the second that no instance could be chosen at all.
+`UPSTREAM_UNAVAILABLE` and `NO_HEALTHY_UPSTREAM` stay distinct: the first means the broker itself could not be reached, the second that the broker could not choose any instance.
 
 ### Load Balancing
 
-The gateway reads instance addresses from Service Discovery, polling its catalogue every 4 seconds, and routes each request round-robin across the instances of the target service, preferring `UP` instances and using `DEGRADED` ones only when no `UP` instance is available. `X-Gateway-Upstream: <service>/<instanceId>` on every proxied response names the instance that served it. Each service's `max_concurrency` applies per instance, and an instance at its limit is skipped. A request that could not connect at all is retried once on the next instance, provided its body has not been read.
+Load balancing, the instance circuit breaker and quarantine belong to the [message broker](#message-broker): the gateway sends every request to it and keeps no instance list. Routing policy stays in [`config/gateway.yaml`](config/gateway.yaml): prefixes, allowed and public operations, timeouts, limits and authentication.
 
-An instance that fails three times in fourteen seconds is quarantined and receives no traffic. It is reported to Service Discovery, which probes it at once, and it returns to rotation only after thirty continuous seconds reported `UP`. `GATEWAY_INSTANCE_BREAKER=log` keeps the trip, the log line and the report but goes on routing to the instance, so the two behaviours can be demonstrated in turn on the same deployment.
-
-Routing policy stays in [`config/gateway.yaml`](config/gateway.yaml): prefixes, public operations, timeouts, limits and authentication. Only instance addresses come from the registry, and only under names that file already lists. Its `url:` entries are a cold-start fallback, used until the first catalogue read and never again; if the registry becomes unreachable later, the gateway keeps routing on the last catalogue it read.
-
-See the [gateway specification](gateway/docs/spec.md) for routing, token claims, header filtering, load balancing, the instance circuit breaker and concurrency error details. Gateway development and image publishing are documented in its [README](gateway/README.md).
+See the [gateway specification](gateway/docs/spec.md) for routing, token claims, header filtering and concurrency error details. Gateway development and image publishing are documented in its [README](gateway/README.md).
 
 [Back to top](#table-of-contents)
 

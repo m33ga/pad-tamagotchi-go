@@ -1,0 +1,325 @@
+syntax = "proto3";
+
+package tamagotchigo.packageregistry.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "TamagotchiGo.PackageRegistry.V1";
+
+// Internal API of Package Registry, called by other services through the broker. Every RPC
+// mirrors the REST operation named in its comment: same fields, same authorization by the
+// caller's verified service name, same error codes, returned as `google.rpc.ErrorInfo.reason`
+// with the status from the HTTP-to-gRPC table in the CPR README.
+service PackageRegistry {
+  // Mirrors `GET /api/v1/packages/{packageId}`. Callers: user-management, guild.
+  // Errors: NOT_FOUND `PACKAGE_NOT_FOUND`.
+  rpc GetPackage(GetPackageRequest) returns (GetPackageResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/packages`. Callers: any internal service.
+  // Errors: INVALID_ARGUMENT `INVALID_QUERY`.
+  rpc ListPackages(ListPackagesRequest) returns (ListPackagesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `POST /api/v1/packages/{packageId}/registrations`. Callers: user-management.
+  // Errors: INVALID_ARGUMENT, NOT_FOUND, ALREADY_EXISTS `PACKAGE_ALREADY_REGISTERED`,
+  // PERMISSION_DENIED.
+  rpc RegisterUserPackage(RegisterUserPackageRequest) returns (RegisterUserPackageResponse);
+
+  // Mirrors `GET /api/v1/packages/{packageId}/registrations/{userId}`. Callers:
+  // user-management, guild. Errors: NOT_FOUND `REGISTRATION_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetRegistration(GetRegistrationRequest) returns (GetRegistrationResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/users/{userId}/package-registrations`. Callers: user-management.
+  // Errors: PERMISSION_DENIED.
+  rpc ListUserRegistrations(ListUserRegistrationsRequest) returns (ListUserRegistrationsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/packages/{packageId}/stat-definitions`. Callers: tamagotchi, battle,
+  // monster-raid. Errors: NOT_FOUND `PACKAGE_NOT_FOUND`, PERMISSION_DENIED.
+  rpc ListStatDefinitions(ListStatDefinitionsRequest) returns (ListStatDefinitionsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/packages/{packageId}/battle-boosts`. Callers: battle.
+  // Errors: NOT_FOUND `PACKAGE_NOT_FOUND`, PERMISSION_DENIED.
+  rpc ListBattleBoosts(ListBattleBoostsRequest) returns (ListBattleBoostsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/packages/{packageId}/battle-boosts/{boostKey}`. Callers: battle.
+  // Errors: NOT_FOUND `BOOST_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetBattleBoost(GetBattleBoostRequest) returns (GetBattleBoostResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/raid-configurations`. Callers: monster-raid.
+  // Errors: INVALID_ARGUMENT `INVALID_QUERY`.
+  rpc ListRaidConfigurations(ListRaidConfigurationsRequest) returns (ListRaidConfigurationsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/raid-configurations/{raidConfigurationId}`. Callers: monster-raid.
+  // Errors: NOT_FOUND `RAID_CONFIGURATION_NOT_FOUND`.
+  rpc GetRaidConfiguration(GetRaidConfigurationRequest) returns (GetRaidConfigurationResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/raid-schedules`. Callers: monster-raid.
+  // Errors: INVALID_ARGUMENT `INVALID_QUERY`, PERMISSION_DENIED.
+  rpc ListRaidSchedules(ListRaidSchedulesRequest) returns (ListRaidSchedulesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/raid-schedules/{scheduleId}`. Callers: monster-raid.
+  // Errors: NOT_FOUND `RAID_SCHEDULE_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetRaidSchedule(GetRaidScheduleRequest) returns (GetRaidScheduleResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+enum PackageStatus {
+  PACKAGE_STATUS_UNSPECIFIED = 0;
+  PACKAGE_STATUS_DRAFT = 1;
+  PACKAGE_STATUS_ACTIVE = 2;
+  PACKAGE_STATUS_INACTIVE = 3;
+}
+
+enum StatValueType {
+  STAT_VALUE_TYPE_UNSPECIFIED = 0;
+  STAT_VALUE_TYPE_INTEGER = 1;
+  STAT_VALUE_TYPE_DECIMAL = 2;
+  STAT_VALUE_TYPE_BOOLEAN = 3;
+}
+
+enum ComparisonOperator {
+  COMPARISON_OPERATOR_UNSPECIFIED = 0;
+  COMPARISON_OPERATOR_LT = 1;
+  COMPARISON_OPERATOR_LTE = 2;
+  COMPARISON_OPERATOR_GT = 3;
+  COMPARISON_OPERATOR_GTE = 4;
+  COMPARISON_OPERATOR_BETWEEN = 5;
+}
+
+// The combat statistic a bonus or boost affects.
+enum CombatStat {
+  COMBAT_STAT_UNSPECIFIED = 0;
+  COMBAT_STAT_ATTACK = 1;
+  COMBAT_STAT_DEFENSE = 2;
+  COMBAT_STAT_HEALTH = 3;
+}
+
+enum RaidScheduleStatus {
+  RAID_SCHEDULE_STATUS_UNSPECIFIED = 0;
+  RAID_SCHEDULE_STATUS_SCHEDULED = 1;
+  RAID_SCHEDULE_STATUS_ACTIVE = 2;
+  RAID_SCHEDULE_STATUS_INACTIVE = 3;
+  RAID_SCHEDULE_STATUS_CANCELLED = 4;
+  RAID_SCHEDULE_STATUS_COMPLETED = 5;
+}
+
+message Package {
+  string package_id = 1;
+  string name = 2;
+  string version = 3;
+  string description = 4;
+  PackageStatus status = 5;
+  repeated string developer_ids = 6;
+  repeated string moderator_ids = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message PackageRegistration {
+  string package_id = 1;
+  string user_id = 2;
+  google.protobuf.Timestamp registered_at = 3;
+}
+
+message CombatBonusRule {
+  ComparisonOperator operator = 1;
+  // One value for LT, LTE, GT and GTE; two values (lower, upper) for BETWEEN.
+  repeated double threshold = 2;
+  CombatStat bonus_type = 3;
+  double modifier = 4;
+}
+
+message StatDefinition {
+  string key = 1;
+  string display_name = 2;
+  StatValueType value_type = 3;
+  optional double minimum_value = 4;
+  optional double maximum_value = 5;
+  repeated CombatBonusRule combat_bonus_rules = 6;
+}
+
+message PackageStatDefinition {
+  string package_id = 1;
+  StatDefinition definition = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+message BattleBoostDefinition {
+  string key = 1;
+  string display_name = 2;
+  CombatStat affected_stat = 3;
+  double modifier = 4;
+  int32 max_uses_per_battle = 5;
+}
+
+message BattleBoost {
+  string package_id = 1;
+  BattleBoostDefinition definition = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+message RaidCombatStats {
+  int32 attack = 1;
+  int32 defense = 2;
+}
+
+message RaidRewardConfiguration {
+  int64 global_currency = 1;
+  int64 xp = 2;
+  // Free-form reward objects, as in the REST contract.
+  repeated google.protobuf.Struct other_rewards = 3;
+}
+
+message RaidConfiguration {
+  string raid_configuration_id = 1;
+  string name = 2;
+  string description = 3;
+  string sprite_url = 4;
+  int64 maximum_hp = 5;
+  RaidCombatStats combat_stats = 6;
+  // Combat types, e.g. `FLAME`.
+  repeated string weaknesses = 7;
+  repeated string resistances = 8;
+  google.protobuf.Struct special_properties = 9;
+  int32 duration_seconds = 10;
+  int32 participant_limit = 11;
+  RaidRewardConfiguration rewards = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+message RaidSchedule {
+  string schedule_id = 1;
+  string raid_configuration_id = 2;
+  google.protobuf.Timestamp starts_at = 3;
+  google.protobuf.Timestamp ends_at = 4;
+  RaidScheduleStatus status = 5;
+  string created_by_admin_id = 6;
+}
+
+message GetPackageRequest {
+  string package_id = 1;
+}
+
+message GetPackageResponse {
+  Package package = 1;
+}
+
+message ListPackagesRequest {
+  optional PackageStatus status = 1;
+  optional string cursor = 2;
+  optional int32 limit = 3;
+}
+
+message ListPackagesResponse {
+  repeated Package items = 1;
+  optional string next_cursor = 2;
+}
+
+message RegisterUserPackageRequest {
+  string package_id = 1;
+  string user_id = 2;
+}
+
+message RegisterUserPackageResponse {
+  PackageRegistration registration = 1;
+}
+
+message GetRegistrationRequest {
+  string package_id = 1;
+  string user_id = 2;
+}
+
+message GetRegistrationResponse {
+  PackageRegistration registration = 1;
+}
+
+message ListUserRegistrationsRequest {
+  string user_id = 1;
+}
+
+message ListUserRegistrationsResponse {
+  repeated PackageRegistration registrations = 1;
+}
+
+message ListStatDefinitionsRequest {
+  string package_id = 1;
+}
+
+message ListStatDefinitionsResponse {
+  repeated PackageStatDefinition stat_definitions = 1;
+}
+
+message ListBattleBoostsRequest {
+  string package_id = 1;
+}
+
+message ListBattleBoostsResponse {
+  repeated BattleBoost battle_boosts = 1;
+}
+
+message GetBattleBoostRequest {
+  string package_id = 1;
+  string boost_key = 2;
+}
+
+message GetBattleBoostResponse {
+  BattleBoost battle_boost = 1;
+}
+
+message ListRaidConfigurationsRequest {
+  optional string cursor = 1;
+  optional int32 limit = 2;
+}
+
+message ListRaidConfigurationsResponse {
+  repeated RaidConfiguration items = 1;
+  optional string next_cursor = 2;
+}
+
+message GetRaidConfigurationRequest {
+  string raid_configuration_id = 1;
+}
+
+message GetRaidConfigurationResponse {
+  RaidConfiguration raid_configuration = 1;
+}
+
+message ListRaidSchedulesRequest {
+  optional RaidScheduleStatus status = 1;
+  // Only schedules active at this instant.
+  optional google.protobuf.Timestamp at = 2;
+}
+
+message ListRaidSchedulesResponse {
+  repeated RaidSchedule raid_schedules = 1;
+}
+
+message GetRaidScheduleRequest {
+  string schedule_id = 1;
+}
+
+message GetRaidScheduleResponse {
+  RaidSchedule raid_schedule = 1;
+}
