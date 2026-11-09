@@ -1,6 +1,6 @@
 services:
   api-gateway:
-    image: grdz/gateway:3.3.0
+    image: grdz/gateway:4.0.0
     pull_policy: always
     # Client traffic arrives on edge; the services and the registry are on internal.
     networks: [edge, internal]
@@ -8,13 +8,17 @@ services:
       - "${GATEWAY_PORT:-8000}:8080"
     volumes:
       - ./config/gateway.yaml:/app/config/gateway.yaml:ro
-    environment:
-      # remove takes a tripped instance out of rotation; log trips and reports but keeps routing.
-      GATEWAY_INSTANCE_BREAKER: ${GATEWAY_INSTANCE_BREAKER:-remove}
-    # A convenience, not a requirement: with the registry down the gateway starts on the
-    # static urls in config/gateway.yaml, and keeps its last catalogue once it has one.
+    # The api-gateway client credentials, with which the gateway authenticates its
+    # Send calls so that the broker accepts the user identity it passes on.
+    env_file:
+      - .env
+      - ./secrets/api-gateway.env
+    # Every request goes to the broker, which picks the instance; the gateway keeps
+    # no instance list and reaches the broker at broker:9090.
     depends_on:
       service-discovery:
+        condition: service_healthy
+      broker:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
@@ -24,7 +28,7 @@ services:
       start_period: 5s
 
   service-discovery:
-    image: grdz/service-discovery:3.0.0
+    image: grdz/service-discovery:4.0.0
     pull_policy: always
     restart: unless-stopped
     # Nothing calls it from outside. It joins edge only to reach the Discord webhook,
@@ -47,6 +51,48 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
+
+  broker:
+    image: grdz/broker:4.0.0
+    pull_policy: always
+    restart: unless-stopped
+    # Carries every client request, every call between services and every event:
+    # gRPC on 9090 and health, status and admin on 8080, both on the internal network.
+    # It joins edge only to publish its admin endpoints (/status, /topics,
+    # /dead-letters), bound to loopback so they can be read from the host and
+    # nowhere else.
+    networks: [internal, edge]
+    ports:
+      - "127.0.0.1:8501:8080"
+    environment:
+      BROKER_DATABASE_URL: postgresql://${BROKER_DB_USER}:${BROKER_DB_PASSWORD}@broker-db:5432/${BROKER_DB_NAME}
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+      broker-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  # The durable event store: queued events survive a broker restart.
+  broker-db:
+    image: postgres:17-alpine
+    networks: [internal]
+    environment:
+      POSTGRES_DB: ${BROKER_DB_NAME}
+      POSTGRES_USER: ${BROKER_DB_USER}
+      POSTGRES_PASSWORD: ${BROKER_DB_PASSWORD}
+    volumes:
+      - broker-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   user-management-api:
     image: sanda2004/user-management-service:3.0.0
@@ -454,7 +500,8 @@ services:
       retries: 10
 
 networks:
-  # Published listeners: the gateway, both Guild sockets and loopback-only Discovery.
+  # Published listeners: the gateway, both Guild sockets, and loopback-only Discovery
+  # and broker admin.
   edge:
   # Every container. No route to the internet, and nothing on it is published.
   internal:
@@ -462,6 +509,7 @@ networks:
 
 volumes:
   service-discovery-data:
+  broker-db-data:
   user-management-data:
   battle-data:
   map-redis-data:

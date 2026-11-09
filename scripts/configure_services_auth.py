@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENTS = (
     'battle-service', 'monster-raid-service', 'map-service', 'guild-service',
     'tamagotchi-service', 'package-registry-service', 'notification-service',
+    'api-gateway',
 )
 
 
@@ -70,6 +71,8 @@ def main():
             secret = read_env(path)['OAUTH_CLIENT_SECRET']
         else:
             secret = secrets.token_urlsafe(32)
+        # OAUTH_TOKEN_URL serves the clients that still request their token through the
+        # gateway; a client on the broker sends that request to user-management instead.
         token_url = values.get('GATEWAY_URL', 'http://api-gateway:8080').rstrip('/')
         private_write(path, f'CLIENT_ID={client}\nCLIENT_SECRET={secret}\n'
                       f'OAUTH_CLIENT_ID={client}\nOAUTH_CLIENT_SECRET={secret}\n'
@@ -90,7 +93,7 @@ def main():
     values.pop('BATTLE_API_PORT', None)
     values.pop('GATEWAY_ISSUER_NETWORK', None)
     private_write(env, ''.join(f'{name}={value}\n' for name, value in values.items()))
-    print('Configured private RSA key and seven clients; existing credentials preserved.')
+    print('Configured private RSA key and eight clients; existing credentials preserved.')
 
 
 if __name__ == '__main__':

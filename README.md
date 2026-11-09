@@ -367,6 +367,7 @@ Each service runs as several interchangeable instances behind the message broker
 | `package-registry` | `/package-registry` | 2 |
 | `api-gateway` | none, it is the ingress | 1 |
 | `service-discovery` | none, internal only | 1 |
+| `broker` | none, internal only | 1 |
 
 An instance's **instance id** is its container hostname, which Docker sets to the short container id. It is unique per replica and Docker's embedded DNS resolves it from any container on the same network, so an instance's address is `http://<instanceId>:8080` and neither value is configured.
 
@@ -386,7 +387,7 @@ Traffic falls into two planes, which take different paths on purpose.
 | Data plane | anything acting on behalf of a user or carrying business state: client requests, service-to-service calls, events, token issuance | through the message broker, without exception; client requests enter at the gateway |
 | Control plane | registration and deregistration, health probing, catalogue reads, the broker's breaker reports | direct on the internal network to `http://service-discovery:8080` or to an instance address; never through the broker |
 
-The control plane bypass is deliberate, not a regression of the data plane rule. The broker resolves a service name to *some* instance, so a health probe sent through it would check a random instance and attribute the result to the one that was asked about. It would also be circular: the broker's instance list comes from the registry, so the registry cannot learn about instances by going through the broker. Control plane endpoints carry no user data and are unreachable from outside: services publish no ports, and Service Discovery publishes only on the host's loopback.
+The control plane bypass is deliberate, not a regression of the data plane rule. The broker resolves a service name to *some* instance, so a health probe sent through it would check a random instance and attribute the result to the one that was asked about. It would also be circular: the broker's instance list comes from the registry, so the registry cannot learn about instances by going through the broker. Control plane endpoints carry no user data and are unreachable from outside: services publish no ports, and Service Discovery and the broker's admin endpoints publish only on the host's loopback.
 
 | Conversation | Direction | When |
 |---|---|---|
@@ -2126,12 +2127,13 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway and registry images are pinned to `grdz/gateway:3.3.0` and `grdz/service-discovery:3.0.0` directly in Compose, alongside the service images. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild and Service Discovery also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.0.0`, `grdz/service-discovery:4.0.0` and `grdz/broker:4.0.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
 | API Gateway | [`grdz/gateway`](https://hub.docker.com/r/grdz/gateway) | `http://localhost:8000` |
 | Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
+| Message broker admin endpoints, from the host only | [`grdz/broker`](https://hub.docker.com/r/grdz/broker) | `http://127.0.0.1:8501` |
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
@@ -2147,8 +2149,9 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | Guild chat socket, instance 1 | 8081 |
 | Guild chat socket, instance 2 | 8083 |
 | Service Discovery, loopback only | 8500 |
+| Message broker admin endpoints, loopback only | 8501 |
 
-`GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
+`GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
 
 ### Run the Services
 
@@ -2160,7 +2163,7 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 
 2. Replace the placeholder values in `.env`, and set `DISCORD_WEBHOOK_URL` if alerts should reach Discord; left empty, they are only logged. Preserve the passwords of existing database volumes. Follow [Configuration](docs/configuration.md) for service settings and private credentials.
 
-3. Run `python3 scripts/configure_services_auth.py`, then pull and start the deployment:
+3. Run `python3 scripts/configure_services_auth.py`, which also creates the gateway's `api-gateway` client credentials for the broker, then pull and start the deployment:
 
    ```bash
    docker compose pull
@@ -2172,10 +2175,11 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
    ```bash
    curl --fail http://localhost:8000/status
    curl http://127.0.0.1:8500/api/v1/services
+   curl http://127.0.0.1:8501/status
    docker compose ps
    ```
 
-   The gateway waits for a healthy Service Discovery, and its Docker healthcheck uses `/health`. `/status` answers `503` until the gateway has loaded the JWKS from User Management.
+   The broker starts once Service Discovery and `broker-db` are healthy, and the gateway once Service Discovery and the broker are; their Docker healthchecks use `/health`. The gateway's and the broker's `/status` answer `503` until each has loaded the JWKS from User Management. The broker registers itself with Service Discovery, so it appears in the catalogue as `broker`.
 
 5. Stop the containers, keeping the stored data:
 
@@ -2191,15 +2195,15 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 ### Storage
 
-Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. The broker's event store, `broker-db`, takes its credentials from `BROKER_DB_NAME`, `BROKER_DB_USER` and `BROKER_DB_PASSWORD` in `.env`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
 
-Data persists in eleven named volumes: `service-discovery-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+Data persists in twelve named volumes: `service-discovery-data`, `broker-db-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `broker-db-data` holds the events queued for each subscribing service and the dead letter channel, so queued events survive `docker compose restart broker broker-db`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
 
-No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, and Guild and Package Registry ship idempotent migrations inside their images.
+No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, Guild and Package Registry ship idempotent migrations inside their images, and the broker applies its own ordered SQL migrations at startup.
 
 ### Mocked Dependencies
 
-The deployed images differ in which collaborators they currently mock. The gateway routes real API calls; no message broker is deployed:
+The message broker is deployed, and the gateway hands every client request to it. The services move their own outbound calls and events onto it one at a time, so until their Lab 4 releases are pinned the deployed images still differ in which collaborators they reach through the gateway and which events they only log or mock:
 
 - **User Management** calls Package Registry through the gateway for validation and registration.
 - **Battle** calls User Management, Tamagotchi and Package Registry through the gateway; queue publishing remains mocked.
@@ -2208,7 +2212,7 @@ The deployed images differ in which collaborators they currently mock. The gatew
 - **Guild** calls User Management and Package Registry through the gateway with its service credentials; invitation events remain in its transactional outbox without a deployed broker.
 - **Package Registry** has no outbound dependency, receives gateway-derived identities, and derives administrator access from `ADMIN_USER_IDS`.
 - **Tamagotchi** calls Package Registry through the gateway to validate health statistics when `USE_MOCK_PACKAGE_REGISTRY=false`; `true` keeps its built-in registry mock.
-- **Notification** calls no other service. Firebase is mocked. With no broker deployed, producers can deliver events through its internal event endpoint.
+- **Notification** calls no other service. Firebase is mocked. Until it subscribes to its topics on the broker, producers deliver events through its internal event endpoint.
 
 ### Postman Collections
 
@@ -2286,7 +2290,7 @@ The Package Registry Service manages application packages and package-specific g
 
 ### Service Discovery
 
-Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the gateway routes from, and posts alerts to Discord. It is the only component that writes the registry.
+Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the message broker routes from, and posts alerts to Discord. It is the only component that writes the registry.
 
 A **JSON state file** on the `service-discovery-data` volume is used because the registry is small, written only on membership and health changes, and read back only at startup. A database would add a dependency for no benefit, while the file lets the registry survive its own restart without losing the fleet. Its specification is in the [`discovery`](discovery/docs/spec.md) submodule.
 

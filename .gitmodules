@@ -28,3 +28,6 @@
 [submodule "discovery"]
 	path = discovery
 	url = https://github.com/m33ga/discovery.git
+[submodule "broker"]
+	path = broker
+	url = https://github.com/m33ga/broker.git
