@@ -400,7 +400,7 @@ The control plane bypass is deliberate, not a regression of the data plane rule.
 
 ### Message Broker
 
-The message broker (canonical name `message-broker`) carries every request to a service, every call between services and every event. The gateway and every service talk to it through one gRPC interface, [`tamagotchigo.broker.v1.Broker`](docs/schemas/proto/tamagotchigo/broker/v1/broker.proto), with one envelope; nobody proxies HTTP or gRPC calls through it.
+The message broker (canonical name `broker`) carries every request to a service, every call between services and every event. The gateway and every service talk to it through one gRPC interface, [`tamagotchigo.broker.v1.Broker`](docs/schemas/proto/tamagotchigo/broker/v1/broker.proto), with one envelope; nobody proxies HTTP or gRPC calls through it.
 
 | Call | Destination | Use |
 |---|---|---|
@@ -439,7 +439,7 @@ Services stay plain servers: they receive ordinary REST requests and gRPC calls 
 
 | Item | Rule |
 |---|---|
-| Broker address | `MESSAGE_BROKER_ADDRESS`, default `message-broker:9090` in code, never in `.env`; one long-lived connection per process |
+| Broker address | `MESSAGE_BROKER_ADDRESS`, default `broker:9090` in code, never in `.env`; one long-lived connection per process |
 | Serving gRPC | port `9090` on the internal network, announced as `grpcAddress` in the registration |
 | Request metadata on the callee | `x-caller-kind`, `x-service-name`, `x-scopes`, `x-correlation-id`, `idempotency-key`, `traceparent` |
 | Response metadata | `x-instance-id: <hostname>` |
