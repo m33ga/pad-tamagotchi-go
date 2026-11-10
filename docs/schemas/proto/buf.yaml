@@ -1,0 +1,25 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # Service names follow the canonical service names (`UserManagement`, `Broker`), which appear
+    # in every method path on the wire; a `Service` suffix would only add noise to them.
+    - SERVICE_SUFFIX
+  ignore_only:
+    # The broker API deliberately shares one envelope across `Send`, `Publish` and `Deliver`:
+    # a single `Message` type is what makes it one interface for requests and events.
+    RPC_REQUEST_STANDARD_NAME:
+      - tamagotchigo/broker/v1
+      - tamagotchigo/events/v1
+    RPC_RESPONSE_STANDARD_NAME:
+      - tamagotchigo/broker/v1
+      - tamagotchigo/events/v1
+    RPC_REQUEST_RESPONSE_UNIQUE:
+      - tamagotchigo/broker/v1
+      - tamagotchigo/events/v1
+breaking:
+  use:
+    - FILE

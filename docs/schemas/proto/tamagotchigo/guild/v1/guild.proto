@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package tamagotchigo.guild.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "TamagotchiGo.Guild.V1";
+
+// Internal API of Guild, called by other services through the broker. Every RPC mirrors the REST
+// operation named in its comment: same fields, same authorization by the caller's verified
+// service name, same error codes, returned as `google.rpc.ErrorInfo.reason` with the status from
+// the HTTP-to-gRPC table in the CPR README.
+service Guild {
+  // Mirrors `GET /api/v1/guilds/{guildId}`. Callers: monster-raid.
+  // Errors: NOT_FOUND `GUILD_NOT_FOUND`.
+  rpc GetGuild(GetGuildRequest) returns (GetGuildResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/users/{userId}/guilds`. Callers: any internal service.
+  // Errors: NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
+  rpc ListUserGuilds(ListUserGuildsRequest) returns (ListUserGuildsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/guilds/{guildId}/members`. Callers: monster-raid.
+  // Errors: INVALID_ARGUMENT, NOT_FOUND `GUILD_NOT_FOUND`, PERMISSION_DENIED.
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Mirrors `GET /api/v1/guilds/{guildId}/members/{userId}`. Callers: monster-raid.
+  // Errors: NOT_FOUND `MEMBERSHIP_NOT_FOUND`, PERMISSION_DENIED.
+  rpc GetMember(GetMemberRequest) returns (GetMemberResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+enum GuildRole {
+  GUILD_ROLE_UNSPECIFIED = 0;
+  GUILD_ROLE_OWNER = 1;
+  GUILD_ROLE_OFFICER = 2;
+  GUILD_ROLE_MEMBER = 3;
+}
+
+message GuildInfo {
+  string guild_id = 1;
+  string name = 2;
+  string description = 3;
+  string owner_id = 4;
+  // Absent when the guild has no package restriction.
+  optional string required_package_id = 5;
+  int32 member_count = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message GuildMember {
+  string guild_id = 1;
+  string user_id = 2;
+  GuildRole role = 3;
+  google.protobuf.Timestamp joined_at = 4;
+}
+
+message GetGuildRequest {
+  string guild_id = 1;
+}
+
+message GetGuildResponse {
+  GuildInfo guild = 1;
+}
+
+message ListUserGuildsRequest {
+  string user_id = 1;
+}
+
+message ListUserGuildsResponse {
+  repeated GuildInfo guilds = 1;
+}
+
+message ListMembersRequest {
+  string guild_id = 1;
+  optional string cursor = 2;
+  optional int32 limit = 3;
+}
+
+message ListMembersResponse {
+  repeated GuildMember items = 1;
+  optional string next_cursor = 2;
+}
+
+message GetMemberRequest {
+  string guild_id = 1;
+  string user_id = 2;
+}
+
+message GetMemberResponse {
+  GuildMember member = 1;
+}

@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package tamagotchigo.events.v1;
+
+import "google/protobuf/empty.proto";
+import "tamagotchigo/broker/v1/broker.proto";
+
+option csharp_namespace = "TamagotchiGo.Events.V1";
+
+// Served by every subscribing service on its gRPC port. The broker pushes each event to one
+// instance of every service whose Service Discovery registration lists the event's topic.
+service EventConsumer {
+  // Delivers one event. `message.topic` is the event type, `message.body` the JSON event envelope,
+  // `message.headers["x-producer"]` the publisher's verified service name: authorize on it, never
+  // on the envelope's `producer` field.
+  //
+  // The returned status is the acknowledgement:
+  // - `OK`: processed and committed; the event is removed from the queue.
+  // - `INVALID_ARGUMENT`, `NOT_FOUND`, `FAILED_PRECONDITION`, `PERMISSION_DENIED`: permanent; the
+  //   event moves to the dead letter channel.
+  // - `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, or no answer: transient; retried later with
+  //   backoff, dead-lettered after the attempt limit.
+  //
+  // Delivery is at least once and unordered: deduplicate by business reference.
+  rpc Deliver(tamagotchigo.broker.v1.Message) returns (google.protobuf.Empty);
+}

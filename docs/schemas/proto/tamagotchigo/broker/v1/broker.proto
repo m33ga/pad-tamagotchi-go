@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package tamagotchigo.broker.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "TamagotchiGo.Broker.V1";
+
+// The message broker's single interface. The gateway and every service talk to the broker only
+// through these two calls; nobody proxies HTTP or gRPC calls through it.
+//
+// Every call carries the sender's service token as `authorization: Bearer <token>` gRPC metadata.
+// The only `Send` accepted without a token is the OAuth2 token request to User Management
+// (`POST /api/v1/oauth2/token`) and the JWKS read (`GET /.well-known/jwks.json`).
+service Broker {
+  // Sends a request to a service and waits for its reply. Inside the broker the request becomes a
+  // request message on the service's queue, is delivered to one instance as an ordinary REST
+  // request or gRPC call, and the answer comes back as a reply message.
+  //
+  // The call itself fails only when the broker cannot produce a reply: `UNAUTHENTICATED` without a
+  // valid token, `INVALID_ARGUMENT` for a malformed message. Every outcome of the delivery,
+  // including the broker's own `503 NO_HEALTHY_UPSTREAM`, queue rejections and deadline expiry,
+  // is returned as a `Reply`.
+  rpc Send(Message) returns (Reply);
+
+  // Publishes an event to a topic. Returns once the broker has stored the event; delivery to the
+  // subscribing services is then the broker's job. `UNAVAILABLE` when the event store is down.
+  rpc Publish(Message) returns (google.protobuf.Empty);
+}
+
+// One envelope for requests and events.
+message Message {
+  // UUID chosen by the sender. For events, the event's `eventId`.
+  string message_id = 1;
+
+  // Where the message goes: a service queue for `Send`, a topic for `Publish`.
+  oneof destination {
+    // Canonical service name, e.g. `user-management`.
+    string service = 2;
+    // Event type including its version, e.g. `raid.completed.v1`.
+    string topic = 3;
+  }
+
+  // What to do with the message:
+  // - REST operation: `METHOD /path?query` relative to the service root,
+  //   e.g. `GET /api/v1/users/0f1d.../relationships?limit=50`;
+  // - gRPC operation: the full method name,
+  //   e.g. `/tamagotchigo.usermanagement.v1.UserManagement/GetUser`;
+  // - event: the event type, equal to `topic`.
+  string operation = 4;
+
+  // Lower-case header names. Senders set `x-correlation-id`, `idempotency-key` (where a REST call
+  // would send `Idempotency-Key`) and `traceparent`; the gateway also sets the verified user
+  // identity. The broker sets `x-caller-kind`, `x-service-name` and `x-scopes` from the verified
+  // service token, and `x-producer` on events; values sent for those are discarded.
+  map<string, string> headers = 5;
+
+  // `application/json`, `application/protobuf` or `application/x-www-form-urlencoded`.
+  string content_type = 6;
+
+  // The REST body, the serialized gRPC request message, or the JSON event envelope.
+  bytes body = 7;
+
+  // Absolute deadline: the remaining time of the sender's own request. Requests are not delivered
+  // after it; events ignore it.
+  google.protobuf.Timestamp deadline = 8;
+}
+
+// The answer to a `Send`.
+message Reply {
+  // The `message_id` of the request.
+  string correlation_id = 1;
+
+  // HTTP status code for REST operations; gRPC status code (0 = OK) for gRPC operations.
+  int32 status = 2;
+
+  // Lower-case response headers, always including `x-instance-id` of the instance that answered
+  // (absent when no instance was reached). For a failed gRPC operation,
+  // `grpc-status-details-bin` carries the base64 serialized `google.rpc.Status`, whose details
+  // include a `google.rpc.ErrorInfo` with the error code as `reason`.
+  map<string, string> headers = 3;
+
+  string content_type = 4;
+
+  // The REST response body, or the serialized gRPC response message.
+  bytes body = 5;
+}
