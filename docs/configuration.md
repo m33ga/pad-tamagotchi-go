@@ -169,6 +169,21 @@ credentials; it is the only operation the broker accepts without a token. Client
 not yet on the broker use `GATEWAY_URL/user-management/api/v1/oauth2/token`. They
 cache tokens and refresh them before expiry; callers never sign tokens locally.
 
+## Map and Monster Raid
+
+Map and Monster Raid send every call to another service and every event through
+the broker. Each peer has a transport switch, `grpc` by default: Map's
+`USER_MANAGEMENT_TRANSPORT`, and Monster Raid's `GUILD_TRANSPORT`,
+`PACKAGE_REGISTRY_TRANSPORT` and `TAMAGOTCHI_TRANSPORT`. Compose sets `rest` for
+every peer whose pinned image serves no gRPC yet, so the call goes out as the REST
+operation over `Broker.Send`; the line is removed when that peer's gRPC release is
+pinned. Monster Raid makes no call to User Management: rewards travel in
+`raid.completed.v1`.
+
+Both export traces and metrics over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT`
+(default `http://otel-collector:4317`). Compose sets `OTEL_SDK_DISABLED=true`
+until the collector is part of the stack (#101).
+
 ## Guild and Package Registry
 
 Guild and Package Registry load only their own `secrets/<client-id>.env` file,
