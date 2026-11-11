@@ -1,12 +1,7 @@
-# Gateway configuration for the Tamagotchi Go compose deployment.
-# Reference: gateway/docs/spec.md, section 15. Every key not present here has a default.
-#
-# Routing policy lives here and only here: path prefixes, public operations, timeouts,
-# concurrency limits and authentication. Instance addresses come from Service Discovery
-# (gateway/docs/spec.md, section 10). The url: entries below are NOT live: they are a
-# cold-start fallback, used only until the first successful catalogue read and never
-# again after it. A service that registers under a name that is not a key under
-# services: is ignored, so a service cannot register itself into another's prefix.
+# Gateway client allowlist for Lab 4; gateway/docs/spec.md sections 4 and 12.
+# Release together with gateway #27, after all outbound-to-broker migrations finish.
+# Routing policy only: the broker owns instance addresses and per-instance limits.
+# Public and authenticated entries are METHOD /path-template; all others return 404.
 
 auth:
   jwks_url: http://user-management-api:8080/.well-known/jwks.json
@@ -16,30 +11,100 @@ auth:
 
 services:
   user-management:
-    url: http://user-management-api:8080
     public:
-      - GET /.well-known/jwks.json            # public key discovery
+      - GET /.well-known/jwks.json
       - POST /api/v1/users                    # register
       - POST /api/v1/auth/sessions            # login
       - POST /api/v1/auth/session-refreshes   # refresh
-      - POST /api/v1/oauth2/token             # service client credentials
+    authenticated:
+      - DELETE /api/v1/auth/sessions/current
+      - GET /api/v1/users/{userId}
+      - PATCH /api/v1/users/{userId}
+      - GET /api/v1/users/{userId}/relationships
+      - GET /api/v1/users/{userId}/relationships/{otherUserId}
+      - POST /api/v1/users/{userId}/friend-requests
+      - POST /api/v1/users/{userId}/friend-requests/{requestId}/responses
+      - PUT /api/v1/users/{userId}/enemies/{enemyUserId}
+      - DELETE /api/v1/users/{userId}/enemies/{enemyUserId}
+      - GET /api/v1/users/{userId}/balances
+      - GET /api/v1/users/{userId}/packages
+      - PUT /api/v1/users/{userId}/packages/{packageId}
   battle:
-    url: http://battle-api:8080
+    authenticated:
+      - POST /api/v1/battle-requests
+      - GET /api/v1/battle-requests/{battleRequestId}
+      - GET /api/v1/users/{userId}/battle-requests
+      - POST /api/v1/battle-requests/{battleRequestId}/responses
+      - GET /api/v1/battles/{battleId}
+      - GET /api/v1/users/{userId}/battles
+      - POST /api/v1/battles/{battleId}/actions
+      - POST /api/v1/battles/{battleId}/forfeitures
   tamagotchi:
-    url: http://tamagotchi-api:8080
+    authenticated:
+      - GET /api/v1/tamagotchi-combat-types
+      - POST /api/v1/tamagotchis
+      - GET /api/v1/tamagotchis/{tamagotchiId}
+      - PATCH /api/v1/tamagotchis/{tamagotchiId}
+      - GET /api/v1/users/{userId}/tamagotchis
+      - GET /api/v1/users/{userId}/primary-tamagotchi
+      - PUT /api/v1/users/{userId}/primary-tamagotchi
+      - PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats
   notification:
-    url: http://notification-api:8080
+    authenticated:
+      - GET /api/v1/users/{userId}/notification-devices
+      - PUT /api/v1/users/{userId}/notification-devices/{deviceId}
+      - DELETE /api/v1/users/{userId}/notification-devices/{deviceId}
+      - GET /api/v1/users/{userId}/notification-preferences
+      - PUT /api/v1/users/{userId}/notification-preferences
   map:
-    url: http://map-api:8080
-    public:
-      - GET /docs                             # Swagger UI
-      - GET /openapi.json                     # generated contract
+    authenticated:
+      - PUT /api/v1/users/{userId}/location
+      - GET /api/v1/users/{userId}/map
+      - DELETE /api/v1/users/{userId}/location
   monster-raid:
-    url: http://monster-raid-api:8080
-    public:
-      - GET /docs                             # Swagger UI
-      - GET /openapi.json                     # generated contract
+    authenticated:
+      - GET /api/v1/guilds/{guildId}/raids
+      - POST /api/v1/guilds/{guildId}/raids
+      - GET /api/v1/raids/{raidId}
+      - POST /api/v1/raids/{raidId}/participants
+      - GET /api/v1/raids/{raidId}/participants
+      - POST /api/v1/raids/{raidId}/attacks
+      - GET /api/v1/raids/{raidId}/result
   guild:
-    url: http://guild-api-1:8081
+    authenticated:
+      - GET /api/v1/guilds
+      - POST /api/v1/guilds
+      - GET /api/v1/guilds/{guildId}
+      - PATCH /api/v1/guilds/{guildId}
+      - DELETE /api/v1/guilds/{guildId}
+      - GET /api/v1/users/{userId}/guilds
+      - GET /api/v1/guilds/{guildId}/members
+      - GET /api/v1/guilds/{guildId}/members/{userId}
+      - PATCH /api/v1/guilds/{guildId}/members/{userId}
+      - DELETE /api/v1/guilds/{guildId}/members/{userId}
+      - POST /api/v1/guilds/{guildId}/ownership-transfers
+      - POST /api/v1/guilds/{guildId}/invitations
+      - GET /api/v1/guilds/{guildId}/invitations
+      - GET /api/v1/users/{userId}/guild-invitations
+      - POST /api/v1/guilds/{guildId}/invitations/{invitationId}/responses
+      - GET /api/v1/guilds/{guildId}/messages
+      - POST /api/v1/guilds/{guildId}/chat-sessions
   package-registry:
-    url: http://package-registry-api:8082
+    authenticated:
+      - GET /api/v1/packages
+      - POST /api/v1/packages
+      - GET /api/v1/packages/{packageId}
+      - PATCH /api/v1/packages/{packageId}
+      - POST /api/v1/packages/{packageId}/moderators
+      - DELETE /api/v1/packages/{packageId}/moderators/{userId}
+      - PUT /api/v1/packages/{packageId}/stat-definitions
+      - PUT /api/v1/packages/{packageId}/battle-boosts
+      - GET /api/v1/packages/{packageId}/battle-boosts
+      - GET /api/v1/raid-configurations
+      - POST /api/v1/raid-configurations
+      - GET /api/v1/raid-configurations/{raidConfigurationId}
+      - PATCH /api/v1/raid-configurations/{raidConfigurationId}
+      - POST /api/v1/raid-schedules
+      - GET /api/v1/raid-schedules
+      - GET /api/v1/raid-schedules/{scheduleId}
+      - PATCH /api/v1/raid-schedules/{scheduleId}

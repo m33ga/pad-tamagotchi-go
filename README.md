@@ -2053,6 +2053,8 @@ The gateway sets `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto`, 
 
 ### Allowed Operations
 
+Release coordination: the allowlist configuration for gateway #27 must ship with the matching gateway image only after every service's outbound-to-broker migration is complete (#92, #93, #94, #96, #98 and #99). Legacy service-only Postman requests then receive `404 ROUTE_NOT_FOUND` through the gateway; client operations remain allowed. The configuration no longer contains per-service instance URLs, which the broker owns.
+
 The gateway forwards only the operations listed in [`config/gateway.yaml`](config/gateway.yaml), each as `METHOD /path-template` under its service, either as public or as authenticated. Every client operation of the [Service API Contracts](#service-api-contracts) is listed; any other request is `404 ROUTE_NOT_FOUND`, decided before authentication, so the gateway reveals nothing about which internal routes exist.
 
 Only these operations are callable without a token:
