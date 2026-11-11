@@ -1377,13 +1377,12 @@ is optional. Service callers supply `X-Service-Name` and optional `X-Scopes`, bu
 cannot perform player operations. Missing or malformed identity yields
 `401 INVALID_IDENTITY`; a disallowed caller yields `403`.
 
-Battle calls User Management, Tamagotchi and Package Registry over gRPC through
-the message broker. Its `battle-service` client sends OAuth credentials in the
+Battle calls User Management, Tamagotchi and Package Registry through `Broker.Send` on one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS` (in-code default `broker:9090`, not an environment-file requirement). `USER_MANAGEMENT_PROTOCOL`, `TAMAGOTCHI_PROTOCOL` and `PACKAGE_REGISTRY_PROTOCOL` select `rest` or `grpc` per peer. They default to REST operations over Send until that peer's gRPC server is deployed; the final peer calls use copied/generated protobuf types. Battle serves no gRPC API and subscribes to no topics; only REST port 8080 listens. Its `battle-service` client sends OAuth credentials in the
 token request's form body, caches the token and refreshes below 30 seconds remaining. A collaborator
-`401` causes one refresh and one retry. Every outbound request retains the
+`401` / UNAUTHENTICATED causes one refresh and one retry. The OAuth form request itself uses Send to user-management without a service token. Every outbound request retains the
 inbound `X-Correlation-ID`; an identifier is generated only when absent.
 Commands retain contract-defined idempotency keys and use the battle ID as the
-business reference so settlement can resume after a deadline.
+business reference so settlement can resume after a deadline. Each message has a fresh UUID, propagated traceparent and the remaining deadline, also set on the gRPC call. Independent peer breakers count transport/UNKNOWN/INTERNAL/UNAVAILABLE/DEADLINE_EXCEEDED failures, excluding client errors and PEER_CIRCUIT_OPEN.
 
 All handlers have a configurable deadline and concurrency budget, defaulting to
 4 seconds and 64 requests. Deadline expiry yields `504 REQUEST_TIMEOUT`.
@@ -1528,11 +1527,11 @@ When combat ends, Battle Service enters `SETTLING` and performs idempotent comma
 3. Transfer the loser's primary Tamagotchi to the winner through Tamagotchi Service.
 4. Mark the battle `COMPLETED` only after every required command succeeds.
 
-If a dependency is unavailable, the battle remains `SETTLING` and the failed command can be retried without applying a reward twice. A completion event is published only after settlement succeeds.
+If a dependency is unavailable, the battle remains `SETTLING` and the failed command can be retried without applying a reward twice. A completion event is published only after settlement succeeds. The existing database locks, durable step records and stored idempotency key survive process loss. Original trace context is stored in the settlement document and outbox so background retries stay linked to the initiating request.
 
 ##### Published Queue Events
 
-`battle.request.created.v1` is published after a challenge is stored. Notification Service consumes it to notify the opponent.
+`battle.request.created.v1` is stored in the transactional PostgreSQL outbox with the challenge, then published through Broker.Publish. Rows are marked published only after broker storage acknowledgement; retries retain the eventId as message_id. Notification Service consumes it to notify the opponent.
 
 ```json
 {
@@ -1561,10 +1560,16 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | User Management Service | Read users and balances; create balance transactions | Validate participants and settle currency rewards and losses |
-| Outbound | Tamagotchi Service | Read combat profiles; grant XP; transfer ownership | Calculate combat and settle progression and capture rewards |
-| Outbound | Package Registry Service | Read statistic and battle-boost definitions | Calculate package-specific bonuses and validate equipped boosts |
-| Outbound | Notification Service through Queue | Publish request and completion events | Notify challenged users and battle participants asynchronously |
+| Outbound through Broker.Send | User Management Service | Read users and balances; create balance transactions | Validate participants and settle currency rewards and losses |
+| Outbound through Broker.Send | Tamagotchi Service | Read combat profiles; grant XP; transfer ownership | Calculate combat and settle progression and capture rewards |
+| Outbound through Broker.Send | Package Registry Service | Read statistic and battle-boost definitions | Calculate package-specific bonuses and validate equipped boosts |
+| Broker.Publish | Notification through broker topics | Publish request and completion events | Notify challenged users and battle participants asynchronously |
+
+##### Tracing and Release
+
+The 4.0.0 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
+
+For #93, deploy after the broker (#100) and collector are ready. Enable gRPC per peer only after User Management #92, Tamagotchi #94 and Package Registry #97 servers are deployed. Pin a published image before release. Local smoke tests cover full gRPC battles, recovery without duplicate rewards, durable event retries and OTLP trace export; the assembled deployment must still verify peer release compatibility, notifications and linked Jaeger traces before closing #93.
 
 #### Map Service
 
