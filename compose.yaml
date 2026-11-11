@@ -224,7 +224,7 @@ services:
       retries: 10
 
   monster-raid-api:
-    image: grdz/monster-raid-service:4.4.0
+    image: grdz/monster-raid-service:4.4.1
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
