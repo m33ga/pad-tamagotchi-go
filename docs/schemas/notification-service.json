@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Notification Service API",
-    "version": "3.0.0",
-    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It consumes the following queue event types: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.\n\n## Behind the API Gateway\n\nThe service is reachable only through the API Gateway, under the `/notification` prefix: the gateway strips the prefix and forwards the rest of the path and the query string unchanged. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The service never sees the token and trusts these headers only because nothing but the gateway can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received and echoed on every response; for an event, the envelope's correlationId is kept on the notifications it produces.\n\n## Two Instances\n\nThe deployment runs two interchangeable instances and the gateway balances requests across them. Every response carries `X-Instance-Id`, the hostname of the instance that answered. Each instance registers itself with Service Discovery at startup and deregisters on shutdown. `GET /health` and `GET /status`, under Operations, sit at the service root rather than under `/api/v1` and are not exposed through the gateway.\n\nAn event that reaches both instances, such as a producer's retry routed to the other instance, is delivered once: before sending a push, an instance claims the delivery in Redis with an atomic set-if-absent on the event, recipient and device, and the instance that loses the claim skips it. The service makes no calls to other services, so it has no circuit breaker.",
+    "version": "4.2.0",
+    "description": "Owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events through the message broker, and Notification Service converts supported events into push messages.\n\nThe service publishes no events. It subscribes through the broker to the following event types, delivered as `tamagotchigo.events.v1.EventConsumer.Deliver` on its gRPC port and accepted only from each type's producer as the broker states it in `x-producer`: `user.friend-request.created.v1`, `map.proximity.detected.v1`, `guild.invitation.created.v1`, `battle.request.created.v1`, `battle.completed.v1`, `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1`. Their payload schemas live in the producing services' spec files.\n\n## Behind the API Gateway\n\nClients reach the service only through the API Gateway, under the `/notification` prefix: the gateway strips the prefix and hands the rest of the path and the query string to the message broker, which delivers the request to one instance. Clients authenticate at the gateway with a bearer token. The gateway verifies it, removes the `Authorization` header and states who the caller is in the `X-Caller-Kind`, `X-User-ID`, `X-Session-ID`, `X-Service-Name` and `X-Scopes` headers. The broker passes that identity on; the service never sees the token and trusts these headers only because nothing but the broker can reach it; a request without `X-Caller-Kind` is refused with `401 MISSING_IDENTITY`.\n\nEach operation lists who may call it in its description and in `x-allowed-callers`, where `owner` is the user who owns the resource. A wrong user is refused with `403 NOT_RESOURCE_OWNER`, a service not on the list with `403 CALLER_NOT_ALLOWED`.\n\nEvery request is bounded by a deadline and answered `504 REQUEST_TIMEOUT` when it passes. At most a configured number of requests are served at once; one more is refused immediately with `503 CONCURRENCY_LIMIT_REACHED` and `Retry-After: 1`. `X-Correlation-ID` is kept as received and echoed on every response; for an event, the envelope's correlationId is kept on the notifications it produces.\n\n## Two Instances\n\nThe deployment runs two interchangeable instances and the broker balances requests and events across them. Every response carries `X-Instance-Id`, the hostname of the instance that answered. Each instance registers itself with Service Discovery at startup and deregisters on shutdown. `GET /health` and `GET /status`, under Operations, sit at the service root rather than under `/api/v1` and are not exposed through the gateway.\n\nAn event that reaches both instances, such as a broker redelivery routed to the other instance, is delivered once: before sending a push, an instance claims the delivery in Redis with an atomic set-if-absent on the event, recipient and device, and the instance that loses the claim skips it. The service makes no calls to other services, so it has no circuit breaker.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -337,77 +337,6 @@
         "x-allowed-callers": ["owner"]
       }
     },
-    "/internal/events": {
-      "post": {
-        "operationId": "deliverEvent",
-        "summary": "Deliver a domain event without a message broker",
-        "description": "Callable only by the producing services with their service token. Runs the same processing path a queue consumer would: deduplication by eventId, recipient and device, preferences, delivery and dead-lettering. Unknown event types or versions and events naming no recipients are dead-lettered. Allowed callers: User Management, Map, Guild, Battle or Monster Raid Service only.",
-        "tags": [
-          "Events"
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/CallerKind"
-          },
-          {
-            "$ref": "#/components/parameters/CallerServiceName"
-          },
-          {
-            "$ref": "#/components/parameters/CallerScopes"
-          },
-          {
-            "$ref": "#/components/parameters/CorrelationId"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventEnvelope"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Event accepted and processed"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/CallerNotAllowed"
-          },
-          "422": {
-            "description": "Rejected domain operation: UNSUPPORTED_EVENT or MALFORMED_EVENT; the event is dead-lettered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "$ref": "#/components/responses/ConcurrencyLimitReached"
-          },
-          "504": {
-            "$ref": "#/components/responses/RequestTimeout"
-          }
-        },
-        "x-allowed-callers": [
-          "user-management-service",
-          "map-service",
-          "guild-service",
-          "battle-service",
-          "monster-raid-service"
-        ]
-      }
-    },
     "/health": {
       "servers": [
         {
@@ -647,25 +576,6 @@
         "schema": {
           "type": "string"
         }
-      },
-      "CallerServiceName": {
-        "name": "X-Service-Name",
-        "in": "header",
-        "required": false,
-        "description": "Name of a calling service, present for service callers and compared with each operation's allowlist. Set by the API Gateway from the verified token. Clients never send it: the gateway removes any value a caller supplies and sets its own.",
-        "schema": {
-          "type": "string",
-          "examples": ["battle-service"]
-        }
-      },
-      "CallerScopes": {
-        "name": "X-Scopes",
-        "in": "header",
-        "required": false,
-        "description": "Space-separated scopes of a service caller, when its token carries any. Set by the API Gateway from the verified token. Clients never send it: the gateway removes any value a caller supplies and sets its own.",
-        "schema": {
-          "type": "string"
-        }
       }
     },
     "responses": {
@@ -701,16 +611,6 @@
       },
       "NotResourceOwner": {
         "description": "NOT_RESOURCE_OWNER: the caller is not the user who owns the resource",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ErrorResponse"
-            }
-          }
-        }
-      },
-      "CallerNotAllowed": {
-        "description": "CALLER_NOT_ALLOWED: the operation is reserved for the listed services; users, the owner included, are refused",
         "content": {
           "application/json": {
             "schema": {
@@ -879,51 +779,6 @@
             "type": "string",
             "format": "date-time",
             "description": "Last preference update; the current time while the defaults were never replaced"
-          }
-        }
-      },
-      "EventEnvelope": {
-        "type": "object",
-        "required": [
-          "eventId",
-          "eventType",
-          "eventVersion",
-          "producer",
-          "correlationId",
-          "data"
-        ],
-        "properties": {
-          "eventId": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Unique event identifier used for deduplication"
-          },
-          "eventType": {
-            "type": "string",
-            "description": "Stable event name including the version suffix",
-            "example": "battle.request.created.v1"
-          },
-          "eventVersion": {
-            "type": "integer",
-            "description": "Schema version of the event"
-          },
-          "occurredAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Time at which the business event occurred; the processing time when absent"
-          },
-          "producer": {
-            "type": "string",
-            "description": "Service that published the event"
-          },
-          "correlationId": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Identifier connecting the event to the originating operation"
-          },
-          "data": {
-            "type": "object",
-            "description": "Event-specific payload carrying the recipient fields"
           }
         }
       },

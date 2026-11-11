@@ -1228,7 +1228,13 @@ If a message cannot be processed, the sender receives `guild.chat.error.v1` with
 
 Tamagotchi Service owns every Tamagotchi and its current owner, role, combat type, level, XP, sprite reference, and package-local health statistics. A secondary Tamagotchi is a reference to the original entity after an ownership transfer; the service never creates a duplicate of it.
 
-Tamagotchi Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Package Registry down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. Package Registry is never probed: its `/status` entry comes from the instance's circuit breaker and carries `"circuit": "CLOSED"` or `"OPEN"`; it is `DOWN` while the circuit refuses calls or for 14 seconds after a failed call, and a half-open circuit waiting for its trial reports `CLOSED`, so a quarantined instance can still be readmitted. A call to Package Registry gets 3 of the 4 seconds, so a registry that does not answer gives `503 PACKAGE_REGISTRY_UNAVAILABLE`, which the gateway does not hold against the instance. After three Package Registry failures within 14 seconds, creating a Tamagotchi and updating its health statistics answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, until a trial call succeeds. The service runs no scheduled or background work such as statistic decay: statistics change only through requests, so two instances never apply the same change twice.
+Tamagotchi Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Package Registry down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. Package Registry is never probed: its `/status` entry comes from the instance's circuit breaker and carries `"circuit": "CLOSED"` or `"OPEN"`; it is `DOWN` while the circuit refuses calls or for 14 seconds after a failed call, and a half-open circuit waiting for its trial reports `CLOSED`, so a quarantined instance can still be readmitted. A call to Package Registry gets 3 of the 4 seconds, so a registry that does not answer gives `503 PACKAGE_REGISTRY_UNAVAILABLE`, which the broker does not hold against the instance. After three Package Registry failures within 14 seconds, creating a Tamagotchi and updating its health statistics answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, until a trial call succeeds. The service runs no scheduled or background work such as statistic decay: statistics change only through requests, so two instances never apply the same change twice.
+
+Tamagotchi serves REST on internal port 8080 and `tamagotchigo.tamagotchi.v1.Tamagotchi` on internal gRPC port 9090. Its six RPCs are GetTamagotchi, ListUserTamagotchis, GetPrimaryTamagotchi and GetCombatProfile for Battle and Monster Raid, and GrantXp and TransferOwnership for Battle only. The broker supplies verified service metadata; handlers reuse the REST application layer and return `google.rpc.ErrorInfo` with the REST error code as `reason` and `tamagotchi` as `domain` (`ALREADY_EXISTS` for `XP_ALREADY_GRANTED` and `OWNERSHIP_ALREADY_TRANSFERRED`, `ABORTED` for `TAMAGOTCHI_NOT_OWNED`, `FAILED_PRECONDITION` for `INVALID_TRANSFER`). The former combat-profile, XP-grant and ownership-transfer REST routes are removed.
+
+Discovery registration adds `grpcAddress: <hostname>:9090` and `topics: [raid.completed.v1]`. Every outbound call is a `Broker.Send` to `MESSAGE_BROKER_ADDRESS` (`broker:9090` in code): the OAuth client-credentials request to User Management stays a REST operation, the one `Send` without a token, and Package Registry's `ListStatDefinitions` is a gRPC operation with the generated protobuf messages. Each `Send` carries the cached `tamagotchi-service` token, the incoming correlation ID, `traceparent` and three quarters of the request deadline; the peer circuit breaker sits around it unchanged. `GATEWAY_URL` is gone.
+
+The final 4.2.0 image includes the .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=tamagotchi`, the hostname as `service.instance.id`, and `traceId`/`spanId` on every log line written inside a request. Release this contract only after broker deployment (#100), discovery topics/gRPC support, Package Registry gRPC (#97 stage 1), Battle on gRPC (#93 stage 3), Monster Raid on gRPC and event settlement (#99), and observability (#101). Publish the service image before pinning 4.2.0 in a separate compose release PR.
 
 ##### Endpoint Catalog
 
@@ -1244,9 +1250,6 @@ Tamagotchi Service runs as two interchangeable instances, and every response car
 | `GET /api/v1/users/{userId}/primary-tamagotchi` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 PRIMARY_TAMAGOTCHI_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/primary-tamagotchi` | Account owner | `SetPrimaryTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `409 TAMAGOTCHI_NOT_OWNED` |
 | `PATCH /api/v1/tamagotchis/{tamagotchiId}/health-stats` | Account owner | `UpdateHealthStatsRequest` | `200 TamagotchiResponse` | `400`, `403`, `404`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE`, `503 PEER_CIRCUIT_OPEN` |
-| `GET /api/v1/tamagotchis/{tamagotchiId}/combat-profile` | Battle or Monster Raid Service | None | `200 CombatProfileResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
-| `POST /api/v1/tamagotchis/{tamagotchiId}/xp-grants` | Battle or Monster Raid Service | `GrantXpRequest` | `200 GrantXpResponse` | `400`, `403`, `404`, `409 XP_ALREADY_GRANTED` |
-| `POST /api/v1/tamagotchi-ownership-transfers` | Battle Service | `TransferTamagotchiRequest` | `200 OwnershipTransferResponse` | `400`, `403`, `404`, `409 OWNERSHIP_ALREADY_TRANSFERRED`, `409 TAMAGOTCHI_NOT_OWNED`, `422 INVALID_TRANSFER` |
 
 ##### Tamagotchi Schemas
 
@@ -1346,13 +1349,18 @@ The type-advantage cycle is `FLAME > NATURE > EARTH > ELECTRIC > WATER > SHADOW 
 
 The transfer updates the existing Tamagotchi instead of creating a new entry. The winner receives it as a secondary Tamagotchi. Selection of a new primary for the previous owner is a separate user action.
 
+##### Consumed Event
+
+`tamagotchigo.events.v1.EventConsumer/Deliver` consumes `raid.completed.v1`. Authorize only the broker's `Message.headers["x-producer"] == "monster-raid"`, never the envelope's producer. Each reward with positive `xp` is granted to its `tamagotchiId` with source `RAID` and referenceId raidId, under the XP grant rules. Deduplicate per (raidId, tamagotchiId): `XP_ALREADY_GRANTED` counts as done, so after a partial failure a replay grants only the missing XP. Each grant commits on its own. `globalCurrency` is ignored. Return OK after the commits, NOT_FOUND for an unknown Tamagotchi, PERMISSION_DENIED for another producer, INVALID_ARGUMENT for a malformed event, and UNAVAILABLE for database failures.
+
 ##### Service Dependencies
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | Package Registry Service, gRPC through the broker | Read statistic definitions as the `tamagotchi-service` client | Validate package-local health statistics |
-| Inbound | Battle Service | Read combat profile, grant XP, and transfer ownership | Execute and settle PvP combat |
-| Inbound | Monster Raid Service | Read combat profile and grant XP | Calculate raid damage and distribute rewards |
+| Outbound | Package Registry Service through Broker.Send | gRPC ListStatDefinitions as the `tamagotchi-service` client | Validate package-local health statistics |
+| Outbound | User Management Service through Broker.Send | REST `POST /api/v1/oauth2/token` | Obtain the service token |
+| Inbound | Battle Service through the broker | gRPC reads, GrantXp and TransferOwnership | Execute and settle PvP combat |
+| Inbound | Monster Raid Service through the broker | gRPC reads and combat profiles; `raid.completed.v1` | Calculate raid damage and distribute raid XP |
 
 #### Battle Service
 
@@ -1842,9 +1850,13 @@ Every raid event goes through the outbox. A relay in each instance publishes uns
 
 #### Notification Service
 
-Notification Service owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events to the Queue, and Notification Service converts supported events into push messages.
+Notification Service owns Firebase device registrations, user notification preferences, event deduplication, and delivery state. Business services never call Firebase directly; they publish domain events through the message broker, and Notification Service converts supported events into push messages.
 
 Notification Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Redis unreachable, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. An event that reaches both instances is delivered once: before sending a push, an instance claims the delivery in Redis with an atomic set-if-absent keyed by event, recipient and device, and the instance that loses the claim skips it. Delivery happens inside the request that carries the event, so there is no outbox relay or scheduler to run twice. The service calls no other service and has no circuit breaker.
+
+Notification serves REST on internal port 8080 and `tamagotchigo.events.v1.EventConsumer` on internal gRPC port 9090. Discovery registration adds `grpcAddress: <hostname>:9090` and the eight `topics` of the consumed events. `Deliver` accepts calls only from the broker and each topic only from its producer in `Message.headers["x-producer"]`, never the envelope's producer, then runs the processing path of the former internal route. Return OK once the event is recorded (sent, skipped by preference, or in Notification's own Firebase dead letters), INVALID_ARGUMENT for `UNSUPPORTED_EVENT` and `MALFORMED_EVENT`, PERMISSION_DENIED for another producer, and UNAVAILABLE for PostgreSQL or Redis failures, each with `google.rpc.ErrorInfo` (`domain` `notification`). The broker's dead letter channel only holds events that could not be handed over; Firebase retries and Notification's own dead-letter flow are unchanged. `POST /api/v1/internal/events` is removed.
+
+The final 4.2.0 image includes the .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=notification`, the hostname as `service.instance.id`, and `traceId`/`spanId` on every log line written inside a request. Release this contract only after broker deployment (#100), discovery topics/gRPC support, every producer publishing through the broker (#92 stage 3, #93 stage 2, #96 stage 3, #98, #99 stage 2) and observability (#101). Publish the service image before pinning 4.2.0 in a separate compose release PR.
 
 ##### Endpoint Catalog
 
@@ -1895,20 +1907,20 @@ Until a message broker is deployed, producers deliver the same event envelope to
 
 Supported categories are `FRIEND_REQUEST`, `PROXIMITY`, `BATTLE_REQUEST`, `BATTLE_RESULT`, `GUILD_INVITATION`, and `RAID_LIFECYCLE`. A missing preference record means that all categories are enabled by default. Firebase registration tokens are confidential: they are stored only by Notification Service, never returned in responses, and never written to logs.
 
-##### Consumed Queue Events
+##### Consumed Events
 
-All messages use the common asynchronous event envelope. The service extracts recipients only from the event payload and does not synchronously query a producer while processing an event.
+All messages use the common asynchronous event envelope and arrive through the broker's `EventConsumer.Deliver`. The service extracts recipients only from the event payload and does not synchronously query a producer while processing an event. The `rewards` of `raid.completed.v1` are ignored.
 
-| Event type | Producer | Recipient field | Notification category |
+| Event type | Producer (`x-producer`) | Recipient field | Notification category |
 |---|---|---|---|
-| `user.friend-request.created.v1` | User Management Service | `recipientUserId` | `FRIEND_REQUEST` |
-| `map.proximity.detected.v1` | Map Service | `firstUserId` and `secondUserId` | `PROXIMITY` |
-| `guild.invitation.created.v1` | Guild Service | `inviteeUserId` | `GUILD_INVITATION` |
-| `battle.request.created.v1` | Battle Service | `opponentUserId` | `BATTLE_REQUEST` |
-| `battle.completed.v1` | Battle Service | `winnerUserId` and `loserUserId` | `BATTLE_RESULT` |
-| `raid.started.v1` | Monster Raid Service | `recipientUserIds` | `RAID_LIFECYCLE` |
-| `raid.completed.v1` | Monster Raid Service | `participantUserIds` | `RAID_LIFECYCLE` |
-| `raid.failed.v1` | Monster Raid Service | `participantUserIds` | `RAID_LIFECYCLE` |
+| `user.friend-request.created.v1` | `user-management` | `recipientUserId` | `FRIEND_REQUEST` |
+| `map.proximity.detected.v1` | `map` | `firstUserId` and `secondUserId` | `PROXIMITY` |
+| `guild.invitation.created.v1` | `guild` | `inviteeUserId` | `GUILD_INVITATION` |
+| `battle.request.created.v1` | `battle` | `opponentUserId` | `BATTLE_REQUEST` |
+| `battle.completed.v1` | `battle` | `winnerUserId` and `loserUserId` | `BATTLE_RESULT` |
+| `raid.started.v1` | `monster-raid` | `recipientUserIds` | `RAID_LIFECYCLE` |
+| `raid.completed.v1` | `monster-raid` | `participantUserIds` | `RAID_LIFECYCLE` |
+| `raid.failed.v1` | `monster-raid` | `participantUserIds` | `RAID_LIFECYCLE` |
 
 Unknown event types or unsupported event versions are not converted into notifications. They are moved to a dead-letter flow for inspection instead of being silently acknowledged.
 
@@ -1937,10 +1949,10 @@ All Firebase `data` values are encoded as strings. Delivery attempts are stored 
 
 ##### Delivery and Retry Rules
 
-Queue delivery is at least once. Before contacting Firebase, Notification Service creates a deduplication key from `eventId`, `recipientUserId`, and `deviceId`. Re-delivery of the same event therefore does not intentionally create another push for the same device.
+Broker delivery is at least once and unordered. Before contacting Firebase, Notification Service creates a deduplication key from `eventId`, `recipientUserId`, and `deviceId`. Re-delivery of the same event therefore does not intentionally create another push for the same device.
 
 - If the user's category is disabled or no enabled device exists, the event is recorded as skipped and acknowledged.
-- A successful Firebase response is recorded and the queue message is acknowledged.
+- A successful Firebase response is recorded and the event is acknowledged.
 - Transient Firebase failures are retried with exponential backoff and a bounded attempt count.
 - A permanently invalid Firebase token disables that device registration.
 - A malformed event, unsupported version, or exhausted retry sequence is moved to a dead-letter flow with its `correlationId`.
@@ -1951,12 +1963,11 @@ PostgreSQL stores device registrations, preferences, notification history with d
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Inbound | User Management Service through Queue | Consume friend-request events | Deliver friend-request notifications |
-| Inbound | Map Service through Queue | Consume proximity events | Deliver nearby-player notifications |
-| Inbound | Guild Service through Queue | Consume invitation events | Deliver guild-invitation notifications |
-| Inbound | Battle Service through Queue | Consume battle request and result events | Deliver battle notifications |
-| Inbound | Monster Raid Service through Queue | Consume raid lifecycle events | Deliver raid notifications |
-| Inbound | Producing services through broker topics | `EventConsumer.Deliver` for the eight topics above | Replaces `POST /api/v1/internal/events` |
+| Inbound | User Management Service through the broker | `EventConsumer.Deliver` of friend-request events | Deliver friend-request notifications |
+| Inbound | Map Service through the broker | `EventConsumer.Deliver` of proximity events | Deliver nearby-player notifications |
+| Inbound | Guild Service through the broker | `EventConsumer.Deliver` of invitation events | Deliver guild-invitation notifications |
+| Inbound | Battle Service through the broker | `EventConsumer.Deliver` of battle request and result events | Deliver battle notifications |
+| Inbound | Monster Raid Service through the broker | `EventConsumer.Deliver` of raid lifecycle events | Deliver raid notifications |
 | Outbound | Firebase Cloud Messaging | Send push messages over the provider HTTPS API | Deliver notifications to registered client devices |
 
 [Back to top](#table-of-contents)
