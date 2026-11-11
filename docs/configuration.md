@@ -173,3 +173,20 @@ It materializes the existing key without generating a replacement.
 After `python3 scripts/configure_services_auth.py` and `docker compose up -d --wait`, run `1. Setup and Authentication` and `1b. Package Bootstrap` in the User Management Postman collection. Registration omits `initialPackageId`; the resulting user can log in, create a package, activate it as its developer, then join it through User Management. All requests use the gateway. No package seed, SQL insert or change to Package Registry authorization is required.
 
 The UMS migration permits a null initial package and preserves existing accounts and memberships. A supplied initial package must still be ACTIVE. Package Registry administrator configuration for raid operations is a separate concern.
+
+## User Management and Battle broker release
+
+The release pins `sanda2004/user-management-service:4.1.0` and `sanda2004/battle-service:4.0.1`. Both images export OTLP/gRPC to `http://otel-collector:4317`; Compose supplies the canonical service names, and each image's entrypoint supplies its hostname as `service.instance.id`. Both remain on the internal network with no published application port. User Management listens internally on REST 8080 and gRPC 9090; Battle listens only on REST 8080.
+
+Battle uses `USER_MANAGEMENT_PROTOCOL=grpc` with User Management 4.1.0. Its Tamagotchi and Package Registry settings remain `rest` until those peers' gRPC images are deployed; these REST operations still travel through Broker.Send, never through the gateway. Change `TAMAGOTCHI_PROTOCOL` and `PACKAGE_REGISTRY_PROTOCOL` to `grpc` only alongside the corresponding peer releases. User Management's Package Registry adapter is already gRPC and requires that server before package-dependent registration can work.
+
+This release PR must stay draft until these prerequisites are coordinated:
+
+- #104 / #100: broker and discovery deployment, the eight-client `config/service-clients.yaml` including api-gateway with no scopes, and the matching private credential/hash setup. The seven-client registry currently on main is incompatible with User Management 4.1.0.
+- #97 stage 1: a deployed and pinned Package Registry gRPC server for User Management's calls.
+- #101: the otel-collector service and observability pipeline.
+- Both service images successfully published for the deployment architecture.
+
+After those changes are available, rebase onto main and review the resulting Compose configuration together. The deploy operator should rerun `python3 scripts/configure_services_auth.py` after the eight-client setup is merged, preserving existing private credentials and volume passwords. Pull the two image tags, recreate the application instances and verify health/status plus discovery registrations: User Management must advertise grpcAddress and raid.completed.v1; Battle must advertise only its REST address.
+
+Before marking #92 or #93 complete, verify a client registration with initialPackageId, friend-request notification through the broker, raid reward replay and producer rejection, a complete battle, SETTLING recovery after a peer outage without duplicate rewards, and traces linked in Jaeger. The final Battle acceptance also requires all three peer protocols to be gRPC. Keep the legacy User Management REST balance command until Battle #93 stage 3 and Monster Raid #99 stage 4 are both deployed; this release uses 4.1.0 and deliberately does not deploy the later REST-removal image.

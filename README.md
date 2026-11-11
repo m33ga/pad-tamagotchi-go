@@ -1567,7 +1567,7 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 ##### Tracing and Release
 
-The 4.0.0 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
+The 4.0.1 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
 
 For #93, deploy after the broker (#100) and collector are ready. Enable gRPC per peer only after User Management #92, Tamagotchi #94 and Package Registry #97 servers are deployed. Pin a published image before release. Local smoke tests cover full gRPC battles, recovery without duplicate rewards, durable event retries and OTLP trace export; the assembled deployment must still verify peer release compatibility, notifications and linked Jaeger traces before closing #93.
 
