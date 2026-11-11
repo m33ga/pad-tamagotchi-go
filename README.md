@@ -621,11 +621,11 @@ User Management runs as two interchangeable instances with a shared mounted RSA 
 
 User Management Service owns user identity, authentication, social relationships, and currency balances. Passwords are accepted only by registration and authentication endpoints and are never returned. Internal balance commands require an authenticated service identity in addition to the common correlation and idempotency headers.
 
-User Management serves REST on internal port 8080 and `tamagotchigo.usermanagement.v1.UserManagement` on internal gRPC port 9090. Its six RPCs are GetUser, ListRelationships, GetRelationship, GetBalances, CreateBalanceTransaction and ListUserPackages. The broker supplies verified service metadata; handlers reuse the REST application layer and return structured ErrorInfo reasons. Only Battle may call CreateBalanceTransaction; the former balance POST route is removed. Both transports share admission and deadlines, with RESOURCE_EXHAUSTED on gRPC saturation.
+User Management serves REST on internal port 8080 and `tamagotchigo.usermanagement.v1.UserManagement` on internal gRPC port 9090. Its six RPCs are GetUser, ListRelationships, GetRelationship, GetBalances, CreateBalanceTransaction and ListUserPackages. The broker supplies verified service metadata; handlers reuse the REST application layer and return structured ErrorInfo reasons. Only Battle may call CreateBalanceTransaction; the legacy balance POST route remains temporarily available to Battle/Monster Raid on the internal network until their migrations finish; the gateway still refuses it. Both transports share admission and deadlines, with RESOURCE_EXHAUSTED on gRPC saturation.
 
 Discovery registration adds `grpcAddress: <hostname>:9090` and `topics: [raid.completed.v1]`. The service accepts `api-gateway` as an eighth OAuth client with no scopes. The OAuth endpoint remains REST behind Broker.Send; JWKS remains directly readable. Package Registry GetPackage/RegisterUserPackage calls use generated protobuf messages over Broker.Send, a cached locally signed User Management service token, the incoming correlation ID, stable idempotency key, traceparent and remaining deadline.
 
-The final 4.2.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=user-management`, the hostname as `service.instance.id`, and traceId/spanId in request logs. Release this contract only after broker deployment (#100), discovery topics/gRPC support, Package Registry gRPC (#97 stage 1), Battle's gRPC balance migration (#93 stage 3), Monster Raid event settlement (#99 stage 4), and observability (#101). Publish the service image before pinning 4.2.0 in a separate compose release PR.
+The 4.1.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=user-management`, the hostname as `service.instance.id`, and traceId/spanId in request logs. Release 4.1.0 after broker deployment (#100), discovery topics/gRPC support, Package Registry gRPC (#97 stage 1) and observability (#101). It supplies the server needed by the caller migrations. Keep the compatibility REST adapter until Battle #93 stage 3 and Monster Raid #99 stage 4 are deployed; only then remove it in a later release. The coordinated Compose change pins the published 4.1.0 image.
 
 ##### Endpoint Catalog
 
@@ -647,7 +647,8 @@ The final 4.2.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to
 | `POST /api/v1/users/{userId}/friend-requests/{requestId}/responses` | Request recipient | `RespondToFriendRequest` | `200 FriendRequestResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED` |
 | `PUT /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404`, `409 RELATIONSHIP_CONFLICT` |
 | `DELETE /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404` |
-| `GET /api/v1/users/{userId}/balances` | Account owner or Battle Service | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
+| `GET /api/v1/users/{userId}/balances` | Account owner, Battle, or legacy Monster Raid (REST) | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
+| `POST /api/v1/users/{userId}/balances` (deprecated) | Legacy Battle or Monster Raid, internal only | `BalanceTransactionRequest` | `200 BalanceTransactionResponse` | `400`, `403`, `404`, `422 INSUFFICIENT_BALANCE` |
 | `GET /api/v1/users/{userId}/packages` | Account owner or internal service | None | `200 PackageReference[]` | `403`, `404 USER_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE / PEER_CIRCUIT_OPEN` |
 
@@ -667,8 +668,7 @@ with `Cache-Control: no-store`. The endpoint allows 60 requests per minute per
 client, with `Retry-After: 60` on rejection.
 
 Logout terminates the session in `X-Session-ID`. Owner checks compare `X-User-ID`
-with the path parameter. Balance commands require a service caller named
-`battle-service` through gRPC only.
+with the path parameter. The gRPC balance command accepts only `battle-service`. The deprecated REST adapter temporarily accepts Battle and Monster Raid until #93 stage 3 and #99 stage 4 are deployed.
 
 ##### Relationship Lists
 
