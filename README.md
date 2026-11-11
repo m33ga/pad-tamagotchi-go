@@ -621,6 +621,12 @@ User Management runs as two interchangeable instances with a shared mounted RSA 
 
 User Management Service owns user identity, authentication, social relationships, and currency balances. Passwords are accepted only by registration and authentication endpoints and are never returned. Internal balance commands require an authenticated service identity in addition to the common correlation and idempotency headers.
 
+Lab 4 serves REST on internal port 8080 and `tamagotchigo.usermanagement.v1.UserManagement` on internal gRPC port 9090. Its six RPCs are GetUser, ListRelationships, GetRelationship, GetBalances, CreateBalanceTransaction and ListUserPackages. The broker supplies verified service metadata; handlers reuse the REST application layer and return structured ErrorInfo reasons. Only Battle may call CreateBalanceTransaction; the former balance POST route is removed. Both transports share admission and deadlines, with RESOURCE_EXHAUSTED on gRPC saturation.
+
+Discovery registration adds `grpcAddress: <hostname>:9090` and `topics: [raid.completed.v1]`. The service accepts `api-gateway` as an eighth OAuth client with no scopes. The OAuth endpoint remains REST behind Broker.Send; JWKS remains directly readable. Package Registry GetPackage/RegisterUserPackage calls use generated protobuf messages over Broker.Send, a cached locally signed User Management service token, the incoming correlation ID, stable idempotency key, traceparent and remaining deadline.
+
+The final 4.2.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=user-management`, the hostname as `service.instance.id`, and traceId/spanId in request logs. Release this contract only after broker deployment (#100), discovery topics/gRPC support, Package Registry gRPC (#97 stage 1), Battle's gRPC balance migration (#93 stage 3), Monster Raid event settlement (#99 stage 4), and observability (#101). Publish the service image before pinning 4.2.0 in a separate compose release PR.
+
 ##### Endpoint Catalog
 
 | Method and path | Caller | Request | Success response | Main errors |
@@ -641,8 +647,7 @@ User Management Service owns user identity, authentication, social relationships
 | `POST /api/v1/users/{userId}/friend-requests/{requestId}/responses` | Request recipient | `RespondToFriendRequest` | `200 FriendRequestResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED` |
 | `PUT /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404`, `409 RELATIONSHIP_CONFLICT` |
 | `DELETE /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404` |
-| `GET /api/v1/users/{userId}/balances` | Account owner, Battle, or Monster Raid Service | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
-| `POST /api/v1/users/{userId}/balances` | Battle or Monster Raid Service | `BalanceTransactionRequest` | `200 BalanceTransactionResponse` | `400`, `403`, `404`, `422 INSUFFICIENT_BALANCE` |
+| `GET /api/v1/users/{userId}/balances` | Account owner or Battle Service | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/packages` | Account owner or internal service | None | `200 PackageReference[]` | `403`, `404 USER_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE / PEER_CIRCUIT_OPEN` |
 
@@ -663,7 +668,7 @@ client, with `Retry-After: 60` on rejection.
 
 Logout terminates the session in `X-Session-ID`. Owner checks compare `X-User-ID`
 with the path parameter. Balance commands require a service caller named
-`battle-service` or `monster-raid-service`.
+`battle-service` through gRPC only.
 
 ##### Relationship Lists
 
@@ -818,7 +823,7 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 ##### Published Queue Event
 
-`user.friend-request.created.v1` is published after a friend request is stored successfully. Notification Service consumes it to notify the recipient.
+`user.friend-request.created.v1` is published through Broker.Publish in the common event envelope; a failed publication rolls back the friend command. Notification Service consumes it to notify the recipient.
 
 ```json
 {
@@ -829,12 +834,16 @@ instead of querying each pair; it follows additional pages for larger graphs.
 }
 ```
 
+##### Consumed Event
+
+`tamagotchigo.events.v1.EventConsumer/Deliver` consumes `raid.completed.v1`. Authorize only the broker's `Message.headers["x-producer"] == "monster-raid"`, never the envelope's producer. Each positive globalCurrency reward creates a GLOBAL/RAID_REWARD transaction with referenceId raidId. Deduplicate per (raidId, userId), including REST-era ledger entries. Commit each user independently; after partial failure a replay applies only missing rewards. XP and tamagotchiId are ignored. Return OK after commit, NOT_FOUND for unknown users, PERMISSION_DENIED for another producer, INVALID_ARGUMENT for malformed events, and UNAVAILABLE for database failures.
+
 ##### Outbound Dependencies
 
 | Receiver | Operation | Reason |
 |---|---|---|
-| Package Registry Service | Retrieve a package by `packageId` | Validate that a package exists and is active |
-| Package Registry Service | Register `userId` with `packageId` | Make Package Registry the authority for the registration |
+| Package Registry Service through Broker.Send | gRPC GetPackage | Validate that a package exists and is active |
+| Package Registry Service through Broker.Send | gRPC RegisterUserPackage | Make Package Registry the authority for the registration |
 
 #### Package Registry Service
 
