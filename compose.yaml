@@ -1,6 +1,6 @@
 services:
   api-gateway:
-    image: grdz/gateway:4.0.0
+    image: grdz/gateway:4.1.0
     pull_policy: always
     # Client traffic arrives on edge; the services and the registry are on internal.
     networks: [edge, internal]
@@ -53,7 +53,7 @@ services:
       start_period: 5s
 
   broker:
-    image: grdz/broker:4.0.0
+    image: grdz/broker:4.5.0
     pull_policy: always
     restart: unless-stopped
     # Carries every client request, every call between services and every event:
@@ -95,7 +95,7 @@ services:
       retries: 10
 
   user-management-api:
-    image: sanda2004/user-management-service:3.0.0
+    image: sanda2004/user-management-service:4.0.0
     pull_policy: always
     deploy:
       replicas: 2

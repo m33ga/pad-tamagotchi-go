@@ -24,8 +24,8 @@ When upgrading an existing `.env`, replace `GUILD_CHAT_PORT` with
 
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
-The gateway, Service Discovery and message broker images, `grdz/gateway:4.0.0`,
-`grdz/service-discovery:4.0.0` and `grdz/broker:4.0.0`, are pinned directly in
+The gateway, Service Discovery and message broker images, `grdz/gateway:4.1.0`,
+`grdz/service-discovery:4.0.0` and `grdz/broker:4.5.0`, are pinned directly in
 Compose.
 `SERVICE_PLATFORM` selects the Tamagotchi and Notification container architecture.
 It defaults to `linux/amd64`, which also works through emulation on Apple Silicon.
