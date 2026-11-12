@@ -2130,7 +2130,7 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.1.0`, `grdz/service-discovery:4.0.0` and `grdz/broker:4.5.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.1.0`, `grdz/service-discovery:4.1.0` and `grdz/broker:4.5.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
@@ -2336,6 +2336,16 @@ The Package Registry Service manages application packages and package-specific g
 ### Service Discovery
 
 Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the message broker routes from, and posts alerts to Discord. It is the only component that writes the registry.
+
+Version 4.1.0 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
+`discovery_instance_utilization`, `discovery_instance_in_flight` and `discovery_instance_limit`
+with `service` and `instance_id` labels, plus `discovery_registry_instances` by service/health.
+The system overview uses these for every registered instance, including services that export
+no telemetry themselves. Counters cover evictions, recoveries, deletions and successfully sent
+alerts; `discovery_probe_duration_seconds` records probe duration in Prometheus. Gauges stop
+producing samples when an instance is deleted. Discovery also exports HTTP server traces and
+adds `traceId`/`spanId` to request logs. All exports go to the collector over OTLP/gRPC in
+background threads; an unavailable collector does not affect probing, alerts or the API.
 
 A **JSON state file** on the `service-discovery-data` volume is used because the registry is small, written only on membership and health changes, and read back only at startup. A database would add a dependency for no benefit, while the file lets the registry survive its own restart without losing the fleet. Its specification is in the [`discovery`](discovery/docs/spec.md) submodule.
 

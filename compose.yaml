@@ -40,7 +40,7 @@ services:
 
   service-discovery:
     logging: *default-logging
-    image: grdz/service-discovery:4.0.0
+    image: grdz/service-discovery:4.1.0
     pull_policy: always
     restart: unless-stopped
     # Nothing calls it from outside. It joins edge only to reach the Discord webhook,
@@ -53,6 +53,7 @@ services:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
       LOAD_ALERT_THRESHOLD: ${LOAD_ALERT_THRESHOLD:-0.8}
       SELF_PRESERVATION: ${SELF_PRESERVATION:-off}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     # Not optional: there is no heartbeat, so a registry that loses its state file
     # loses the fleet until every service is restarted.
     volumes:
