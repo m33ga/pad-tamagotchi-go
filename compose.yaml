@@ -1,5 +1,16 @@
+# Every container logs through the json-file driver, rotated, with its name as tag: the
+# OpenTelemetry Collector reads these files (Docker Desktop defaults to the local driver, which
+# it cannot read) and sends the lines to Loki.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    tag: "{{.Name}}"
+
 services:
   api-gateway:
+    logging: *default-logging
     image: grdz/gateway:4.1.0
     pull_policy: always
     # Client traffic arrives on edge; the services and the registry are on internal.
@@ -28,6 +39,7 @@ services:
       start_period: 5s
 
   service-discovery:
+    logging: *default-logging
     image: grdz/service-discovery:4.0.0
     pull_policy: always
     restart: unless-stopped
@@ -53,6 +65,7 @@ services:
       start_period: 5s
 
   broker:
+    logging: *default-logging
     image: grdz/broker:4.5.0
     pull_policy: always
     restart: unless-stopped
@@ -80,6 +93,7 @@ services:
 
   # The durable event store: queued events survive a broker restart.
   broker-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -95,6 +109,7 @@ services:
       retries: 10
 
   user-management-api:
+    logging: *default-logging
     image: sanda2004/user-management-service:4.0.0
     pull_policy: always
     deploy:
@@ -120,6 +135,7 @@ services:
       start_period: 10s
 
   user-management-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -135,6 +151,7 @@ services:
       retries: 10
 
   battle-api:
+    logging: *default-logging
     image: sanda2004/battle-service:3.0.0
     pull_policy: always
     deploy:
@@ -158,6 +175,7 @@ services:
       start_period: 10s
 
   battle-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -173,6 +191,7 @@ services:
       retries: 10
 
   map-api:
+    logging: *default-logging
     image: grdz/map-service:3.0.0
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
@@ -203,6 +222,7 @@ services:
       start_period: 10s
 
   map-redis:
+    logging: *default-logging
     image: redis:8-alpine
     networks: [internal]
     command: ["redis-server", "--requirepass", "${MAP_REDIS_PASSWORD}"]
@@ -217,6 +237,7 @@ services:
       retries: 10
 
   monster-raid-api:
+    logging: *default-logging
     image: grdz/monster-raid-service:3.0.0
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
@@ -253,6 +274,7 @@ services:
       start_period: 10s
 
   monster-raid-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -268,6 +290,7 @@ services:
       retries: 10
 
   monster-raid-redis:
+    logging: *default-logging
     image: redis:8-alpine
     networks: [internal]
     command: ["redis-server", "--requirepass", "${MONSTER_RAID_REDIS_PASSWORD}"]
@@ -282,6 +305,7 @@ services:
       retries: 10
 
   guild-api-1:
+    logging: *default-logging
     image: cosmak47/pad-guild-service:3.0.0
     pull_policy: always
     networks: [edge, internal]
@@ -306,6 +330,7 @@ services:
       start_period: 10s
 
   guild-api-2:
+    logging: *default-logging
     image: cosmak47/pad-guild-service:3.0.0
     pull_policy: always
     networks: [edge, internal]
@@ -331,6 +356,7 @@ services:
 
 
   guild-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -346,6 +372,7 @@ services:
       retries: 10
 
   package-registry-api:
+    logging: *default-logging
     image: cosmak47/pad-package-registry-service:3.0.0
     pull_policy: always
     deploy:
@@ -370,6 +397,7 @@ services:
       start_period: 10s
 
   package-registry-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -385,6 +413,7 @@ services:
       retries: 10
 
   tamagotchi-api:
+    logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
     image: johnnyc05/pad-tamagotchi-service:v3.0.1
     pull_policy: always
@@ -420,6 +449,7 @@ services:
       start_period: 10s
 
   tamagotchi-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -435,6 +465,7 @@ services:
       retries: 10
 
   notification-api:
+    logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
     image: johnnyc05/pad-notification-service:v3.0.0
     pull_policy: always
@@ -471,6 +502,7 @@ services:
       start_period: 10s
 
   notification-db:
+    logging: *default-logging
     image: postgres:17-alpine
     networks: [internal]
     environment:
@@ -486,6 +518,7 @@ services:
       retries: 10
 
   notification-redis:
+    logging: *default-logging
     image: redis:8-alpine
     networks: [internal]
     command: ["redis-server", "--requirepass", "${NOTIFICATION_REDIS_PASSWORD}", "--appendonly", "yes"]
@@ -499,9 +532,132 @@ services:
       timeout: 5s
       retries: 10
 
+  # Observability (observability/): the OpenTelemetry Collector receives traces and metrics
+  # over OTLP and reads every container's log file, and hands them to Jaeger, Prometheus and
+  # Loki; Grafana shows all three. Only Grafana and the Jaeger UI are published, on loopback.
+  otel-collector:
+    logging: *default-logging
+    restart: unless-stopped
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    # Root, because only root may read Docker's log files.
+    user: "0:0"
+    networks: [internal]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      # From Git Bash on Windows, run compose with MSYS_NO_PATHCONV=1 so this path is kept.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - otel-collector-data:/var/lib/otelcol
+    depends_on:
+      jaeger:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  prometheus:
+    logging: *default-logging
+    restart: unless-stopped
+    image: prom/prometheus:v3.16.0
+    networks: [internal]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-otlp-receiver
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  loki:
+    logging: *default-logging
+    restart: unless-stopped
+    image: grafana/loki:3.6.20
+    networks: [internal]
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./observability/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  jaeger:
+    logging: *default-logging
+    restart: unless-stopped
+    # 2.21 and later serve only the v3 query API, which Grafana's Jaeger datasource does not
+    # read yet. Traces are kept in memory: 768M restart starts empty.
+    image: jaegertracing/jaeger:2.20.0
+    networks: [edge, internal]
+    ports:
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:16686/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  grafana:
+    logging: *default-logging
+    restart: unless-stopped
+    image: grafana/grafana:13.2.6
+    networks: [edge, internal]
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      # Anyone on this machine may look, including in Explore, where a log line's traceId opens
+      # its trace; saving anything needs the admin login. Grafana is reachable on loopback only.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/system-overview.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
+      jaeger:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
 networks:
-  # Published listeners: the gateway, both Guild sockets, and loopback-only Discovery
-  # and broker admin.
+  # Published listeners: the gateway, both Guild sockets, and loopback-only Discovery,
+  # broker admin, Grafana and the Jaeger UI.
   edge:
   # Every container. No route to the internet, and nothing on it is published.
   internal:
@@ -520,3 +676,7 @@ volumes:
   tamagotchi-data:
   notification-data:
   notification-redis-data:
+  otel-collector-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:
