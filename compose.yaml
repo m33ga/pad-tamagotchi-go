@@ -11,7 +11,7 @@ x-logging: &default-logging
 services:
   api-gateway:
     logging: *default-logging
-    image: grdz/gateway:4.3.0
+    image: grdz/gateway:4.3.1
     pull_policy: always
     # Client traffic arrives on edge; the services and the registry are on internal.
     networks: [edge, internal]
