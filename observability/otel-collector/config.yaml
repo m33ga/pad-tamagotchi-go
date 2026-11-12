@@ -130,6 +130,31 @@ processors:
           # A published event: event published map.proximity.detected.v1
           - set(body, Concat([body, attributes["eventType"]], " ")) where attributes["event"] == "event_published" and IsString(attributes["eventType"])
 
+  # Health probes (Service Discovery's /status every 4 s, Docker's /health) reach each instance
+  # directly by design and are traces of their own, with no caller span. Kept, they would be
+  # most of all traces and show in the service graph as calls from "user". A trace waits here
+  # until it is complete and is dropped whole, its database spans included, if a probe started
+  # it.
+  tail_sampling/drop-probes:
+    decision_wait: 5s
+    num_traces: 50000
+    policies:
+      - name: drop-health-probes
+        type: drop
+        drop:
+          drop_sub_policy:
+            - name: probe-request
+              type: ottl_condition
+              ottl_condition:
+                error_mode: ignore
+                span:
+                  - 'kind == SPAN_KIND_SERVER and IsMatch(name, "^GET /(health|status)$")'
+                  # Map's and Monster Raid's probe handlers are untraced, so their Redis ping
+                  # arrives as a trace of its own.
+                  - 'IsRootSpan() and kind == SPAN_KIND_CLIENT and name == "ping"'
+      - name: keep-everything-else
+        type: always_sample
+
   batch:
     timeout: 2s
     send_batch_size: 1024
@@ -169,7 +194,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, tail_sampling/drop-probes, batch]
       exporters: [otlp_grpc/tempo]
     metrics:
       receivers: [otlp]
