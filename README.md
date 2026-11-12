@@ -118,7 +118,7 @@ Each service owns its datastore. Events are published to broker topics and persi
 
 ![Architecture Diagram](docs/architecture.png)
 
-The diagram shows the Lab 4 target. Compose currently uses Jaeger for traces; object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
+The diagram shows the Lab 4 target. Object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
 
 [Back to top](#table-of-contents)
 
