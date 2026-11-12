@@ -4,7 +4,7 @@ clients:
     scopes: [tamagotchis:read, users.balances:write, packages:read]
   - client_id: monster-raid-service
     secret_hashes: ["${MONSTER_RAID_CLIENT_SECRET_HASH}"]
-    scopes: [tamagotchis:read, users.balances:write, guilds:read, packages:read]
+    scopes: [tamagotchis:read, guilds:read, packages:read]
   - client_id: map-service
     secret_hashes: ["${MAP_CLIENT_SECRET_HASH}"]
     scopes: [users:read]
@@ -19,4 +19,8 @@ clients:
     scopes: []
   - client_id: notification-service
     secret_hashes: ["${NOTIFICATION_CLIENT_SECRET_HASH}"]
+    scopes: []
+  # The gateway: authenticates its Send calls so the broker accepts the user identity it passes on.
+  - client_id: api-gateway
+    secret_hashes: ["${API_GATEWAY_CLIENT_SECRET_HASH}"]
     scopes: []
