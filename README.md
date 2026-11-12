@@ -2256,8 +2256,8 @@ The message broker is deployed, and the gateway hands every client request to it
 - **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
 - **Guild** calls User Management and Package Registry through the gateway with its service credentials; invitation events remain in its transactional outbox without a deployed broker.
 - **Package Registry** has no outbound dependency, receives gateway-derived identities, and derives administrator access from `ADMIN_USER_IDS`.
-- **Tamagotchi** calls Package Registry through the gateway to validate health statistics when `USE_MOCK_PACKAGE_REGISTRY=false`; `true` keeps its built-in registry mock.
-- **Notification** calls no other service. Firebase is mocked. Until it subscribes to its topics on the broker, producers deliver events through its internal event endpoint.
+- **Tamagotchi** answers its peers over gRPC through the broker and validates health statistics with Package Registry the same way. Until Package Registry serves gRPC (#97), Compose keeps Tamagotchi on its built-in registry mock.
+- **Notification** calls no other service. Firebase is mocked. It receives its events by subscribing to their topics on the broker; it has no internal event endpoint any more.
 
 ### Postman Collections
 

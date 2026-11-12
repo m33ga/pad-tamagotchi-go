@@ -11,7 +11,7 @@ x-logging: &default-logging
 services:
   api-gateway:
     logging: *default-logging
-    image: grdz/gateway:4.1.0
+    image: grdz/gateway:4.2.0
     pull_policy: always
     # Client traffic arrives on edge; the services and the registry are on internal.
     networks: [edge, internal]
@@ -416,7 +416,7 @@ services:
   tamagotchi-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v3.0.1
+    image: johnnyc05/pad-tamagotchi-service:v4.2.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -436,7 +436,10 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
-      PackageRegistry__UseMock: ${USE_MOCK_PACKAGE_REGISTRY:-false}
+      # The built-in registry mock: Tamagotchi asks Package Registry over gRPC through the
+      # broker, which Package Registry serves only once #97 is released. With that release
+      # this follows USE_MOCK_PACKAGE_REGISTRY again.
+      PackageRegistry__UseMock: "true"
     depends_on:
       service-discovery:
         condition: service_healthy
@@ -468,7 +471,7 @@ services:
   notification-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-notification-service:v3.0.0
+    image: johnnyc05/pad-notification-service:v4.2.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
