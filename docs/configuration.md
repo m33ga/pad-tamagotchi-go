@@ -25,7 +25,7 @@ When upgrading an existing `.env`, replace `GUILD_CHAT_PORT` with
 
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
-The gateway, Service Discovery and message broker images, `grdz/gateway:4.2.0`,
+The gateway, Service Discovery and message broker images, `grdz/gateway:4.3.0`,
 `grdz/service-discovery:4.1.0` and `grdz/broker:4.5.1`, are pinned directly in
 Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v4.2.0`
 and `johnnyc05/pad-notification-service:v4.2.0`. All five export traces and metrics to
