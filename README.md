@@ -118,7 +118,7 @@ Each service owns its datastore. Events are published to broker topics and persi
 
 ![Architecture Diagram](docs/architecture.png)
 
-The editable source is [architecture-v5.excalidraw](docs/architecture-v5.excalidraw). The leader's supplied [Lab 4 reference PNG](docs/architecture-lab4-reference.png) is included for comparison. The diagram follows the Lab 4 communication contract and the current Compose replica counts. Guild and Package Registry are still pinned to their Lab 3 images pending #96 and #97, so the final deployment and collection consistency pass in #102 remains open. The reference's object store is pending #66 and is not deployed in Compose.
+The diagram shows the Lab 4 target. Compose currently uses Jaeger for traces; object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
 
 [Back to top](#table-of-contents)
 
