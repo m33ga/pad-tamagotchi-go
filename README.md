@@ -81,7 +81,7 @@ Any eligible guild member may contribute their **primary Tamagotchi** to the rai
 
 When the monster dies, the service distributes rewards (global currency, XP, or other globally managed rewards) to participating users. A raid may also **fail** when its timer expires.
 
-It consults the **Guild Service** for eligible members, the **Tamagotchi Service** for combat properties, and the **User Management Service** to distribute rewards.
+It consults the **Guild Service** for eligible members and the **Tamagotchi Service** for combat properties. Rewards travel in the `raid.completed.v1` event, from which the **User Management Service** credits global currency and the **Tamagotchi Service** grants XP.
 
 ### Package Registry Service
 
@@ -851,7 +851,7 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 #### Package Registry Service
 
-Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS`—the former caller-supplied role header is not accepted.
+Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS` - the former caller-supplied role header is not accepted.
 
 Lab 3 runs two Package Registry instances on the internal network. Each registers its REST address with Service Discovery and exposes internal `GET /health` (liveness, always `200 {"status":"UP"}`) and `GET /status` (readiness/load/PostgreSQL, `200` for `UP`/`DEGRADED`, `503` for `DOWN`). These operational endpoints are not client routes through the gateway; `/healthz` is removed. Each response includes `X-Instance-Id`. PostgreSQL serializes startup migrations so both replicas may start together.
 
@@ -1582,13 +1582,25 @@ yields `403`. Map reads friend and enemy relationships from User Management
 over gRPC through the message broker, authenticating as the `map-service` client; an
 unreachable User Management yields `503 USER_SERVICE_UNAVAILABLE`.
 
+##### Message Broker
+
+| Role | What |
+|---|---|
+| Serves gRPC | nothing; Map opens no gRPC port and registers no `grpcAddress` |
+| Calls | User Management: `ListRelationships`, `GetUser`, each a `Broker.Send` to `user-management` with the gRPC method as its operation |
+| Publishes | `map.proximity.detected.v1`, with `Broker.Publish` |
+| Subscribes | nothing; Map registers no `topics` |
+| REST routes removed | none |
+
+Map keeps one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS`, which defaults in code to `broker:9090`; `GATEWAY_URL` is no longer read. Its service token is itself a `Send` to `user-management` (`POST /api/v1/oauth2/token`), and every other `Send` carries it as `authorization` metadata together with `x-correlation-id`, `traceparent` and the remaining request deadline.
+
 ##### Instances, Probes and the Circuit Breaker
 
 Map runs as three interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. All of its state is in Redis: the latest location per user, the geo index and the proximity markers. Accepting a location is a single compare-and-write on its sequence number, and the marker that decides whether a proximity event is published is always written to the lower user id's set, so two instances handling the two users of a pair at once still publish one event. There are no startup migrations and no scheduled work.
 
 `GET /health` always answers `200 {"status":"UP"}` and checks nothing, Redis included. `GET /status` reports readiness to Service Discovery with the `redis` and `user-management` dependencies: Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or User Management down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
 
-User Management is never probed: its `/status` entry comes from the instance's circuit breaker. After three failures within 14 seconds the breaker opens for 14 seconds, covering the OAuth token fetch as well. While it is open, updating a location still stores it and takes the degraded proximity path at once instead of waiting out the 4 second timeout, and the map view answers `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling User Management.
+User Management is never probed: its `/status` entry comes from the instance's circuit breaker around the `Send` calls to it. After three failures within 14 seconds the breaker opens for 14 seconds, covering the OAuth token fetch as well. The broker unreachable, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL` and `UNKNOWN` count as failures; client errors such as `NOT_FOUND`, and `UNAVAILABLE` with reason `PEER_CIRCUIT_OPEN`, do not. While the breaker is open, updating a location still stores it and takes the degraded proximity path at once instead of waiting out the 4 second timeout, and the map view answers `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling User Management.
 
 ##### Endpoint Catalog
 
@@ -1646,7 +1658,7 @@ Friends and enemies are included whenever both users have unexpired locations. A
 
 ##### Published Queue Event
 
-`map.proximity.detected.v1` is published when two unrelated users move from outside to inside the 6-meter threshold. Notification Service consumes it to notify the affected users.
+`map.proximity.detected.v1` is published with `Broker.Publish`, to the topic of the same name, when two unrelated users move from outside to inside the 6-meter threshold. Notification Service consumes it to notify the affected users.
 
 ```json
 {
@@ -1659,16 +1671,18 @@ Friends and enemies are included whenever both users have unexpired locations. A
 
 Map Service records a short-lived proximity marker for the unordered user pair so that continuous location updates do not produce duplicate notifications. A new event may be published only after the pair leaves the threshold and later enters it again.
 
+Map stores only Redis, so it has no outbox. A failed `Publish` logs `event_publish_failed` and clears the pair's proximity marker, so the next crossing of the threshold publishes again. A lost proximity notification is acceptable; a location update never fails because of the broker.
+
 ##### Service Dependencies
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | User Management Service | Read users and friend/enemy relationships | Classify candidates and apply map visibility rules |
-| Outbound | Notification Service through Queue | Publish proximity events | Request asynchronous nearby-player notifications without coupling Map Service to Firebase |
+| Outbound | User Management Service, gRPC over `Broker.Send` | `ListRelationships`, `GetUser` | Classify candidates and apply map visibility rules |
+| Outbound | Notification Service through the broker topic `map.proximity.detected.v1` | `Broker.Publish` | Request asynchronous nearby-player notifications without coupling Map Service to Firebase |
 
 #### Monster Raid Service
 
-Monster Raid Service owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress. Raids, participants, attack batches and rewards are stored in PostgreSQL; only the current monster HP is kept in Redis for fast atomic updates.
+Monster Raid Service owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress. Raids, participants, attack batches and rewards are stored in PostgreSQL; only the current monster HP is kept in Redis for fast atomic updates.
 
 ##### Gateway Identity and Collaborators
 
@@ -1678,8 +1692,20 @@ that header and strips what the client sends. Joining and attacking require
 `X-Caller-Kind: user` and yield `403` for a service caller. Monster Raid calls
 Guild, Package Registry and Tamagotchi over gRPC through the message broker,
 authenticating as the `monster-raid-service` client. It no longer calls User
-Management: raid rewards are settled by User Management and Tamagotchi from the
+Management: raid rewards are credited by User Management and Tamagotchi from the
 `raid.completed.v1` event.
+
+##### Message Broker
+
+| Role | What |
+|---|---|
+| Serves gRPC | nothing; Monster Raid opens no gRPC port and registers no `grpcAddress` |
+| Calls | Guild: `GetGuild`, `ListMembers`, `GetMember`. Tamagotchi: `GetCombatProfile`, `GetPrimaryTamagotchi` (reads only). Package Registry: `ListRaidSchedules`, `GetRaidConfiguration`, `ListStatDefinitions`. Each is a `Broker.Send` to the peer with the gRPC method as its operation |
+| Publishes | `raid.started.v1`, `raid.completed.v1` (with `rewards[]`), `raid.failed.v1`, with `Broker.Publish` from a transactional outbox |
+| Subscribes | nothing; Monster Raid registers no `topics` |
+| REST routes removed | none |
+
+Monster Raid keeps one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS`, which defaults in code to `broker:9090`; `GATEWAY_URL` is no longer read. It makes no business call to User Management: its only request there is its own service token, a `Send` to `user-management` (`POST /api/v1/oauth2/token`). Every other `Send` carries that token as `authorization` metadata together with `x-correlation-id`, `traceparent` and the remaining request deadline. Settlement retries, `reward_deferred`, the User Management client and its circuit breaker, the XP grant call and the `users.balances:write` scope are gone.
 
 ##### Instances, Probes and Circuit Breakers
 
@@ -1687,7 +1713,7 @@ Monster Raid runs as three interchangeable instances, and every response carries
 
 `GET /health` always answers `200 {"status":"UP"}` and checks nothing, neither PostgreSQL nor Redis. `GET /status` reports readiness to Service Discovery with `postgres`, `redis`, `guild`, `package-registry` and `tamagotchi`, the datastores probed concurrently: PostgreSQL or Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or a peer down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
 
-Peers are never probed: each has its own circuit breaker, so Guild being down never stops calls to Tamagotchi. After three failures within 14 seconds a breaker opens for 14 seconds. While it is open, the operations that need that peer answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it.
+Peers are never probed: each has its own circuit breaker around the `Send` calls to it, so Guild being down never stops calls to Tamagotchi. After three failures within 14 seconds a breaker opens for 14 seconds. The broker unreachable, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL` and `UNKNOWN` count as failures; client errors such as `NOT_FOUND`, and `UNAVAILABLE` with reason `PEER_CIRCUIT_OPEN`, do not. While a breaker is open, the operations that need that peer answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it.
 
 ##### Endpoint Catalog
 
@@ -1810,7 +1836,7 @@ When monster HP reaches zero, one transaction stores the raid as `COMPLETED` wit
 
 If the deadline arrives while monster HP is above zero, the raid becomes `FAILED`, no rewards are distributed and `raid.failed.v1` goes to the outbox. Finished results and rewards are persisted in PostgreSQL; the corresponding current-HP entry is removed from Redis after the raid reaches a terminal state.
 
-Both transitions are evaluated whenever a raid is loaded, so every read and command path observes the terminal state without a background scheduler. `GET /api/v1/raids/{raidId}/result` answers `409 RAID_NOT_FINISHED` until the terminal state is stored.
+A raid goes from `ACTIVE` straight to `COMPLETED` or `FAILED`; there is no `SETTLING` state. Both transitions are evaluated whenever a raid is loaded, so every read and command path observes the terminal state without a background scheduler. `GET /api/v1/raids/{raidId}/result` answers `409 RAID_NOT_FINISHED` until the terminal state is stored, and as soon as the raid is `COMPLETED` it returns the awarded rewards, which the other services credit asynchronously.
 
 Every raid event goes through the outbox. A relay in each instance publishes unsent rows with `Broker.Publish` and marks them sent, claiming rows with `SELECT ... FOR UPDATE SKIP LOCKED` so that the three instances never publish the same row; a broker outage only delays publishing.
 
@@ -1846,11 +1872,11 @@ Every raid event goes through the outbox. A relay in each instance publishes uns
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | Guild Service | Read guild, members, and membership | Resolve notification recipients and validate raid visibility and participant eligibility |
-| Outbound | Package Registry Service | Read active schedule, raid configuration, and statistic definitions | Initialize the raid and calculate package-specific damage |
-| Outbound | Tamagotchi Service | Read combat profiles | Validate combatants and calculate damage |
-| Outbound | Notification Service through a broker topic | Publish raid lifecycle events | Notify guild members and participants asynchronously |
-| Outbound | User Management and Tamagotchi Services through a broker topic | Publish `raid.completed.v1` with rewards | Credit global currency and grant XP |
+| Outbound | Guild Service, gRPC over `Broker.Send` | `GetGuild`, `ListMembers`, `GetMember` | Resolve notification recipients and validate raid visibility and participant eligibility |
+| Outbound | Package Registry Service, gRPC over `Broker.Send` | `ListRaidSchedules`, `GetRaidConfiguration`, `ListStatDefinitions` | Initialize the raid and calculate package-specific damage |
+| Outbound | Tamagotchi Service, gRPC over `Broker.Send` | `GetCombatProfile`, `GetPrimaryTamagotchi` (reads only) | Validate combatants and calculate damage |
+| Outbound | Notification Service through the broker topics `raid.started.v1`, `raid.completed.v1`, `raid.failed.v1` | `Broker.Publish` from the outbox | Notify guild members and participants asynchronously |
+| Outbound | User Management and Tamagotchi Services through the broker topic `raid.completed.v1` | `Broker.Publish` from the outbox, with rewards | Credit global currency and grant XP |
 
 #### Notification Service
 
