@@ -2130,7 +2130,7 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.1.0`, `grdz/service-discovery:4.1.0` and `grdz/broker:4.5.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.2.0`, `grdz/service-discovery:4.1.0` and `grdz/broker:4.5.1` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|

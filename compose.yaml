@@ -67,7 +67,7 @@ services:
 
   broker:
     logging: *default-logging
-    image: grdz/broker:4.5.0
+    image: grdz/broker:4.5.1
     pull_policy: always
     restart: unless-stopped
     # Carries every client request, every call between services and every event:
