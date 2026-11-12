@@ -112,11 +112,13 @@ It consumes events published by other services (notably the **User Management Se
 
 ## Architecture Diagram
 
-The API Gateway is the only way into the system. It verifies the bearer token, replaces whatever identity headers the caller sent with ones it has verified, strips the service prefix and forwards the rest. Every solid arrow in the diagram is a call that passes through it, including the service-to-service ones: those are drawn directly between services so it stays readable which service needs what, but none of them is a connection a service could open on its own. The one exception is the Guild chat WebSocket, drawn as a direct violet edge from the client, because the gateway negotiates that connection over REST and then carries none of its traffic.
+The API Gateway verifies client bearer tokens and sends allowed REST operations to the message broker. The broker queues each request, chooses a service instance, and returns its reply. Services call peers as gRPC operations through the same broker. Guild chat uses a direct WebSocket after its REST ticket negotiation.
 
-Each service owns its own database. Asynchronous events (dashed green arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging; the queue is not part of the gateway's path. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
+Each service owns its datastore. Events are published to broker topics and persisted in per-subscriber queues in `broker-db`. For example, `raid.completed.v1` reaches Notification, User Management and Tamagotchi independently. Failed deliveries enter the dead letter channel. Service Discovery handles registration, probes and health, and the broker reads its catalogue. The collector sends telemetry to Prometheus, Loki and Jaeger, with Grafana providing dashboards.
 
 ![Architecture Diagram](docs/architecture.png)
+
+The diagram shows the Lab 4 target. Compose currently uses Jaeger for traces; object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
 
 [Back to top](#table-of-contents)
 
@@ -2286,6 +2288,8 @@ The message broker is deployed, and the gateway hands every client request to it
 - **Notification** calls no other service. Firebase is mocked. It receives its events by subscribing to their topics on the broker; it has no internal event endpoint any more.
 
 ### Postman Collections
+
+The [gateway administrator collection](collections/gateway-admin.postman_collection.json) contains `GET /admin/logs`. After gateway #25 is released and pinned, set `ADMIN_USER_IDS` in the local `.env` to your administrator's UMS UUID and restart the gateway. Put that user's bearer token in the collection's private local `adminAccessToken` value. The request defaults to the last hour and checks the NDJSON download headers and body. Use Save Response in Postman to keep the file. The collector preserves each original JSON line in `originalLog` metadata. Downloads of historical logs without that field use reconstructed records.
 
 Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. On a clean stack, run the User Management collection's `1. Setup and Authentication`, followed by `1b. Package Bootstrap`: register without a package, log in, create a package, activate it as its developer, and join it. These steps use only API calls; no database inserts or administrator identity are needed. Registration can still select an existing ACTIVE package with `initialPackageId`.
 

@@ -45,6 +45,10 @@ receivers:
         field: attributes.attrs
       - type: remove
         field: attributes.time
+      # Admin downloads need the exact original line after the message becomes the body.
+      - type: copy
+        from: body
+        to: attributes.originalLog
       # A platform line: its fields become attributes; anything else stays plain text.
       - type: json_parser
         id: platform
