@@ -1,0 +1,151 @@
+# The OpenTelemetry Collector of the platform. Services send traces and metrics over OTLP;
+# container logs are read from Docker's json-file logs. Everything leaves to one backend each:
+# traces to Jaeger, metrics to Prometheus, logs to Loki.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Every container of the stack logs through the json-file driver with its name as tag
+  # (x-logging in compose.yaml). A line of such a file is
+  #   {"log": "<the line>\n", "stream": "stdout", "attrs": {"tag": "<container>"}, "time": "..."}
+  # and the line itself is one JSON object in the platform schema for every service, or plain
+  # text for the databases and caches.
+  filelog/docker:
+    include: [/var/lib/docker/containers/*/*-json.log]
+    # From the start of each file, with the read offsets checkpointed, so lines written before
+    # the collector started are kept and a restarted collector sends nothing twice.
+    start_at: beginning
+    storage: file_storage
+    include_file_path: false
+    include_file_name: false
+    operators:
+      # A torn or corrupted line (a container that crashed mid-write) is skipped.
+      - type: json_parser
+        id: docker
+        on_error: drop_quiet
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.999999999Z07:00"
+      # Containers of other projects carry no tag: they are not this stack's.
+      - type: filter
+        expr: 'attributes.attrs == nil or attributes.attrs.tag == nil'
+      - type: move
+        from: attributes.attrs.tag
+        to: resource["container.name"]
+      - type: move
+        from: attributes.log
+        to: body
+      - type: remove
+        field: attributes.attrs
+      - type: remove
+        field: attributes.time
+      # A platform line: its fields become attributes; anything else stays plain text.
+      - type: json_parser
+        id: platform
+        if: 'body matches "^\\s*\\{"'
+        parse_from: body
+        parse_to: attributes
+        on_error: send_quiet
+      - type: move
+        if: 'attributes.service != nil'
+        from: attributes.service
+        to: resource["service.name"]
+      - type: move
+        if: 'attributes.instanceId != nil'
+        from: attributes.instanceId
+        to: resource["service.instance.id"]
+      - type: move
+        if: 'attributes.message != nil'
+        from: attributes.message
+        to: body
+      - type: severity_parser
+        if: 'attributes.level != nil'
+        parse_from: attributes.level
+        preserve_to: attributes.level
+        mapping:
+          debug: DEBUG
+          info: INFO
+          warn: [WARN, WARNING]
+          error: [ERROR, FATAL]
+      - type: remove
+        if: 'attributes.timestamp != nil'
+        field: attributes.timestamp
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # A line that is not the platform's (a database, a cache) is named after its container,
+  # which Compose names <project>-<service>-<n>, and keeps its text as the body.
+  transform/plain-logs:
+    error_mode: ignore
+    log_statements:
+      - context: resource
+        statements:
+          - set(attributes["service.name"], attributes["container.name"]) where attributes["service.name"] == nil
+          - set(attributes["service.instance.id"], attributes["container.name"]) where attributes["service.instance.id"] == nil
+      - context: log
+        statements:
+          - replace_pattern(body, "\\s+$$", "") where IsString(body)
+          - set(attributes["level"], "INFO") where attributes["level"] == nil
+          # One spelling of the platform's levels, whatever a component writes.
+          - set(attributes["level"], ConvertCase(attributes["level"], "upper")) where IsString(attributes["level"])
+          - set(attributes["level"], "WARN") where attributes["level"] == "WARNING"
+
+  batch:
+    timeout: 2s
+    send_batch_size: 1024
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Prometheus's own OTLP receiver (--web.enable-otlp-receiver): service.name becomes the job
+  # label and service.instance.id the instance label.
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+    tls:
+      insecure: true
+
+  # Loki's native OTLP endpoint; which attributes are labels is set in observability/loki.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  file_storage:
+    directory: /var/lib/otelcol
+    create_directory: true
+
+service:
+  extensions: [health_check, file_storage]
+  telemetry:
+    logs:
+      level: warn
+      encoding: json
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/prometheus]
+    logs:
+      receivers: [filelog/docker]
+      processors: [memory_limiter, transform/plain-logs, batch]
+      exporters: [otlphttp/loki]

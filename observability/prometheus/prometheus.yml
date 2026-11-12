@@ -1,0 +1,20 @@
+# Metrics arrive from the OpenTelemetry Collector through Prometheus's OTLP receiver
+# (--web.enable-otlp-receiver): nothing is scraped but Prometheus itself.
+global:
+  scrape_interval: 15s
+
+otlp:
+  # Kept as labels on every series, next to job (service.name) and instance (service.instance.id).
+  promote_resource_attributes:
+    - service.name
+    - service.instance.id
+
+storage:
+  tsdb:
+    # Pushed samples may arrive a little late or out of order.
+    out_of_order_time_window: 30m
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
