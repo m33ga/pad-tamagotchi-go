@@ -80,8 +80,9 @@
       },
       "options": {
         "legend": {
+          "showLegend": true,
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "calcs": [
             "lastNotNull",
             "max"
@@ -125,8 +126,9 @@
       },
       "options": {
         "legend": {
+          "showLegend": true,
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "calcs": [
             "lastNotNull",
             "max"
@@ -175,12 +177,36 @@
       ],
       "fieldConfig": {
         "defaults": {},
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* limit$"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
+          "showLegend": true,
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "calcs": [
             "lastNotNull",
             "max"
@@ -288,7 +314,7 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 9,
+        "h": 15,
         "w": 12,
         "x": 0,
         "y": 17
@@ -326,18 +352,15 @@
             }
           ],
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "text"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "text",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
               }
             ]
           }
@@ -428,7 +451,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 32
       }
     },
     {
@@ -444,7 +467,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 27
+        "y": 33
       },
       "targets": [
         {
@@ -489,12 +512,12 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 27
+        "y": 33
       },
       "targets": [
         {
           "expr": "sum by (topic, subscriber, outcome) (rate(broker_event_deliveries_total[5m]))",
-          "legendFormat": "{{topic}} \u2192 {{subscriber}} {{outcome}}",
+          "legendFormat": "{{topic}} → {{subscriber}} {{outcome}}",
           "range": true,
           "instant": false,
           "refId": "A",
@@ -534,12 +557,12 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 35
+        "y": 41
       },
       "targets": [
         {
           "expr": "sum by (topic, subscriber) (broker_event_queue_depth)",
-          "legendFormat": "{{topic}} \u2192 {{subscriber}}",
+          "legendFormat": "{{topic}} → {{subscriber}}",
           "range": true,
           "instant": false,
           "refId": "A",
@@ -577,12 +600,12 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 35
+        "y": 41
       },
       "targets": [
         {
           "expr": "max by (topic, subscriber) (broker_event_queue_oldest_age_seconds)",
-          "legendFormat": "{{topic}} \u2192 {{subscriber}}",
+          "legendFormat": "{{topic}} → {{subscriber}}",
           "range": true,
           "instant": false,
           "refId": "A",
@@ -622,12 +645,12 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 35
+        "y": 41
       },
       "targets": [
         {
           "expr": "sum by (topic, subscriber, reason) (increase(broker_dead_letters_total[5m]))",
-          "legendFormat": "{{topic}} \u2192 {{subscriber}} {{reason}}",
+          "legendFormat": "{{topic}} → {{subscriber}} {{reason}}",
           "range": true,
           "instant": false,
           "refId": "A",
