@@ -193,7 +193,7 @@ services:
 
   map-api:
     logging: *default-logging
-    image: grdz/map-service:3.0.0
+    image: grdz/map-service:4.3.0
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -210,8 +210,13 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
+      # REST operations over Broker.Send until the pinned User Management
+      # serves gRPC; then remove the line, gRPC is the default.
+      USER_MANAGEMENT_TRANSPORT: rest
     depends_on:
       service-discovery:
+        condition: service_healthy
+      broker:
         condition: service_healthy
       map-redis:
         condition: service_healthy
@@ -239,7 +244,7 @@ services:
 
   monster-raid-api:
     logging: *default-logging
-    image: grdz/monster-raid-service:3.0.0
+    image: grdz/monster-raid-service:4.4.1
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -260,8 +265,15 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
+      # REST operations over Broker.Send until each pinned peer serves gRPC;
+      # then remove its line, gRPC is the default.
+      GUILD_TRANSPORT: rest
+      PACKAGE_REGISTRY_TRANSPORT: rest
+      TAMAGOTCHI_TRANSPORT: rest
     depends_on:
       service-discovery:
+        condition: service_healthy
+      broker:
         condition: service_healthy
       monster-raid-db:
         condition: service_healthy
