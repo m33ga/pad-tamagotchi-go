@@ -3,13 +3,13 @@
 The deployment uses one `compose.yaml` and two networks. `internal` carries all
 traffic between containers and is declared `internal: true`, so nothing on it can
 reach the internet. `edge` is joined only by the four containers that publish a
-port: the gateway, the two Guild chat instances, and Service Discovery, which also
-needs it to reach the Discord webhook. Every container names its networks
+port: the gateway, the two Guild chat instances, Service Discovery, which also
+needs it to reach the Discord webhook, and Grafana and Jaeger. Every container names its networks
 explicitly.
 
 Only `GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` are published to the
-network. Service Discovery publishes `127.0.0.1:8500`, reachable from the host and
-nowhere else.
+network. Service Discovery publishes `127.0.0.1:8500`, Grafana `127.0.0.1:3000` and
+the Jaeger UI `127.0.0.1:16686`, reachable from the host and nowhere else.
 Guild's REST listener stays on container port 8081 and its separate socket
 listener uses port 8082. Each negotiation returns its serving instance's socket
 address, defaulting to localhost and its own published port. Optional
@@ -76,6 +76,19 @@ deployment address, so it exists only as an override.
 The registry keeps its state in the `service-discovery-data` volume. There is no
 heartbeat: an instance registers once at startup, so a registry that loses that
 volume forgets the fleet until every service is restarted.
+
+## Observability
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GRAFANA_ADMIN_PASSWORD` | none, required | Password of Grafana's `admin` user, needed to change dashboards or settings. Viewing needs no login |
+| `GRAFANA_PORT` | `3000` | Loopback port of Grafana |
+| `JAEGER_UI_PORT` | `16686` | Loopback port of the Jaeger UI |
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` does not appear in `.env.example`: every
+instrumented service defaults it in code or in its image to
+`http://otel-collector:4317`. The collector, Prometheus, Loki and Grafana read
+their configuration from `observability/`; see [Observability](../README.md#observability).
 
 ## Generate Client Credentials
 

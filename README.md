@@ -594,6 +594,7 @@ Every service, the gateway and Service Discovery write one JSON object per line 
 | `event` | always | a value from the vocabulary below |
 | `message` | always | human readable; structured data goes in fields, not in the message |
 | `correlationId`, `method`, `path`, `status`, `durationMs` | request-scoped lines | `correlationId` is the `X-Correlation-ID` of the request |
+| `traceId`, `spanId` | lines written inside a traced request | the W3C trace and span ids of the request's span, so a line leads to its trace in Jaeger |
 | `errorCode` | failures | the error code of the common error envelope |
 | `peer`, `failures`, `windowSeconds` | breaker events | |
 
@@ -610,6 +611,8 @@ The `event` values are fixed, because they are what we search for:
 | `circuit_opened`, `circuit_closed` | `ERROR`, `INFO` | a peer circuit breaker changed state |
 
 The gateway and Service Discovery add events of their own, such as `instance_quarantined` and `instance_evicted`, listed in their specifications. When a line is about another service, its name goes in `serviceName`, because `service` always names the writer.
+
+The [observability stack](#observability) reads these lines from every container and makes them searchable in Grafana by service, instance, level and correlation id.
 
 **Never logged, at any level:** a bearer token, an `Authorization` header, a client secret, a private key, the Discord webhook URL, or a request or response body. User identifiers such as `X-User-ID` appear only at `DEBUG`.
 
@@ -2132,6 +2135,8 @@ Docker Compose runs the gateway, Service Discovery and all eight services from a
 |---|---|---|
 | API Gateway | [`grdz/gateway`](https://hub.docker.com/r/grdz/gateway) | `http://localhost:8000` |
 | Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
+| Grafana, from the host only | [`grafana/grafana`](https://hub.docker.com/r/grafana/grafana) | `http://127.0.0.1:3000` |
+| Jaeger UI, from the host only | [`jaegertracing/jaeger`](https://hub.docker.com/r/jaegertracing/jaeger) | `http://127.0.0.1:16686` |
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
@@ -2147,8 +2152,10 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | Guild chat socket, instance 1 | 8081 |
 | Guild chat socket, instance 2 | 8083 |
 | Service Discovery, loopback only | 8500 |
+| Grafana, loopback only | 3000 |
+| Jaeger UI, loopback only | 16686 |
 
-`GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
+`GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2`, `GRAFANA_PORT` and `JAEGER_UI_PORT` in `.env` can override these ports. Databases, caches and service REST APIs publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
 
 ### Run the Services
 
@@ -2193,9 +2200,47 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
 
-Data persists in eleven named volumes: `service-discovery-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+Data persists in fifteen named volumes: `service-discovery-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`, and for the [observability stack](#observability) `otel-collector-data`, `prometheus-data`, `loki-data` and `grafana-data`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
 
 No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, and Guild and Package Registry ship idempotent migrations inside their images.
+
+### Observability
+
+The deployment watches itself with OpenTelemetry. All configuration lives under [`observability/`](observability) and starts with the rest of the stack in the same `docker compose up -d --wait`.
+
+```
+instrumented services ──OTLP──> otel-collector ──> Prometheus  (metrics, OTLP receiver)
+container stdout (json-file) ──> otel-collector ──> Loki        (logs, the platform JSON parsed into fields)
+                                                ──> Jaeger      (traces)
+Grafana: Prometheus, Loki and Jaeger datasources and provisioned dashboards
+```
+
+| Container | Image | Role | Published |
+|---|---|---|---|
+| `otel-collector` | `otel/opentelemetry-collector-contrib:0.165.0` | receives OTLP on `4317` (gRPC) and `4318` (HTTP) and reads every container's log file | none |
+| `prometheus` | `prom/prometheus:v3.16.0` | metrics, through its OTLP receiver; kept 7 days | none |
+| `loki` | `grafana/loki:3.6.20` | logs; kept 7 days | none |
+| `jaeger` | `jaegertracing/jaeger:2.20.0` | traces, in memory | UI on `127.0.0.1:16686` |
+| `grafana` | `grafana/grafana:13.2.6` | dashboards and Explore over the three | `127.0.0.1:3000` |
+
+Every container has a memory limit, and no observability port is reachable from another machine. Jaeger stays at 2.20 because later versions serve only the v3 query API, which Grafana's Jaeger datasource does not read yet.
+
+**Opening it.** Grafana is at <http://127.0.0.1:3000> and opens on the system overview. Anyone on the machine may view the dashboards and use Explore without logging in; changing anything needs the `admin` login with `GRAFANA_ADMIN_PASSWORD` from `.env`. The Jaeger UI is at <http://127.0.0.1:16686>; the same traces are in Grafana's Explore, and Jaeger keeps them only until it restarts.
+
+**Traces and metrics.** Services export OTLP to `http://otel-collector:4317`, with `service.name` set to the canonical service name and `service.instance.id` to the hostname; in Prometheus these become the `job` and `instance` labels. A request carries `traceparent` through the gateway, the broker and every service it reaches, so one client request, and everything it causes, is one trace.
+
+**Logs.** Every container logs through Docker's `json-file` driver with rotation (`x-logging` in `compose.yaml`; Docker Desktop otherwise defaults to the `local` driver, which the collector cannot read). The collector mounts `/var/lib/docker/containers` read-only, keeps only the lines of this stack's containers, and parses each platform JSON line: `service` and `instanceId` become the Loki labels `service_name` and `service_instance_id`, `level` the label `level`, and every other field (`event`, `correlationId`, `traceId`, `status`, `durationMs`, ...) structured metadata that queries can filter on. A line that is not JSON, from a database or a cache, is kept as text under its container's name. Read offsets are checkpointed, so a restarted collector neither loses nor repeats lines. From Git Bash on Windows, run Compose with `MSYS_NO_PATHCONV=1` so the mount path is kept.
+
+**Dashboards**, provisioned from [`observability/grafana/dashboards`](observability/grafana/dashboards) in the `Tamagotchi Go` folder:
+
+| Dashboard | Shows |
+|---|---|
+| System overview | every instance's health and utilization from Service Discovery's metrics, instances by health, evictions and recoveries, and every service's request rate and errors, from metrics and from request log lines |
+| Requests | latency percentiles and error rates per service and instance from the services' HTTP server metrics, and the same from the `request` log lines (`status`, `durationMs`) for services without metrics |
+| Message broker | request queue depth and wait time per service, the instance each delivery went to, breaker state per instance, failovers, quarantines and readmissions, events published and delivered per topic and subscriber, waiting events and dead letters |
+| Logs | every line, filtered by service, instance, level, correlation id and text; open a line in Explore and its `traceId` links to the trace |
+
+A panel stays empty until its source reports: the system overview's health and utilization need Service Discovery's metrics, and the message broker dashboard the broker's.
 
 ### Mocked Dependencies
 
