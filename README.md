@@ -2292,7 +2292,7 @@ The message broker is deployed, and the gateway hands every client request to it
 - **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
 - **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` with its service token; its outbox publishes invitation events with `Broker.Publish`. Peer gRPC conversion remains stage 4 and waits for the User Management rollout and Registry release.
 - **Package Registry 4.0.0** serves its internal gRPC contract alongside REST, has no outbound dependency, authorizes broker-supplied identities, and derives administrator access from `ADMIN_USER_IDS`. Service-only REST removal waits for all callers to migrate.
-- **Tamagotchi** answers its peers over gRPC through the broker and validates health statistics with Package Registry the same way. Until Package Registry serves gRPC (#97), Compose keeps Tamagotchi on its built-in registry mock.
+- **Tamagotchi** answers its peers over gRPC through the broker and supports the same transport for Registry health-stat validation. Registry 4.0.0 supplies the required server; Compose still forces Tamagotchi's registry mock until its owner verifies the real peer and removes that override.
 - **Notification** calls no other service. Firebase is mocked. It receives its events by subscribing to their topics on the broker; it has no internal event endpoint any more.
 
 ### Postman Collections
