@@ -40,7 +40,7 @@ services:
 
   service-discovery:
     logging: *default-logging
-    image: grdz/service-discovery:4.1.0
+    image: grdz/service-discovery:4.1.1
     pull_policy: always
     restart: unless-stopped
     # Nothing calls it from outside. It joins edge only to reach the Discord webhook,
@@ -111,13 +111,16 @@ services:
 
   user-management-api:
     logging: *default-logging
-    image: sanda2004/user-management-service:4.0.0
+    image: sanda2004/user-management-service:4.1.0
     pull_policy: always
     deploy:
       replicas: 2
     networks: [internal]
     environment:
       REQUEST_TIMEOUT_SECONDS: 4
+      OTEL_SERVICE_NAME: user-management
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
     env_file:
       - .env
     volumes:
@@ -153,13 +156,19 @@ services:
 
   battle-api:
     logging: *default-logging
-    image: sanda2004/battle-service:3.0.0
+    image: sanda2004/battle-service:4.0.2
     pull_policy: always
     deploy:
       replicas: 2
     networks: [internal]
     environment:
       REQUEST_TIMEOUT_SECONDS: 4
+      OTEL_SERVICE_NAME: battle
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      USER_MANAGEMENT_PROTOCOL: grpc
+      TAMAGOTCHI_PROTOCOL: grpc
+      PACKAGE_REGISTRY_PROTOCOL: grpc
     env_file:
       - .env
       - ./secrets/battle-service.env
@@ -210,9 +219,8 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
-      # REST operations over Broker.Send until the pinned User Management
-      # serves gRPC; then remove the line, gRPC is the default.
-      USER_MANAGEMENT_TRANSPORT: rest
+      # The pinned User Management release serves gRPC through Broker.Send.
+      USER_MANAGEMENT_TRANSPORT: grpc
     depends_on:
       service-discovery:
         condition: service_healthy
@@ -265,11 +273,10 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
-      # REST operations over Broker.Send until each pinned peer serves gRPC;
-      # then remove its line, gRPC is the default.
-      GUILD_TRANSPORT: rest
-      PACKAGE_REGISTRY_TRANSPORT: rest
-      TAMAGOTCHI_TRANSPORT: rest
+      # The pinned peer releases serve gRPC through Broker.Send.
+      GUILD_TRANSPORT: grpc
+      PACKAGE_REGISTRY_TRANSPORT: grpc
+      TAMAGOTCHI_TRANSPORT: grpc
     depends_on:
       service-discovery:
         condition: service_healthy
@@ -448,8 +455,8 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
-      # false: health statistics are validated with Package Registry's ListStatDefinitions,
-      # over gRPC through the broker; true keeps Tamagotchi's built-in registry mock.
+      # false, the default: health statistics are validated with Package Registry's
+      # ListStatDefinitions over gRPC through the broker; true keeps the built-in mock.
       PackageRegistry__UseMock: ${USE_MOCK_PACKAGE_REGISTRY:-false}
     depends_on:
       service-discovery:

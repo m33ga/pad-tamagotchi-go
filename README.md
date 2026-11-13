@@ -114,7 +114,7 @@ It consumes events published by other services (notably the **User Management Se
 
 The API Gateway verifies client bearer tokens and sends allowed REST operations to the message broker. The broker queues each request, chooses a service instance, and returns its reply. Services call peers as gRPC operations through the same broker. Guild chat uses a direct WebSocket after its REST ticket negotiation.
 
-Each service owns its datastore. Events are published to broker topics and persisted in per-subscriber queues in `broker-db`. For example, `raid.completed.v1` reaches Notification, User Management and Tamagotchi independently. Failed deliveries enter the dead letter channel. Service Discovery handles registration, probes and health, and the broker reads its catalogue. The collector sends telemetry to Prometheus, Loki and Jaeger, with Grafana providing dashboards.
+Each service owns its datastore. Events are published to broker topics and persisted in per-subscriber queues in `broker-db`. For example, `raid.completed.v1` reaches Notification, User Management and Tamagotchi independently. Failed deliveries enter the dead letter channel. Service Discovery handles registration, probes and health, and the broker reads its catalogue. The collector sends telemetry to Prometheus, Loki and Tempo, with Grafana providing dashboards.
 
 ![Architecture Diagram](docs/architecture.png)
 
@@ -627,11 +627,11 @@ User Management runs as two interchangeable instances with a shared mounted RSA 
 
 User Management Service owns user identity, authentication, social relationships, and currency balances. Passwords are accepted only by registration and authentication endpoints and are never returned. Internal balance commands require an authenticated service identity in addition to the common correlation and idempotency headers.
 
-User Management serves REST on internal port 8080 and `tamagotchigo.usermanagement.v1.UserManagement` on internal gRPC port 9090. Its six RPCs are GetUser, ListRelationships, GetRelationship, GetBalances, CreateBalanceTransaction and ListUserPackages. The broker supplies verified service metadata; handlers reuse the REST application layer and return structured ErrorInfo reasons. Only Battle may call CreateBalanceTransaction; the former balance POST route is removed. Both transports share admission and deadlines, with RESOURCE_EXHAUSTED on gRPC saturation.
+User Management serves REST on internal port 8080 and `tamagotchigo.usermanagement.v1.UserManagement` on internal gRPC port 9090. Its six RPCs are GetUser, ListRelationships, GetRelationship, GetBalances, CreateBalanceTransaction and ListUserPackages. The broker supplies verified service metadata; handlers reuse the REST application layer and return structured ErrorInfo reasons. Only Battle may call CreateBalanceTransaction; the legacy balance POST route remains temporarily available to Battle/Monster Raid on the internal network until their migrations finish; the gateway still refuses it. Both transports share admission and deadlines, with RESOURCE_EXHAUSTED on gRPC saturation.
 
 Discovery registration adds `grpcAddress: <hostname>:9090` and `topics: [raid.completed.v1]`. The service accepts `api-gateway` as an eighth OAuth client with no scopes. The OAuth endpoint remains REST behind Broker.Send; JWKS remains directly readable. Package Registry GetPackage/RegisterUserPackage calls use generated protobuf messages over Broker.Send, a cached locally signed User Management service token, the incoming correlation ID, stable idempotency key, traceparent and remaining deadline.
 
-The final 4.2.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=user-management`, the hostname as `service.instance.id`, and traceId/spanId in request logs. Release this contract only after broker deployment (#100), discovery topics/gRPC support, Package Registry gRPC (#97 stage 1), Battle's gRPC balance migration (#93 stage 3), Monster Raid event settlement (#99 stage 4), and observability (#101). Publish the service image before pinning 4.2.0 in a separate compose release PR.
+The 4.1.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=user-management`, the hostname as `service.instance.id`, and traceId/spanId in request logs. Release 4.1.0 after broker deployment (#100), discovery topics/gRPC support, Package Registry gRPC (#97 stage 1) and observability (#101). It supplies the server needed by the caller migrations. Keep the compatibility REST adapter until Battle #93 stage 3 and Monster Raid #99 stage 4 are deployed; only then remove it in a later release. The coordinated Compose change pins the published 4.1.0 image.
 
 ##### Endpoint Catalog
 
@@ -653,7 +653,8 @@ The final 4.2.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to
 | `POST /api/v1/users/{userId}/friend-requests/{requestId}/responses` | Request recipient | `RespondToFriendRequest` | `200 FriendRequestResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED` |
 | `PUT /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404`, `409 RELATIONSHIP_CONFLICT` |
 | `DELETE /api/v1/users/{userId}/enemies/{enemyUserId}` | Account owner | None | `204` | `403`, `404` |
-| `GET /api/v1/users/{userId}/balances` | Account owner or Battle Service | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
+| `GET /api/v1/users/{userId}/balances` | Account owner, Battle, or legacy Monster Raid (REST) | None | `200 BalanceResponse` | `403`, `404 USER_NOT_FOUND` |
+| `POST /api/v1/users/{userId}/balances` (deprecated) | Legacy Battle or Monster Raid, internal only | `BalanceTransactionRequest` | `200 BalanceTransactionResponse` | `400`, `403`, `404`, `422 INSUFFICIENT_BALANCE` |
 | `GET /api/v1/users/{userId}/packages` | Account owner or internal service | None | `200 PackageReference[]` | `403`, `404 USER_NOT_FOUND` |
 | `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE / PEER_CIRCUIT_OPEN` |
 
@@ -673,8 +674,7 @@ with `Cache-Control: no-store`. The endpoint allows 60 requests per minute per
 client, with `Retry-After: 60` on rejection.
 
 Logout terminates the session in `X-Session-ID`. Owner checks compare `X-User-ID`
-with the path parameter. Balance commands require a service caller named
-`battle-service` through gRPC only.
+with the path parameter. The gRPC balance command accepts only `battle-service`. The deprecated REST adapter temporarily accepts Battle and Monster Raid until #93 stage 3 and #99 stage 4 are deployed.
 
 ##### Relationship Lists
 
@@ -1391,13 +1391,12 @@ is optional. Service callers supply `X-Service-Name` and optional `X-Scopes`, bu
 cannot perform player operations. Missing or malformed identity yields
 `401 INVALID_IDENTITY`; a disallowed caller yields `403`.
 
-Battle calls User Management, Tamagotchi and Package Registry over gRPC through
-the message broker. Its `battle-service` client sends OAuth credentials in the
+Battle calls User Management, Tamagotchi and Package Registry through `Broker.Send` on one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS` (in-code default `broker:9090`, not an environment-file requirement). `USER_MANAGEMENT_PROTOCOL`, `TAMAGOTCHI_PROTOCOL` and `PACKAGE_REGISTRY_PROTOCOL` select `rest` or `grpc` per peer. The images retain REST transport switches for compatibility; this Compose release selects `grpc` for all three peers and uses generated protobuf types. Battle serves no gRPC API and subscribes to no topics; only REST port 8080 listens. Its `battle-service` client sends OAuth credentials in the
 token request's form body, caches the token and refreshes below 30 seconds remaining. A collaborator
-`401` causes one refresh and one retry. Every outbound request retains the
+`401` / UNAUTHENTICATED causes one refresh and one retry. The OAuth form request itself uses Send to user-management without a service token. Every outbound request retains the
 inbound `X-Correlation-ID`; an identifier is generated only when absent.
 Commands retain contract-defined idempotency keys and use the battle ID as the
-business reference so settlement can resume after a deadline.
+business reference so settlement can resume after a deadline. Each message has a fresh UUID, propagated traceparent and the remaining deadline, also set on the gRPC call. Independent peer breakers count transport/UNKNOWN/INTERNAL/UNAVAILABLE/DEADLINE_EXCEEDED failures, excluding client errors and PEER_CIRCUIT_OPEN.
 
 All handlers have a configurable deadline and concurrency budget, defaulting to
 4 seconds and 64 requests. Deadline expiry yields `504 REQUEST_TIMEOUT`.
@@ -1542,11 +1541,11 @@ When combat ends, Battle Service enters `SETTLING` and performs idempotent comma
 3. Transfer the loser's primary Tamagotchi to the winner through Tamagotchi Service.
 4. Mark the battle `COMPLETED` only after every required command succeeds.
 
-If a dependency is unavailable, the battle remains `SETTLING` and the failed command can be retried without applying a reward twice. A completion event is published only after settlement succeeds.
+If a dependency is unavailable, the battle remains `SETTLING` and the failed command can be retried without applying a reward twice. A completion event is published only after settlement succeeds. The existing database locks, durable step records and stored idempotency key survive process loss. Original trace context is stored in the settlement document and outbox so background retries stay linked to the initiating request.
 
 ##### Published Queue Events
 
-`battle.request.created.v1` is published after a challenge is stored. Notification Service consumes it to notify the opponent.
+`battle.request.created.v1` is stored in the transactional PostgreSQL outbox with the challenge, then published through Broker.Publish. Rows are marked published only after broker storage acknowledgement; retries retain the eventId as message_id. Notification Service consumes it to notify the opponent.
 
 ```json
 {
@@ -1575,10 +1574,16 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | User Management Service | Read users and balances; create balance transactions | Validate participants and settle currency rewards and losses |
-| Outbound | Tamagotchi Service | Read combat profiles; grant XP; transfer ownership | Calculate combat and settle progression and capture rewards |
-| Outbound | Package Registry Service | Read statistic and battle-boost definitions | Calculate package-specific bonuses and validate equipped boosts |
-| Outbound | Notification Service through Queue | Publish request and completion events | Notify challenged users and battle participants asynchronously |
+| Outbound through Broker.Send | User Management Service | Read users and balances; create balance transactions | Validate participants and settle currency rewards and losses |
+| Outbound through Broker.Send | Tamagotchi Service | Read combat profiles; grant XP; transfer ownership | Calculate combat and settle progression and capture rewards |
+| Outbound through Broker.Send | Package Registry Service | Read statistic and battle-boost definitions | Calculate package-specific bonuses and validate equipped boosts |
+| Broker.Publish | Notification through broker topics | Publish request and completion events | Notify challenged users and battle participants asynchronously |
+
+##### Tracing and Release
+
+The 4.0.2 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
+
+The coordinated release pins Battle 4.0.2 with User Management 4.1.0, Tamagotchi v4.2.0 and Package Registry 4.0.0. All three peer protocols select `grpc`; calls use `Broker.Send` and events use `Broker.Publish`. Notification v4.2.0 consumes the Battle topics. Release 4.0.2 normalizes event payload fields to camelCase, including pending legacy outbox rows. Settlement retries preserve business references and idempotency keys. Traces are available in Grafana Explore through Tempo.
 
 #### Map Service
 
@@ -2166,7 +2171,7 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.3.1`, `grdz/service-discovery:4.1.0` and `grdz/broker:4.5.1` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.3.1`, `grdz/service-discovery:4.1.1` and `grdz/broker:4.5.1` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
@@ -2285,16 +2290,17 @@ A panel stays empty until its source reports: the system overview's health and u
 
 ### Mocked Dependencies
 
-The message broker is deployed, and the gateway hands every client request to it. The services move their own outbound calls and events onto it one at a time, so until their Lab 4 releases are pinned the deployed images still differ in which collaborators they reach through the gateway and which events they only log or mock:
+The gateway forwards allowed client requests through the message broker. The
+pinned service releases also use the broker for peer calls and event delivery:
 
-- **User Management** calls Package Registry through the gateway for validation and registration.
-- **Battle** calls User Management, Tamagotchi and Package Registry through the gateway; queue publishing remains mocked.
-- **Map** reads User Management relationships through the gateway and logs the proximity events it would publish.
-- **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
-- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` with its service token; its outbox publishes invitation events with `Broker.Publish`. Peer gRPC conversion remains stage 4 and waits for the User Management rollout and Registry release.
-- **Package Registry 4.0.0** serves its internal gRPC contract alongside REST, has no outbound dependency, authorizes broker-supplied identities, and derives administrator access from `ADMIN_USER_IDS`. Service-only REST removal waits for all callers to migrate.
-- **Tamagotchi** answers its peers over gRPC through the broker and validates health statistics with Package Registry's `ListStatDefinitions` the same way when `USE_MOCK_PACKAGE_REGISTRY=false`; `true` keeps its built-in registry mock.
-- **Notification** calls no other service. Firebase is mocked. It receives its events by subscribing to their topics on the broker; it has no internal event endpoint any more.
+- **User Management 4.1.0** calls Package Registry over gRPC, serves six RPCs, publishes friend requests and consumes raid rewards.
+- **Battle 4.0.2** calls User Management, Tamagotchi and Package Registry over gRPC and publishes durable request/completion events.
+- **Map 4.3.0** reads User Management relationships over gRPC and publishes proximity events.
+- **Monster Raid 4.4.1** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`.
+- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
+- **Package Registry 4.0.0** serves gRPC alongside REST and has no outbound dependency. Administrator access comes from `ADMIN_USER_IDS`.
+- **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
+- **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.
 
 ### Postman Collections
 
@@ -2376,12 +2382,12 @@ The Package Registry Service manages application packages and package-specific g
 
 Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the message broker routes from, and posts alerts to Discord. It is the only component that writes the registry.
 
-Version 4.1.0 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
+Version 4.1.1 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
 `discovery_instance_utilization`, `discovery_instance_in_flight` and `discovery_instance_limit`
 with `service` and `instance_id` labels, plus `discovery_registry_instances` by service/health.
 The system overview uses these for every registered instance, including services that export
 no telemetry themselves. Counters cover evictions, recoveries, deletions and successfully sent
-alerts; `discovery_probe_duration_seconds` records probe duration in Prometheus. Gauges stop
+alerts; `discovery_probe_duration_seconds` records probe duration in Prometheus, with the same second-based buckets as its HTTP latency (fixed in 4.1.1; 4.1.0 put every duration in the first bucket). Gauges stop
 producing samples when an instance is deleted. Discovery also exports HTTP server traces and
 adds `traceId`/`spanId` to request logs. All exports go to the collector over OTLP/gRPC in
 background threads; an unavailable collector does not affect probing, alerts or the API.
