@@ -114,7 +114,7 @@ It consumes events published by other services (notably the **User Management Se
 
 The API Gateway verifies client bearer tokens and sends allowed REST operations to the message broker. The broker queues each request, chooses a service instance, and returns its reply. Services call peers as gRPC operations through the same broker. Guild chat uses a direct WebSocket after its REST ticket negotiation.
 
-Each service owns its datastore. Events are published to broker topics and persisted in per-subscriber queues in `broker-db`. For example, `raid.completed.v1` reaches Notification, User Management and Tamagotchi independently. Failed deliveries enter the dead letter channel. Service Discovery handles registration, probes and health, and the broker reads its catalogue. The collector sends telemetry to Prometheus, Loki and Jaeger, with Grafana providing dashboards.
+Each service owns its datastore. Events are published to broker topics and persisted in per-subscriber queues in `broker-db`. For example, `raid.completed.v1` reaches Notification, User Management and Tamagotchi independently. Failed deliveries enter the dead letter channel. Service Discovery handles registration, probes and health, and the broker reads its catalogue. The collector sends telemetry to Prometheus, Loki and Tempo, with Grafana providing dashboards.
 
 ![Architecture Diagram](docs/architecture.png)
 
@@ -1391,7 +1391,7 @@ is optional. Service callers supply `X-Service-Name` and optional `X-Scopes`, bu
 cannot perform player operations. Missing or malformed identity yields
 `401 INVALID_IDENTITY`; a disallowed caller yields `403`.
 
-Battle calls User Management, Tamagotchi and Package Registry through `Broker.Send` on one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS` (in-code default `broker:9090`, not an environment-file requirement). `USER_MANAGEMENT_PROTOCOL`, `TAMAGOTCHI_PROTOCOL` and `PACKAGE_REGISTRY_PROTOCOL` select `rest` or `grpc` per peer. They default to REST operations over Send until that peer's gRPC server is deployed; the final peer calls use copied/generated protobuf types. Battle serves no gRPC API and subscribes to no topics; only REST port 8080 listens. Its `battle-service` client sends OAuth credentials in the
+Battle calls User Management, Tamagotchi and Package Registry through `Broker.Send` on one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS` (in-code default `broker:9090`, not an environment-file requirement). `USER_MANAGEMENT_PROTOCOL`, `TAMAGOTCHI_PROTOCOL` and `PACKAGE_REGISTRY_PROTOCOL` select `rest` or `grpc` per peer. The images retain REST transport switches for compatibility; this Compose release selects `grpc` for all three peers and uses generated protobuf types. Battle serves no gRPC API and subscribes to no topics; only REST port 8080 listens. Its `battle-service` client sends OAuth credentials in the
 token request's form body, caches the token and refreshes below 30 seconds remaining. A collaborator
 `401` / UNAUTHENTICATED causes one refresh and one retry. The OAuth form request itself uses Send to user-management without a service token. Every outbound request retains the
 inbound `X-Correlation-ID`; an identifier is generated only when absent.
@@ -1581,9 +1581,9 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 
 ##### Tracing and Release
 
-The 4.0.1 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
+The 4.0.2 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
 
-For #93, deploy after the broker (#100) and collector are ready. Enable gRPC per peer only after User Management #92, Tamagotchi #94 and Package Registry #97 servers are deployed. Pin a published image before release. Local smoke tests cover full gRPC battles, recovery without duplicate rewards, durable event retries and OTLP trace export; the assembled deployment must still verify peer release compatibility, notifications and linked Jaeger traces before closing #93.
+The coordinated release pins Battle 4.0.2 with User Management 4.1.0, Tamagotchi v4.2.0 and Package Registry 4.0.0. All three peer protocols select `grpc`; calls use `Broker.Send` and events use `Broker.Publish`. Notification v4.2.0 consumes the Battle topics. Release 4.0.2 normalizes event payload fields to camelCase, including pending legacy outbox rows. Settlement retries preserve business references and idempotency keys. Traces are available in Grafana Explore through Tempo.
 
 #### Map Service
 
@@ -2290,16 +2290,17 @@ A panel stays empty until its source reports: the system overview's health and u
 
 ### Mocked Dependencies
 
-The message broker is deployed, and the gateway hands every client request to it. The services move their own outbound calls and events onto it one at a time, so until their Lab 4 releases are pinned the deployed images still differ in which collaborators they reach through the gateway and which events they only log or mock:
+The gateway forwards allowed client requests through the message broker. The
+pinned service releases also use the broker for peer calls and event delivery:
 
-- **User Management** calls Package Registry through the gateway for validation and registration.
-- **Battle** calls User Management, Tamagotchi and Package Registry through the gateway; queue publishing remains mocked.
-- **Map** reads User Management relationships through the gateway and logs the proximity events it would publish.
-- **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
-- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` with its service token; its outbox publishes invitation events with `Broker.Publish`. Peer gRPC conversion remains stage 4 and waits for the User Management rollout and Registry release.
-- **Package Registry 4.0.0** serves its internal gRPC contract alongside REST, has no outbound dependency, authorizes broker-supplied identities, and derives administrator access from `ADMIN_USER_IDS`. Service-only REST removal waits for all callers to migrate.
-- **Tamagotchi** answers its peers over gRPC through the broker and supports the same transport for Registry health-stat validation. Registry 4.0.0 supplies the required server; Compose still forces Tamagotchi's registry mock until its owner verifies the real peer and removes that override.
-- **Notification** calls no other service. Firebase is mocked. It receives its events by subscribing to their topics on the broker; it has no internal event endpoint any more.
+- **User Management 4.1.0** calls Package Registry over gRPC, serves six RPCs, publishes friend requests and consumes raid rewards.
+- **Battle 4.0.2** calls User Management, Tamagotchi and Package Registry over gRPC and publishes durable request/completion events.
+- **Map 4.3.0** reads User Management relationships over gRPC and publishes proximity events.
+- **Monster Raid 4.4.1** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`.
+- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
+- **Package Registry 4.0.0** serves gRPC alongside REST and has no outbound dependency. Administrator access comes from `ADMIN_USER_IDS`.
+- **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; the temporary registry mock is disabled.
+- **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.
 
 ### Postman Collections
 
