@@ -1,0 +1,123 @@
+{
+  "info": {
+    "name": "Tamagotchi Go - Gateway Administration",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Lab 4 admin log download. Requires gateway #25, Loki, and an authenticated UMS user configured in ADMIN_USER_IDS. Store credentials only in private local Postman values."
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "adminAccessToken",
+      "value": ""
+    },
+    {
+      "key": "logsFrom",
+      "value": ""
+    },
+    {
+      "key": "logsTo",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Download system logs",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminAccessToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{gatewayUrl}}/admin/logs?from={{logsFrom}}&to={{logsTo}}",
+          "host": [
+            "{{gatewayUrl}}"
+          ],
+          "path": [
+            "admin",
+            "logs"
+          ],
+          "query": [
+            {
+              "key": "from",
+              "value": "{{logsFrom}}"
+            },
+            {
+              "key": "to",
+              "value": "{{logsTo}}"
+            },
+            {
+              "key": "service",
+              "value": "guild",
+              "disabled": true
+            },
+            {
+              "key": "instanceId",
+              "value": "",
+              "disabled": true
+            },
+            {
+              "key": "level",
+              "value": "WARN",
+              "disabled": true
+            },
+            {
+              "key": "correlationId",
+              "value": "",
+              "disabled": true
+            },
+            {
+              "key": "event",
+              "value": "request",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "Downloads NDJSON from all containers. Required from/to timestamps must be UTC and at most 24 hours apart. Enable optional filters as needed. Save Response writes the downloaded file. If logs_truncated is present, use nextFrom to continue with the same filters."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('logsFrom') || !pm.collectionVariables.get('logsTo')) {",
+              "  const end = new Date();",
+              "  pm.collectionVariables.set('logsTo', end.toISOString());",
+              "  pm.collectionVariables.set('logsFrom', new Date(end.getTime() - 60 * 60 * 1000).toISOString());",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Admin log download succeeds', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) {",
+              "  pm.test('Response is an NDJSON attachment', () => {",
+              "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/x-ndjson');",
+              "    pm.expect(pm.response.headers.get('Content-Disposition')).to.include('attachment;');",
+              "    pm.expect(pm.response.headers.get('Cache-Control')).to.equal('no-store');",
+              "  });",
+              "  pm.test('Every downloaded line is JSON', () => {",
+              "    pm.response.text().split(/\\r?\\n/).filter(Boolean).forEach(line => JSON.parse(line));",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

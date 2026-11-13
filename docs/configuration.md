@@ -2,14 +2,14 @@
 
 The deployment uses one `compose.yaml` and two networks. `internal` carries all
 traffic between containers and is declared `internal: true`, so nothing on it can
-reach the internet. `edge` is joined only by the seven containers that publish a
+reach the internet. `edge` is joined only by the six containers that publish a
 port: the gateway, the two Guild chat instances, Service Discovery, which also
-needs it to reach the Discord webhook, the message broker, Grafana and Jaeger.
+needs it to reach the Discord webhook, the message broker and Grafana.
 Every container names its networks explicitly.
 
 Only `GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` are published to the
 network. Service Discovery publishes `127.0.0.1:8500`, the broker's admin endpoints
-`127.0.0.1:8501`, Grafana `127.0.0.1:3000` and the Jaeger UI `127.0.0.1:16686`, all
+`127.0.0.1:8501` and Grafana `127.0.0.1:3000`, all
 reachable from the host and nowhere else.
 Guild's REST listener stays on container port 8081 and its separate socket
 listener uses port 8082. Each negotiation returns its serving instance's socket
@@ -25,9 +25,11 @@ When upgrading an existing `.env`, replace `GUILD_CHAT_PORT` with
 
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
-The gateway, Service Discovery and message broker images, `grdz/gateway:4.1.0`,
-`grdz/service-discovery:4.0.0` and `grdz/broker:4.5.0`, are pinned directly in
-Compose.
+The gateway, Service Discovery and message broker images, `grdz/gateway:4.3.1`,
+`grdz/service-discovery:4.1.0` and `grdz/broker:4.5.1`, are pinned directly in
+Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v4.2.0`
+and `johnnyc05/pad-notification-service:v4.2.0`. All five export traces and metrics to
+the [observability stack](../README.md#observability).
 `SERVICE_PLATFORM` selects the Tamagotchi and Notification container architecture.
 It defaults to `linux/amd64`, which also works through emulation on Apple Silicon.
 Set `linux/arm64` when the selected service images provide that architecture.
@@ -53,10 +55,11 @@ allowlist.
 Every service uses a 4 second request deadline, below the gateway's 5 second
 upstream timeout, so a slow request ends with the service's own
 `504 REQUEST_TIMEOUT`. The per-service overrides `TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS`
-and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi follows
-`USE_MOCK_PACKAGE_REGISTRY` like User Management: `true` keeps its built-in
-registry mock, `false` validates health statistics against Package Registry
-through the gateway.
+and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi 4.2.0
+validates health statistics against Package Registry over gRPC through the broker.
+Registry 4.0.0 supplies that server. Compose still forces Tamagotchi's built-in
+registry mock; its owner can remove that temporary override after verifying the
+real peer. `USE_MOCK_PACKAGE_REGISTRY` still applies to User Management.
 
 ## Message Broker
 
@@ -122,12 +125,23 @@ volume forgets the fleet until every service is restarted.
 |---|---|---|
 | `GRAFANA_ADMIN_PASSWORD` | none, required | Password of Grafana's `admin` user, needed to change dashboards or settings. Viewing needs no login |
 | `GRAFANA_PORT` | `3000` | Loopback port of Grafana |
-| `JAEGER_UI_PORT` | `16686` | Loopback port of the Jaeger UI |
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` does not appear in `.env.example`: every
 instrumented service defaults it in code or in its image to
 `http://otel-collector:4317`. The collector, Prometheus, Loki and Grafana read
 their configuration from `observability/`; see [Observability](../README.md#observability).
+
+Service Discovery 4.1.0 exports registry health/load gauges, lifecycle counters and HTTP
+traces to that collector. Its resource is `service.name = service-discovery` and
+`service.instance.id = <hostname>`. The metric reader runs every 4 seconds by default;
+`OTEL_METRIC_EXPORT_INTERVAL` is an optional positive-millisecond override, and an empty
+`OTEL_EXPORTER_OTLP_ENDPOINT` disables export for standalone development. Neither setting
+belongs in `.env.example`. The collector is not a readiness or startup dependency: if it is
+stopped, Discovery continues probing, serving its API and delivering alerts.
+
+Instance gauges read live registry membership. Deleted instances stop producing samples;
+Prometheus keeps their historical data and applies its normal lookback to instant queries.
+Request log lines carry `traceId` and `spanId`, so a log line opens its trace in Grafana and a trace its log lines.
 
 ## Generate Client Credentials
 
@@ -184,12 +198,27 @@ only operation the broker accepts without a token. Legacy clients use
 before expiry. User Management is the issuer and signs/caches its own service
 credential locally; other clients never sign their own tokens.
 
+## Map and Monster Raid
+
+Map and Monster Raid send every call to another service and every event through
+the broker. Each peer has a transport switch, `grpc` by default: Map's
+`USER_MANAGEMENT_TRANSPORT`, and Monster Raid's `GUILD_TRANSPORT`,
+`PACKAGE_REGISTRY_TRANSPORT` and `TAMAGOTCHI_TRANSPORT`. Compose sets `rest` for
+every peer whose pinned image serves no gRPC yet, so the call goes out as the REST
+operation over `Broker.Send`; the line is removed when that peer's gRPC release is
+pinned. Monster Raid makes no call to User Management: rewards travel in
+`raid.completed.v1`.
+
+Both export traces and metrics over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT`, whose
+default `http://otel-collector:4317` is the stack's collector, so Compose does not
+set it. `OTEL_SDK_DISABLED=true` turns their telemetry off.
+
 ## Guild and Package Registry
 
 Guild and Package Registry load only their own `secrets/<client-id>.env` file,
 not the shared `.env`. Both accept the generated `OAUTH_CLIENT_ID` and
 `OAUTH_CLIENT_SECRET` aliases. Compose maps other required settings explicitly.
-Their REST APIs and databases have no published host ports. Only Guild's separate
+Their REST APIs, gRPC listeners and databases have no published host ports. Only Guild's separate
 WebSocket listeners are published, at ports 8081 and 8083 by default. Each instance
 has its own public address; use the URL returned by negotiation. Set
 `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` to client-reachable `ws://` or
@@ -204,9 +233,22 @@ existing UMS user UUIDs. An empty value grants no administrator access.
 Guild runs as `guild-api-1` and `guild-api-2`, sharing PostgreSQL messages, tickets
 and presence. LISTEN/NOTIFY delivers chat across instances, and broadcasts check
 current membership. Package Registry uses `deploy.replicas: 2` and a shared
-PostgreSQL database. Both services serialize startup migrations, register their
-REST listener with Discovery, and expose `/health` and `/status` internally. The
-broker routes to both Guild instances from the Discovery catalogue.
+PostgreSQL database. Version 4.0.0 of both services adds gRPC on internal port 9090;
+Discovery registrations include `grpcAddress: <hostname>:9090` and `topics: []`.
+Both serialize startup migrations and expose `/health` and `/status` internally.
+REST and gRPC share each instance's concurrency slots and request deadline. Their
+OpenTelemetry SDKs default to `http://otel-collector:4317`, so no additional
+Compose or `.env` settings are needed for export.
+
+Guild defaults `MESSAGE_BROKER_ADDRESS` in code to `broker:9090`; do not add it
+to `.env`. Its OAuth token request and peer checks are REST operations over
+`Broker.Send` until stage 4 switches the peer checks to generated gRPC messages.
+Invitation outbox entries are sent with `Broker.Publish`. Before rolling out
+Guild 4.0.0, start the already-pinned Notification consumer and verify
+`guild.invitation.created.v1` appears in its broker subscription; events published
+before the first subscription are not replayed. Registry 4.0.0 supplies the gRPC
+server needed by the User Management rollout and Guild's next stage. Keep its
+service-only REST routes until every caller has migrated.
 
 ## Storage and Rotation
 

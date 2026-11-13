@@ -81,7 +81,7 @@ Any eligible guild member may contribute their **primary Tamagotchi** to the rai
 
 When the monster dies, the service distributes rewards (global currency, XP, or other globally managed rewards) to participating users. A raid may also **fail** when its timer expires.
 
-It consults the **Guild Service** for eligible members, the **Tamagotchi Service** for combat properties, and the **User Management Service** to distribute rewards.
+It consults the **Guild Service** for eligible members and the **Tamagotchi Service** for combat properties. Rewards travel in the `raid.completed.v1` event, from which the **User Management Service** credits global currency and the **Tamagotchi Service** grants XP.
 
 ### Package Registry Service
 
@@ -112,11 +112,13 @@ It consumes events published by other services (notably the **User Management Se
 
 ## Architecture Diagram
 
-The API Gateway is the only way into the system. It verifies the bearer token, replaces whatever identity headers the caller sent with ones it has verified, strips the service prefix and forwards the rest. Every solid arrow in the diagram is a call that passes through it, including the service-to-service ones: those are drawn directly between services so it stays readable which service needs what, but none of them is a connection a service could open on its own. The one exception is the Guild chat WebSocket, drawn as a direct violet edge from the client, because the gateway negotiates that connection over REST and then carries none of its traffic.
+The API Gateway verifies client bearer tokens and sends allowed REST operations to the message broker. The broker queues each request, chooses a service instance, and returns its reply. Services call peers as gRPC operations through the same broker. Guild chat uses a direct WebSocket after its REST ticket negotiation.
 
-Each service owns its own database. Asynchronous events (dashed green arrows) are published to the Notification Service, which delivers push notifications via Firebase Cloud Messaging; the queue is not part of the gateway's path. Blobs, images and large JSON documents live in shared S3-compatible object storage; service databases keep only their object keys or URLs.
+Each service owns its datastore. Events are published to broker topics and persisted in per-subscriber queues in `broker-db`. For example, `raid.completed.v1` reaches Notification, User Management and Tamagotchi independently. Failed deliveries enter the dead letter channel. Service Discovery handles registration, probes and health, and the broker reads its catalogue. The collector sends telemetry to Prometheus, Loki and Jaeger, with Grafana providing dashboards.
 
 ![Architecture Diagram](docs/architecture.png)
+
+The diagram shows the Lab 4 target. Object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
 
 [Back to top](#table-of-contents)
 
@@ -165,8 +167,8 @@ The following interactions correspond to the arrows in the architecture diagram 
 | Map Service | Notification Service | Event through a broker topic | Report that nearby players were detected |
 | User Management Service | Package Registry Service | gRPC through the broker | Validate package information associated with a user |
 | User Management Service | Notification Service | Event through a broker topic | Report newly created friend requests |
-| Guild Service | User Management Service | gRPC through the broker | Validate users, relationships, and permissions used by guild operations |
-| Guild Service | Package Registry Service | gRPC through the broker | Validate package-related membership information when required |
+| Guild Service | User Management Service | REST operation through `Broker.Send` (gRPC migration pending) | Validate users, relationships, and permissions used by guild operations |
+| Guild Service | Package Registry Service | REST operation through `Broker.Send` (gRPC migration pending) | Validate package-related membership information when required |
 | Guild Service | Notification Service | Event through a broker topic | Report newly created guild invitations |
 | Monster Raid Service | Guild Service | gRPC through the broker | Validate guild membership and raid eligibility |
 | Monster Raid Service | Tamagotchi Service | gRPC through the broker | Obtain participating Tamagotchi combat properties |
@@ -595,7 +597,7 @@ Every service, the gateway and Service Discovery write one JSON object per line 
 | `event` | always | a value from the vocabulary below |
 | `message` | always | human readable; structured data goes in fields, not in the message |
 | `correlationId`, `method`, `path`, `status`, `durationMs` | request-scoped lines | `correlationId` is the `X-Correlation-ID` of the request |
-| `traceId`, `spanId` | lines written inside a traced request | the W3C trace and span ids of the request's span, so a line leads to its trace in Jaeger |
+| `traceId`, `spanId` | lines written inside a traced request | the W3C trace and span ids of the request's span, so a line leads to its trace in Grafana |
 | `errorCode` | failures | the error code of the common error envelope |
 | `peer`, `failures`, `windowSeconds` | breaker events | |
 
@@ -851,9 +853,13 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 #### Package Registry Service
 
-Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS`—the former caller-supplied role header is not accepted.
+Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS` - the former caller-supplied role header is not accepted.
 
-Lab 3 runs two Package Registry instances on the internal network. Each registers its REST address with Service Discovery and exposes internal `GET /health` (liveness, always `200 {"status":"UP"}`) and `GET /status` (readiness/load/PostgreSQL, `200` for `UP`/`DEGRADED`, `503` for `DOWN`). These operational endpoints are not client routes through the gateway; `/healthz` is removed. Each response includes `X-Instance-Id`. PostgreSQL serializes startup migrations so both replicas may start together.
+Version 4.0.0 runs two Package Registry instances on the internal network, with REST on 8082 and gRPC on 9090. Each registers its REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. Internal `GET /health` reports liveness; `GET /status` reports readiness, load and PostgreSQL health. These endpoints and both listeners have no published host port. Responses include the instance ID, and PostgreSQL serializes startup migrations so both replicas may start together.
+
+The `tamagotchigo.packageregistry.v1.PackageRegistry` API serves all 12 methods in the [protobuf contract](docs/schemas/proto/tamagotchigo/packageregistry/v1/package_registry.proto). REST and gRPC share application authorization, registration idempotency, concurrency slots and deadlines. The broker supplies verified service metadata; gRPC errors include `google.rpc.ErrorInfo` with the business error code and domain `package-registry`. Both transports and PostgreSQL export OpenTelemetry to the collector. The five service-only REST routes remain until every caller has migrated; this release completes #97 stages 1 and 2, not stage 3.
+
+Raid attack/defense accept `0..2147483647`; duration, participant limit and battle-boost `maxUsesPerBattle` accept `1..2147483647`. Invalid writes return `422`; legacy stored values outside those ranges return gRPC `FAILED_PRECONDITION` instead of wrapping or returning partial results. HP and rewards retain their `int64` range. An administrator can inspect and repair a legacy record through REST.
 
 `POST /packages/{packageId}/registrations` and `GET /users/{userId}/package-registrations` require `X-Service-Name: user-management-service`. Raid schedule reads accept `X-Service-Name: monster-raid-service` or a configured administrator. Every handler has a bounded deadline and fail-fast concurrency limit, returning `504 REQUEST_TIMEOUT` or `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
 
@@ -1056,7 +1062,11 @@ Lab 3 runs two Package Registry instances on the internal network. Each register
 
 Guild Service owns guild identity, membership, roles, permissions, and Guild Chat. Guilds, memberships, membership requests and chat messages are stored in PostgreSQL. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package.
 
-Lab 3 runs two explicit Guild instances. Both register their REST address with Service Discovery and expose internal `GET /health` (liveness) and `GET /status` (readiness, load, PostgreSQL, peer circuits and chat fan-out); `/healthz` is removed. REST responses include `X-Instance-Id`. User Management and Package Registry calls each have a separate circuit breaker; an open one returns `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without disconnecting existing chat sockets.
+Version 4.0.0 runs two explicit Guild instances. Both register their REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. REST on 8081 and gRPC on 9090 stay internal; the separate WebSocket listeners retain their published ports. Internal `GET /health` reports liveness and `GET /status` reports readiness, load, PostgreSQL, peer circuits and chat fan-out. REST and gRPC share application rules, deadlines and concurrency slots; gRPC serves `GetGuild`, `ListUserGuilds`, `ListMembers` and `GetMember` for Monster Raid and returns instance/correlation metadata plus rich business errors.
+
+Every outbound call uses the broker's long-lived gRPC connection. In this release the OAuth token request and User Management/Package Registry checks are REST operations inside `Broker.Send`; converting peer checks to generated gRPC messages is #96 stage 4, after the User Management rollout and Registry release. Each peer retains its circuit breaker; an open one returns `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without disconnecting existing chat sockets. HTTP, gRPC and PostgreSQL export OpenTelemetry, and request logs include trace IDs.
+
+The transactional invitation outbox publishes `guild.invitation.created.v1` using `Broker.Publish`. Workers claim rows exclusively across replicas, keep the event ID and trace context across retries, and mark an event published only after durable acknowledgement. Before rolling out Guild, verify Notification's broker-consuming version is running and has registered this topic: the broker does not replay events published before the first subscription. This release completes #96 stages 1–3 and 5; the combined notification, chat and trace demonstrations remain part of integration acceptance.
 
 ##### Endpoint Catalog
 
@@ -1223,10 +1233,10 @@ If a message cannot be processed, the sender receives `guild.chat.error.v1` with
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | User Management Service | Read users and relationships | Validate inviter, invitee, and relationship rules |
-| Outbound | Package Registry Service | Read package and user-package registration | Enforce an optional package membership restriction |
-| Inbound | Monster Raid Service | Read guild and membership | Validate whether a user may participate in a guild raid |
-| Outbound | Notification Service through Queue | Publish guild invitation event | Notify the invited user asynchronously |
+| Outbound | User Management Service through `Broker.Send` | REST user and relationship reads; gRPC migration pending | Validate inviter, invitee, and relationship rules |
+| Outbound | Package Registry Service through `Broker.Send` | REST package and registration reads; gRPC migration pending | Enforce an optional package membership restriction |
+| Inbound | Monster Raid Service through the broker | Guild gRPC reads | Validate whether a user may participate in a guild raid |
+| Outbound | Broker topic `guild.invitation.created.v1` | `Broker.Publish` from the transactional outbox | Deliver the invitation event to Notification's durable subscription |
 
 #### Tamagotchi Service
 
@@ -1587,13 +1597,25 @@ yields `403`. Map reads friend and enemy relationships from User Management
 over gRPC through the message broker, authenticating as the `map-service` client; an
 unreachable User Management yields `503 USER_SERVICE_UNAVAILABLE`.
 
+##### Message Broker
+
+| Role | What |
+|---|---|
+| Serves gRPC | nothing; Map opens no gRPC port and registers no `grpcAddress` |
+| Calls | User Management: `ListRelationships`, `GetUser`, each a `Broker.Send` to `user-management` with the gRPC method as its operation |
+| Publishes | `map.proximity.detected.v1`, with `Broker.Publish` |
+| Subscribes | nothing; Map registers no `topics` |
+| REST routes removed | none |
+
+Map keeps one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS`, which defaults in code to `broker:9090`; `GATEWAY_URL` is no longer read. Its service token is itself a `Send` to `user-management` (`POST /api/v1/oauth2/token`), and every other `Send` carries it as `authorization` metadata together with `x-correlation-id`, `traceparent` and the remaining request deadline.
+
 ##### Instances, Probes and the Circuit Breaker
 
 Map runs as three interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. All of its state is in Redis: the latest location per user, the geo index and the proximity markers. Accepting a location is a single compare-and-write on its sequence number, and the marker that decides whether a proximity event is published is always written to the lower user id's set, so two instances handling the two users of a pair at once still publish one event. There are no startup migrations and no scheduled work.
 
 `GET /health` always answers `200 {"status":"UP"}` and checks nothing, Redis included. `GET /status` reports readiness to Service Discovery with the `redis` and `user-management` dependencies: Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or User Management down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
 
-User Management is never probed: its `/status` entry comes from the instance's circuit breaker. After three failures within 14 seconds the breaker opens for 14 seconds, covering the OAuth token fetch as well. While it is open, updating a location still stores it and takes the degraded proximity path at once instead of waiting out the 4 second timeout, and the map view answers `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling User Management.
+User Management is never probed: its `/status` entry comes from the instance's circuit breaker around the `Send` calls to it. After three failures within 14 seconds the breaker opens for 14 seconds, covering the OAuth token fetch as well. The broker unreachable, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL` and `UNKNOWN` count as failures; client errors such as `NOT_FOUND`, and `UNAVAILABLE` with reason `PEER_CIRCUIT_OPEN`, do not. While the breaker is open, updating a location still stores it and takes the degraded proximity path at once instead of waiting out the 4 second timeout, and the map view answers `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling User Management.
 
 ##### Endpoint Catalog
 
@@ -1651,7 +1673,7 @@ Friends and enemies are included whenever both users have unexpired locations. A
 
 ##### Published Queue Event
 
-`map.proximity.detected.v1` is published when two unrelated users move from outside to inside the 6-meter threshold. Notification Service consumes it to notify the affected users.
+`map.proximity.detected.v1` is published with `Broker.Publish`, to the topic of the same name, when two unrelated users move from outside to inside the 6-meter threshold. Notification Service consumes it to notify the affected users.
 
 ```json
 {
@@ -1664,16 +1686,18 @@ Friends and enemies are included whenever both users have unexpired locations. A
 
 Map Service records a short-lived proximity marker for the unordered user pair so that continuous location updates do not produce duplicate notifications. A new event may be published only after the pair leaves the threshold and later enters it again.
 
+Map stores only Redis, so it has no outbox. A failed `Publish` logs `event_publish_failed` and clears the pair's proximity marker, so the next crossing of the threshold publishes again. A lost proximity notification is acceptable; a location update never fails because of the broker.
+
 ##### Service Dependencies
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | User Management Service | Read users and friend/enemy relationships | Classify candidates and apply map visibility rules |
-| Outbound | Notification Service through Queue | Publish proximity events | Request asynchronous nearby-player notifications without coupling Map Service to Firebase |
+| Outbound | User Management Service, gRPC over `Broker.Send` | `ListRelationships`, `GetUser` | Classify candidates and apply map visibility rules |
+| Outbound | Notification Service through the broker topic `map.proximity.detected.v1` | `Broker.Publish` | Request asynchronous nearby-player notifications without coupling Map Service to Firebase |
 
 #### Monster Raid Service
 
-Monster Raid Service owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress. Raids, participants, attack batches and rewards are stored in PostgreSQL; only the current monster HP is kept in Redis for fast atomic updates.
+Monster Raid Service owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress. Raids, participants, attack batches and rewards are stored in PostgreSQL; only the current monster HP is kept in Redis for fast atomic updates.
 
 ##### Gateway Identity and Collaborators
 
@@ -1683,8 +1707,20 @@ that header and strips what the client sends. Joining and attacking require
 `X-Caller-Kind: user` and yield `403` for a service caller. Monster Raid calls
 Guild, Package Registry and Tamagotchi over gRPC through the message broker,
 authenticating as the `monster-raid-service` client. It no longer calls User
-Management: raid rewards are settled by User Management and Tamagotchi from the
+Management: raid rewards are credited by User Management and Tamagotchi from the
 `raid.completed.v1` event.
+
+##### Message Broker
+
+| Role | What |
+|---|---|
+| Serves gRPC | nothing; Monster Raid opens no gRPC port and registers no `grpcAddress` |
+| Calls | Guild: `GetGuild`, `ListMembers`, `GetMember`. Tamagotchi: `GetCombatProfile`, `GetPrimaryTamagotchi` (reads only). Package Registry: `ListRaidSchedules`, `GetRaidConfiguration`, `ListStatDefinitions`. Each is a `Broker.Send` to the peer with the gRPC method as its operation |
+| Publishes | `raid.started.v1`, `raid.completed.v1` (with `rewards[]`), `raid.failed.v1`, with `Broker.Publish` from a transactional outbox |
+| Subscribes | nothing; Monster Raid registers no `topics` |
+| REST routes removed | none |
+
+Monster Raid keeps one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS`, which defaults in code to `broker:9090`; `GATEWAY_URL` is no longer read. It makes no business call to User Management: its only request there is its own service token, a `Send` to `user-management` (`POST /api/v1/oauth2/token`). Every other `Send` carries that token as `authorization` metadata together with `x-correlation-id`, `traceparent` and the remaining request deadline. Settlement retries, `reward_deferred`, the User Management client and its circuit breaker, the XP grant call and the `users.balances:write` scope are gone.
 
 ##### Instances, Probes and Circuit Breakers
 
@@ -1692,7 +1728,7 @@ Monster Raid runs as three interchangeable instances, and every response carries
 
 `GET /health` always answers `200 {"status":"UP"}` and checks nothing, neither PostgreSQL nor Redis. `GET /status` reports readiness to Service Discovery with `postgres`, `redis`, `guild`, `package-registry` and `tamagotchi`, the datastores probed concurrently: PostgreSQL or Redis unreachable gives `503 DOWN`; utilization at or above 0.8, or a peer down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass the concurrency limit and are not exposed through the gateway.
 
-Peers are never probed: each has its own circuit breaker, so Guild being down never stops calls to Tamagotchi. After three failures within 14 seconds a breaker opens for 14 seconds. While it is open, the operations that need that peer answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it.
+Peers are never probed: each has its own circuit breaker around the `Send` calls to it, so Guild being down never stops calls to Tamagotchi. After three failures within 14 seconds a breaker opens for 14 seconds. The broker unreachable, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL` and `UNKNOWN` count as failures; client errors such as `NOT_FOUND`, and `UNAVAILABLE` with reason `PEER_CIRCUIT_OPEN`, do not. While a breaker is open, the operations that need that peer answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it.
 
 ##### Endpoint Catalog
 
@@ -1815,7 +1851,7 @@ When monster HP reaches zero, one transaction stores the raid as `COMPLETED` wit
 
 If the deadline arrives while monster HP is above zero, the raid becomes `FAILED`, no rewards are distributed and `raid.failed.v1` goes to the outbox. Finished results and rewards are persisted in PostgreSQL; the corresponding current-HP entry is removed from Redis after the raid reaches a terminal state.
 
-Both transitions are evaluated whenever a raid is loaded, so every read and command path observes the terminal state without a background scheduler. `GET /api/v1/raids/{raidId}/result` answers `409 RAID_NOT_FINISHED` until the terminal state is stored.
+A raid goes from `ACTIVE` straight to `COMPLETED` or `FAILED`; there is no `SETTLING` state. Both transitions are evaluated whenever a raid is loaded, so every read and command path observes the terminal state without a background scheduler. `GET /api/v1/raids/{raidId}/result` answers `409 RAID_NOT_FINISHED` until the terminal state is stored, and as soon as the raid is `COMPLETED` it returns the awarded rewards, which the other services credit asynchronously.
 
 Every raid event goes through the outbox. A relay in each instance publishes unsent rows with `Broker.Publish` and marks them sent, claiming rows with `SELECT ... FOR UPDATE SKIP LOCKED` so that the three instances never publish the same row; a broker outage only delays publishing.
 
@@ -1851,11 +1887,11 @@ Every raid event goes through the outbox. A relay in each instance publishes uns
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | Guild Service | Read guild, members, and membership | Resolve notification recipients and validate raid visibility and participant eligibility |
-| Outbound | Package Registry Service | Read active schedule, raid configuration, and statistic definitions | Initialize the raid and calculate package-specific damage |
-| Outbound | Tamagotchi Service | Read combat profiles | Validate combatants and calculate damage |
-| Outbound | Notification Service through a broker topic | Publish raid lifecycle events | Notify guild members and participants asynchronously |
-| Outbound | User Management and Tamagotchi Services through a broker topic | Publish `raid.completed.v1` with rewards | Credit global currency and grant XP |
+| Outbound | Guild Service, gRPC over `Broker.Send` | `GetGuild`, `ListMembers`, `GetMember` | Resolve notification recipients and validate raid visibility and participant eligibility |
+| Outbound | Package Registry Service, gRPC over `Broker.Send` | `ListRaidSchedules`, `GetRaidConfiguration`, `ListStatDefinitions` | Initialize the raid and calculate package-specific damage |
+| Outbound | Tamagotchi Service, gRPC over `Broker.Send` | `GetCombatProfile`, `GetPrimaryTamagotchi` (reads only) | Validate combatants and calculate damage |
+| Outbound | Notification Service through the broker topics `raid.started.v1`, `raid.completed.v1`, `raid.failed.v1` | `Broker.Publish` from the outbox | Notify guild members and participants asynchronously |
+| Outbound | User Management and Tamagotchi Services through the broker topic `raid.completed.v1` | `Broker.Publish` from the outbox, with rewards | Credit global currency and grant XP |
 
 #### Notification Service
 
@@ -2135,7 +2171,7 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.1.0`, `grdz/service-discovery:4.0.0` and `grdz/broker:4.5.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.3.1`, `grdz/service-discovery:4.1.0` and `grdz/broker:4.5.1` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
@@ -2143,7 +2179,6 @@ Docker Compose runs the gateway, Service Discovery, the message broker and all e
 | Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
 | Message broker admin endpoints, from the host only | [`grdz/broker`](https://hub.docker.com/r/grdz/broker) | `http://127.0.0.1:8501` |
 | Grafana, from the host only | [`grafana/grafana`](https://hub.docker.com/r/grafana/grafana) | `http://127.0.0.1:3000` |
-| Jaeger UI, from the host only | [`jaegertracing/jaeger`](https://hub.docker.com/r/jaegertracing/jaeger) | `http://127.0.0.1:16686` |
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
@@ -2161,9 +2196,8 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | Service Discovery, loopback only | 8500 |
 | Message broker admin endpoints, loopback only | 8501 |
 | Grafana, loopback only | 3000 |
-| Jaeger UI, loopback only | 16686 |
 
-`GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2`, `GRAFANA_PORT` and `JAEGER_UI_PORT` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
+`GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2` and `GRAFANA_PORT` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
 
 ### Run the Services
 
@@ -2209,7 +2243,7 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. The broker's event store, `broker-db`, takes its credentials from `BROKER_DB_NAME`, `BROKER_DB_USER` and `BROKER_DB_PASSWORD` in `.env`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
 
-Data persists in sixteen named volumes: `service-discovery-data`, `broker-db-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`, and for the [observability stack](#observability) `otel-collector-data`, `prometheus-data`, `loki-data` and `grafana-data`. `broker-db-data` holds the events queued for each subscribing service and the dead letter channel, so queued events survive `docker compose restart broker broker-db`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+Data persists in seventeen named volumes: `service-discovery-data`, `broker-db-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`, and for the [observability stack](#observability) `otel-collector-data`, `prometheus-data`, `loki-data`, `tempo-data` and `grafana-data`. `broker-db-data` holds the events queued for each subscribing service and the dead letter channel, so queued events survive `docker compose restart broker broker-db`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
 
 No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, Guild and Package Registry ship idempotent migrations inside their images, and the broker applies its own ordered SQL migrations at startup.
 
@@ -2220,25 +2254,25 @@ The deployment watches itself with OpenTelemetry. All configuration lives under 
 ```
 instrumented services ──OTLP──> otel-collector ──> Prometheus  (metrics, OTLP receiver)
 container stdout (json-file) ──> otel-collector ──> Loki        (logs, the platform JSON parsed into fields)
-                                                ──> Jaeger      (traces)
-Grafana: Prometheus, Loki and Jaeger datasources and provisioned dashboards
+                                                ──> Tempo       (traces) ──> Prometheus (span metrics, service graph)
+Grafana: Prometheus, Loki and Tempo datasources, provisioned dashboards, Drilldown for metrics, logs and traces
 ```
 
 | Container | Image | Role | Published |
 |---|---|---|---|
 | `otel-collector` | `otel/opentelemetry-collector-contrib:0.165.0` | receives OTLP on `4317` (gRPC) and `4318` (HTTP) and reads every container's log file | none |
 | `prometheus` | `prom/prometheus:v3.16.0` | metrics, through its OTLP receiver; kept 7 days | none |
-| `loki` | `grafana/loki:3.6.20` | logs; kept 7 days | none |
-| `jaeger` | `jaegertracing/jaeger:2.20.0` | traces, in memory | UI on `127.0.0.1:16686` |
+| `loki` | `grafana/loki:3.6.20` | logs, with patterns for Logs Drilldown; kept 7 days | none |
+| `tempo` | `grafana/tempo:2.10.10` | traces, kept 3 days; writes span metrics and the service graph to Prometheus | none |
 | `grafana` | `grafana/grafana:13.2.6` | dashboards and Explore over the three | `127.0.0.1:3000` |
 
-Every container has a memory limit, and no observability port is reachable from another machine. Jaeger stays at 2.20 because later versions serve only the v3 query API, which Grafana's Jaeger datasource does not read yet.
+Every container has a memory limit, and no observability port is reachable from another machine. Traces are stored in Tempo rather than Jaeger because Grafana's trace features (Traces Drilldown, TraceQL, the service graph, links from a span to its service's metrics) work only with Tempo; Grafana is the one UI for all three signals.
 
-**Opening it.** Grafana is at <http://127.0.0.1:3000> and opens on the system overview. Anyone on the machine may view the dashboards and use Explore without logging in; changing anything needs the `admin` login with `GRAFANA_ADMIN_PASSWORD` from `.env`. The Jaeger UI is at <http://127.0.0.1:16686>; the same traces are in Grafana's Explore, and Jaeger keeps them only until it restarts.
+**Opening it.** Grafana is at <http://127.0.0.1:3000> and opens on the system overview. Anyone on the machine may view the dashboards and use Explore without logging in; changing anything needs the `admin` login with `GRAFANA_ADMIN_PASSWORD` from `.env`. Traces are in Drilldown → Traces and in Explore with the Tempo datasource.
 
-**Traces and metrics.** Services export OTLP to `http://otel-collector:4317`, with `service.name` set to the canonical service name and `service.instance.id` to the hostname; in Prometheus these become the `job` and `instance` labels. A request carries `traceparent` through the gateway, the broker and every service it reaches, so one client request, and everything it causes, is one trace.
+**Traces and metrics.** Services export OTLP to `http://otel-collector:4317`, with `service.name` set to the canonical service name and `service.instance.id` to the hostname; in Prometheus these become the `job` and `instance` labels. A request carries `traceparent` through the gateway, the broker and every service it reaches, so one client request, and everything it causes, is one trace. Health probes (Service Discovery's `/status`, Docker's `/health`) reach each instance directly, outside the gateway and the broker, and are traces of their own; the collector drops those traces whole, so Tempo and its service graph hold only real requests.
 
-**Logs.** Every container logs through Docker's `json-file` driver with rotation (`x-logging` in `compose.yaml`; Docker Desktop otherwise defaults to the `local` driver, which the collector cannot read). The collector mounts `/var/lib/docker/containers` read-only, keeps only the lines of this stack's containers, and parses each platform JSON line: `service` and `instanceId` become the Loki labels `service_name` and `service_instance_id`, `level` the label `level`, and every other field (`event`, `correlationId`, `traceId`, `status`, `durationMs`, ...) structured metadata that queries can filter on. A line that is not JSON, from a database or a cache, is kept as text under its container's name. Read offsets are checkpointed, so a restarted collector neither loses nor repeats lines. From Git Bash on Windows, run Compose with `MSYS_NO_PATHCONV=1` so the mount path is kept.
+**Logs.** Every container logs through Docker's `json-file` driver with rotation (`x-logging` in `compose.yaml`; Docker Desktop otherwise defaults to the `local` driver, which the collector cannot read). The collector mounts `/var/lib/docker/containers` read-only, keeps only the lines of this stack's containers, and parses each platform JSON line: `service` and `instanceId` become the Loki labels `service_name` and `service_instance_id`, `level` the label `level`, and every other field (`event`, `correlationId`, `traceId`, `status`, `durationMs`, ...) structured metadata that queries can filter on. A request line's text is rebuilt from its fields, the same for every service (`GET /api/v1/users/:userId/map 200 21 ms`, or for the broker `user-management POST /api/v1/oauth2/token 200 244 ms`, followed by the `errorCode` of a failure); the service's own message stays in the `message` field. A line that is not JSON, from a database or a cache, is kept as text under its container's name, with its level read from the line (`level=error`, or a PostgreSQL or Redis severity prefix). Read offsets are checkpointed, so a restarted collector neither loses nor repeats lines. From Git Bash on Windows, run Compose with `MSYS_NO_PATHCONV=1` so the mount path is kept.
 
 **Dashboards**, provisioned from [`observability/grafana/dashboards`](observability/grafana/dashboards) in the `Tamagotchi Go` folder:
 
@@ -2247,7 +2281,10 @@ Every container has a memory limit, and no observability port is reachable from 
 | System overview | every instance's health and utilization from Service Discovery's metrics, instances by health, evictions and recoveries, and every service's request rate and errors, from metrics and from request log lines |
 | Requests | latency percentiles and error rates per service and instance from the services' HTTP server metrics, and the same from the `request` log lines (`status`, `durationMs`) for services without metrics |
 | Message broker | request queue depth and wait time per service, the instance each delivery went to, breaker state per instance, failovers, quarantines and readmissions, events published and delivered per topic and subscriber, waiting events and dead letters |
-| Logs | every line, filtered by service, instance, level, correlation id and text; open a line in Explore and its `traceId` links to the trace |
+| Request explorer | one service at a time, from its traces: request rate, failed share and p95/p99 per operation, its recent and failed requests (a trace id opens the trace, and Related logs on any span shows every log line of that request), its error and request log lines, and the service graph |
+| Logs | every line, filtered by service, instance, level, correlation id, trace id and text, health probes hidden by default; a line's `traceId` opens its trace |
+
+**Following a request.** A trace and its logs lead to each other: in a trace, Related logs on a span opens every log line written for that request by any service; on a log line, the `traceId` field opens the trace. A span also links to its service's request rate and p95 latency. Services that log nothing for health probes (Map, Monster Raid) show up in Logs Drilldown and the dashboards only for time ranges in which they served requests.
 
 A panel stays empty until its source reports: the system overview's health and utilization need Service Discovery's metrics, and the message broker dashboard the broker's.
 
@@ -2259,12 +2296,14 @@ The message broker is deployed, and the gateway hands every client request to it
 - **Battle** calls User Management, Tamagotchi and Package Registry through the gateway; queue publishing remains mocked.
 - **Map** reads User Management relationships through the gateway and logs the proximity events it would publish.
 - **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
-- **Guild** calls User Management and Package Registry through the gateway with its service credentials; invitation events remain in its transactional outbox without a deployed broker.
-- **Package Registry** has no outbound dependency, receives gateway-derived identities, and derives administrator access from `ADMIN_USER_IDS`.
-- **Tamagotchi** calls Package Registry through the gateway to validate health statistics when `USE_MOCK_PACKAGE_REGISTRY=false`; `true` keeps its built-in registry mock.
-- **Notification** calls no other service. Firebase is mocked. Until it subscribes to its topics on the broker, producers deliver events through its internal event endpoint.
+- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` with its service token; its outbox publishes invitation events with `Broker.Publish`. Peer gRPC conversion remains stage 4 and waits for the User Management rollout and Registry release.
+- **Package Registry 4.0.0** serves its internal gRPC contract alongside REST, has no outbound dependency, authorizes broker-supplied identities, and derives administrator access from `ADMIN_USER_IDS`. Service-only REST removal waits for all callers to migrate.
+- **Tamagotchi** answers its peers over gRPC through the broker and supports the same transport for Registry health-stat validation. Registry 4.0.0 supplies the required server; Compose still forces Tamagotchi's registry mock until its owner verifies the real peer and removes that override.
+- **Notification** calls no other service. Firebase is mocked. It receives its events by subscribing to their topics on the broker; it has no internal event endpoint any more.
 
 ### Postman Collections
+
+The [gateway administrator collection](collections/gateway-admin.postman_collection.json) contains `GET /admin/logs`. After gateway #25 is released and pinned, set `ADMIN_USER_IDS` in the local `.env` to your administrator's UMS UUID and restart the gateway. Put that user's bearer token in the collection's private local `adminAccessToken` value. The request defaults to the last hour and checks the NDJSON download headers and body. Use Save Response in Postman to keep the file. The collector preserves each original JSON line in `originalLog` metadata. Downloads of historical logs without that field use reconstructed records.
 
 Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. On a clean stack, run the User Management collection's `1. Setup and Authentication`, followed by `1b. Package Bootstrap`: register without a package, log in, create a package, activate it as its developer, and join it. These steps use only API calls; no database inserts or administrator identity are needed. Registration can still select an existing ACTIVE package with `initialPackageId`.
 
@@ -2341,6 +2380,16 @@ The Package Registry Service manages application packages and package-specific g
 ### Service Discovery
 
 Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the message broker routes from, and posts alerts to Discord. It is the only component that writes the registry.
+
+Version 4.1.0 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
+`discovery_instance_utilization`, `discovery_instance_in_flight` and `discovery_instance_limit`
+with `service` and `instance_id` labels, plus `discovery_registry_instances` by service/health.
+The system overview uses these for every registered instance, including services that export
+no telemetry themselves. Counters cover evictions, recoveries, deletions and successfully sent
+alerts; `discovery_probe_duration_seconds` records probe duration in Prometheus. Gauges stop
+producing samples when an instance is deleted. Discovery also exports HTTP server traces and
+adds `traceId`/`spanId` to request logs. All exports go to the collector over OTLP/gRPC in
+background threads; an unavailable collector does not affect probing, alerts or the API.
 
 A **JSON state file** on the `service-discovery-data` volume is used because the registry is small, written only on membership and health changes, and read back only at startup. A database would add a dependency for no benefit, while the file lets the registry survive its own restart without losing the fleet. Its specification is in the [`discovery`](discovery/docs/spec.md) submodule.
 

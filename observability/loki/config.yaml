@@ -44,6 +44,10 @@ limits_config:
       - action: index_label
         attributes: [level]
 
+# Groups similar lines into patterns: the Patterns tab of Grafana's Logs Drilldown.
+pattern_ingester:
+  enabled: true
+
 compactor:
   working_directory: /loki/compactor
   retention_enabled: true

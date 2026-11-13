@@ -1,6 +1,11 @@
 # Provisioned on every start; $$ escapes Grafana's own variables from environment expansion.
 apiVersion: 1
 
+# Grafana keeps a provisioned datasource after it leaves this file; traces moved to Tempo.
+deleteDatasources:
+  - name: Jaeger
+    orgId: 1
+
 datasources:
   - name: Prometheus
     uid: prometheus
@@ -18,25 +23,53 @@ datasources:
     url: http://loki:3100
     jsonData:
       maxLines: 1000
-      # A line's traceId opens its trace in Jaeger.
+      # A line's traceId opens its trace.
       derivedFields:
         - name: traceId
           matcherType: label
           matcherRegex: traceId
-          datasourceUid: jaeger
+          datasourceUid: tempo
           url: "$${__value.raw}"
           urlDisplayLabel: Open the trace
 
-  - name: Jaeger
-    uid: jaeger
-    type: jaeger
+  - name: Tempo
+    uid: tempo
+    type: tempo
     access: proxy
-    url: http://jaeger:16686
+    url: http://tempo:3200
     jsonData:
-      # A span opens the log lines of its service written in the same trace.
+      # Every log line written while serving this trace, from every service. Lines carry the
+      # trace id as structured metadata, not in their text, so the line filter is a label filter.
       tracesToLogsV2:
         datasourceUid: loki
-        spanStartTimeShift: -1m
-        spanEndTimeShift: 1m
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
         customQuery: true
-        query: '{service_name="$${__span.tags["service.name"]}"} | traceId="$${__trace.traceId}"'
+        query: '{service_name=~".+"} | traceId="$${__trace.traceId}" | line_format "{{ printf \"%-14s\" .service_name }} {{ __line__ }}"'
+      # The request rate and latency of the span's service around the span.
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: -15m
+        spanEndTimeShift: 15m
+        tags:
+          - key: service.name
+            value: job
+        queries:
+          - name: Request rate
+            query: sum by (job) (rate(http_server_request_duration_seconds_count{$$__tags}[1m]))
+          - name: Request p95 latency
+            query: histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{$$__tags}[1m])))
+      # Built from the service-graph metrics Tempo writes to Prometheus.
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+      traceQuery:
+        timeShiftEnabled: true
+        spanStartTimeShift: -30m
+        spanEndTimeShift: 30m
+      streamingEnabled:
+        search: true
+        metrics: true

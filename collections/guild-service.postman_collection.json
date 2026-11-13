@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "956346af-1261-4e0c-8998-93659632bb9f",
     "name": "Tamagotchi Go - Guild Service",
-    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. WebSocket chat is negotiated through REST, then connected directly with a short-lived single-use ticket. The collection run tests negotiation, not WebSocket frames.",
+    "description": "Lab 4 client REST requests go through the gateway and Broker.Send. Internal gRPC on 9090 and health/readiness endpoints are not client routes. Run Authentication first with existing UMS account credentials saved locally; login scripts store the tokens and user IDs used by later requests. Referenced packages and other business resources must exist. Public business REST routes remain available during migration. Invitations use Broker.Publish; verify Notification subscribed before publishing. Chat negotiation returns a short-lived, single-use ticket and a direct WebSocket URL; the REST runner does not test WebSocket frames or notification delivery. Never export passwords, client secrets or populated tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -104,36 +104,6 @@
     {
       "name": "Guild Service",
       "item": [
-        {
-          "name": "Health",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{guildBaseUrl}}/healthz",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{ownerAccessToken}}",
-                  "type": "string"
-                }
-              ]
-            }
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", function () { pm.response.to.have.status(200); });"
-                ]
-              }
-            }
-          ]
-        },
         {
           "name": "Create guild",
           "request": {

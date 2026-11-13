@@ -155,7 +155,7 @@
 								}
 							]
 						},
-						"description": "Stores the newest position reported by the device. Updates whose sequence number is not higher than the stored one are rejected as stale."
+						"description": "Stores the newest position reported by the device. Updates whose sequence number is not higher than the stored one are rejected as stale. When two unrelated users cross the 6 meter threshold, Map publishes map.proximity.detected.v1 through the message broker; a failed publish is logged and never fails the update."
 					},
 					"response": [
 						{

@@ -11,7 +11,7 @@ x-logging: &default-logging
 services:
   api-gateway:
     logging: *default-logging
-    image: grdz/gateway:4.1.0
+    image: grdz/gateway:4.3.1
     pull_policy: always
     # Client traffic arrives on edge; the services and the registry are on internal.
     networks: [edge, internal]
@@ -40,7 +40,7 @@ services:
 
   service-discovery:
     logging: *default-logging
-    image: grdz/service-discovery:4.0.0
+    image: grdz/service-discovery:4.1.0
     pull_policy: always
     restart: unless-stopped
     # Nothing calls it from outside. It joins edge only to reach the Discord webhook,
@@ -53,6 +53,7 @@ services:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
       LOAD_ALERT_THRESHOLD: ${LOAD_ALERT_THRESHOLD:-0.8}
       SELF_PRESERVATION: ${SELF_PRESERVATION:-off}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     # Not optional: there is no heartbeat, so a registry that loses its state file
     # loses the fleet until every service is restarted.
     volumes:
@@ -66,7 +67,7 @@ services:
 
   broker:
     logging: *default-logging
-    image: grdz/broker:4.5.0
+    image: grdz/broker:4.5.1
     pull_policy: always
     restart: unless-stopped
     # Carries every client request, every call between services and every event:
@@ -202,7 +203,7 @@ services:
 
   map-api:
     logging: *default-logging
-    image: grdz/map-service:3.0.0
+    image: grdz/map-service:4.3.0
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -219,8 +220,13 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
+      # REST operations over Broker.Send until the pinned User Management
+      # serves gRPC; then remove the line, gRPC is the default.
+      USER_MANAGEMENT_TRANSPORT: rest
     depends_on:
       service-discovery:
+        condition: service_healthy
+      broker:
         condition: service_healthy
       map-redis:
         condition: service_healthy
@@ -248,7 +254,7 @@ services:
 
   monster-raid-api:
     logging: *default-logging
-    image: grdz/monster-raid-service:3.0.0
+    image: grdz/monster-raid-service:4.4.1
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -269,8 +275,15 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
+      # REST operations over Broker.Send until each pinned peer serves gRPC;
+      # then remove its line, gRPC is the default.
+      GUILD_TRANSPORT: rest
+      PACKAGE_REGISTRY_TRANSPORT: rest
+      TAMAGOTCHI_TRANSPORT: rest
     depends_on:
       service-discovery:
+        condition: service_healthy
+      broker:
         condition: service_healthy
       monster-raid-db:
         condition: service_healthy
@@ -316,7 +329,7 @@ services:
 
   guild-api-1:
     logging: *default-logging
-    image: cosmak47/pad-guild-service:3.0.0
+    image: cosmak47/pad-guild-service:4.0.0
     pull_policy: always
     networks: [edge, internal]
     env_file:
@@ -341,7 +354,7 @@ services:
 
   guild-api-2:
     logging: *default-logging
-    image: cosmak47/pad-guild-service:3.0.0
+    image: cosmak47/pad-guild-service:4.0.0
     pull_policy: always
     networks: [edge, internal]
     env_file:
@@ -383,7 +396,7 @@ services:
 
   package-registry-api:
     logging: *default-logging
-    image: cosmak47/pad-package-registry-service:3.0.0
+    image: cosmak47/pad-package-registry-service:4.0.0
     pull_policy: always
     deploy:
       replicas: 2
@@ -425,7 +438,7 @@ services:
   tamagotchi-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v3.0.1
+    image: johnnyc05/pad-tamagotchi-service:v4.2.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -445,7 +458,10 @@ services:
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
       REQUEST_TIMEOUT_SECONDS: 4
-      PackageRegistry__UseMock: ${USE_MOCK_PACKAGE_REGISTRY:-false}
+      # The built-in registry mock: Tamagotchi asks Package Registry over gRPC through the
+      # broker, which Package Registry serves only once #97 is released. With that release
+      # this follows USE_MOCK_PACKAGE_REGISTRY again.
+      PackageRegistry__UseMock: "true"
     depends_on:
       service-discovery:
         condition: service_healthy
@@ -477,7 +493,7 @@ services:
   notification-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-notification-service:v3.0.0
+    image: johnnyc05/pad-notification-service:v4.2.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -543,8 +559,8 @@ services:
       retries: 10
 
   # Observability (observability/): the OpenTelemetry Collector receives traces and metrics
-  # over OTLP and reads every container's log file, and hands them to Jaeger, Prometheus and
-  # Loki; Grafana shows all three. Only Grafana and the Jaeger UI are published, on loopback.
+  # over OTLP and reads every container's log file, and hands them to Tempo, Prometheus and
+  # Loki; Grafana shows all three. Only Grafana is published, on loopback.
   otel-collector:
     logging: *default-logging
     restart: unless-stopped
@@ -559,8 +575,8 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - otel-collector-data:/var/lib/otelcol
     depends_on:
-      jaeger:
-        condition: service_healthy
+      tempo:
+        condition: service_started
       prometheus:
         condition: service_healthy
       loki:
@@ -580,6 +596,8 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=7d
       - --web.enable-otlp-receiver
+      # Tempo's metrics generator writes span metrics and the service graph here.
+      - --web.enable-remote-write-receiver
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -607,24 +625,28 @@ services:
         limits:
           memory: 1G
 
-  jaeger:
+  tempo:
     logging: *default-logging
     restart: unless-stopped
-    # 2.21 and later serve only the v3 query API, which Grafana's Jaeger datasource does not
-    # read yet. Traces are kept in memory: 768M restart starts empty.
-    image: jaegertracing/jaeger:2.20.0
-    networks: [edge, internal]
-    ports:
-      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:16686/"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
+    # Traces, read through Grafana: trace search, TraceQL, Traces Drilldown and the service
+    # graph. Internal only; Grafana is its UI.
+    image: grafana/tempo:2.10.10
+    # The image runs as an unprivileged user that cannot write a fresh named volume.
+    user: "0:0"
+    networks: [internal]
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    # No healthcheck: the image has no shell or HTTP client (like Loki's), so dependents wait
+    # for it to start and the collector's exporter retries until it accepts spans.
+    depends_on:
+      prometheus:
+        condition: service_healthy
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 1G
 
   grafana:
     logging: *default-logging
@@ -653,13 +675,16 @@ services:
         condition: service_healthy
       loki:
         condition: service_started
-      jaeger:
-        condition: service_healthy
+      tempo:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
       interval: 5s
       timeout: 3s
       retries: 12
+      # The first start on an empty volume runs about 800 database migrations, which takes
+      # minutes on a busy machine; failed probes during this window do not count.
+      start_period: 10m
     deploy:
       resources:
         limits:
@@ -667,7 +692,7 @@ services:
 
 networks:
   # Published listeners: the gateway, both Guild sockets, and loopback-only Discovery,
-  # broker admin, Grafana and the Jaeger UI.
+  # broker admin and Grafana.
   edge:
   # Every container. No route to the internet, and nothing on it is published.
   internal:
@@ -689,4 +714,5 @@ volumes:
   otel-collector-data:
   prometheus-data:
   loki-data:
+  tempo-data:
   grafana-data:

@@ -120,15 +120,15 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 15,
         "w": 8,
         "x": 0,
         "y": 1
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (job, instance, le) (rate(http_server_request_duration_seconds_bucket{job=~\"$service\", instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{job}} / {{instance}}",
+          "expr": "histogram_quantile(0.5, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{job=~\"$service\", instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{job}}",
           "range": true,
           "instant": false,
           "refId": "A",
@@ -146,8 +146,9 @@
       },
       "options": {
         "legend": {
+          "showLegend": true,
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "calcs": [
             "lastNotNull",
             "max"
@@ -165,15 +166,15 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 15,
         "w": 8,
         "x": 8,
         "y": 1
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (job, instance, le) (rate(http_server_request_duration_seconds_bucket{job=~\"$service\", instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{job}} / {{instance}}",
+          "expr": "histogram_quantile(0.95, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{job=~\"$service\", instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{job}}",
           "range": true,
           "instant": false,
           "refId": "A",
@@ -191,8 +192,9 @@
       },
       "options": {
         "legend": {
+          "showLegend": true,
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "calcs": [
             "lastNotNull",
             "max"
@@ -210,15 +212,15 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 8,
+        "h": 15,
         "w": 8,
         "x": 16,
         "y": 1
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (job, instance, le) (rate(http_server_request_duration_seconds_bucket{job=~\"$service\", instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{job}} / {{instance}}",
+          "expr": "histogram_quantile(0.99, sum by (job, le) (rate(http_server_request_duration_seconds_bucket{job=~\"$service\", instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{job}}",
           "range": true,
           "instant": false,
           "refId": "A",
@@ -236,8 +238,9 @@
       },
       "options": {
         "legend": {
+          "showLegend": true,
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "calcs": [
             "lastNotNull",
             "max"
@@ -258,11 +261,11 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 9
+        "y": 16
       },
       "targets": [
         {
-          "expr": "sum by (job, instance) (rate(http_server_request_duration_seconds_count{job=~\"$service\", instance=~\"$instance\", http_response_status_code=~\"5..\"}[5m])) / sum by (job, instance) (rate(http_server_request_duration_seconds_count{job=~\"$service\", instance=~\"$instance\"}[5m]))",
+          "expr": "(sum by (job, instance) (rate(http_server_request_duration_seconds_count{job=~\"$service\", instance=~\"$instance\", http_response_status_code=~\"5..\"}[5m])) or sum by (job, instance) (rate(http_server_request_duration_seconds_count{job=~\"$service\", instance=~\"$instance\"}[5m])) * 0) / sum by (job, instance) (rate(http_server_request_duration_seconds_count{job=~\"$service\", instance=~\"$instance\"}[5m]))",
           "legendFormat": "{{job}} / {{instance}}",
           "range": true,
           "instant": false,
@@ -275,7 +278,11 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "axisSoftMax": 0.05
+          }
         },
         "overrides": []
       },
@@ -303,7 +310,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 9
+        "y": 16
       },
       "targets": [
         {
@@ -345,7 +352,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 17
+        "y": 24
       }
     },
     {
@@ -361,7 +368,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 18
+        "y": 25
       },
       "targets": [
         {
@@ -405,11 +412,11 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 18
+        "y": 25
       },
       "targets": [
         {
-          "expr": "sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" | status >= 500 [5m])) / sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" [5m]))",
+          "expr": "(sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" | status >= 500 [5m])) or sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" [5m])) * 0) / sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" [5m]))",
           "legendFormat": "{{service_name}}",
           "queryType": "range",
           "refId": "A",
@@ -421,7 +428,11 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "axisSoftMax": 0.05
+          }
         },
         "overrides": []
       },
@@ -449,7 +460,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 33
       },
       "targets": [
         {

@@ -507,7 +507,7 @@
 								{
 									"key": "status",
 									"value": "ACTIVE",
-									"description": "Filter by lifecycle state: ACTIVE, SETTLING, COMPLETED or FAILED"
+									"description": "Filter by lifecycle state: ACTIVE, COMPLETED or FAILED"
 								},
 								{
 									"key": "cursor",
@@ -984,7 +984,7 @@
 								}
 							]
 						},
-						"description": "Applies one attack to the raid monster. The action identifier deduplicates retries and the server calculates the damage from the combat profile it reads from Tamagotchi Service. The test repeats this request until the monster reaches zero health, which completes the raid and settles the rewards."
+						"description": "Applies one attack to the raid monster. The action identifier deduplicates retries and the server calculates the damage from the combat profile it reads from Tamagotchi Service. The test repeats this request until the monster reaches zero health, which completes the raid at once; User Management and Tamagotchi credit the rewards asynchronously from raid.completed.v1."
 					},
 					"response": [
 						{
@@ -1175,7 +1175,7 @@
 								}
 							]
 						},
-						"description": "Returns the outcome of a finished raid, with the currency and XP credited to each participant. Answers 409 RAID_NOT_FINISHED until the monster is defeated."
+						"description": "Returns the outcome of a finished raid, with the currency and XP awarded to each participant. It answers as soon as the raid is COMPLETED; User Management and Tamagotchi credit those rewards asynchronously from raid.completed.v1. Answers 409 RAID_NOT_FINISHED until the monster is defeated or the deadline passes."
 					},
 					"response": [
 						{
@@ -1216,7 +1216,7 @@
 								}
 							],
 							"cookie": [],
-							"body": "{\n  \"raidId\": \"8f6434c8-52bf-480d-965b-ff8dcbd54248\",\n  \"status\": \"COMPLETED\",\n  \"totalDamage\": 1000,\n  \"rewards\": [],\n  \"finishedAt\": \"2026-09-23T12:08:03Z\"\n}"
+							"body": "{\n  \"raidId\": \"8f6434c8-52bf-480d-965b-ff8dcbd54248\",\n  \"status\": \"COMPLETED\",\n  \"totalDamage\": 1000,\n  \"rewards\": [\n    {\n      \"userId\": \"2b9f7c1e-5a34-4d8e-9f61-0c7a2e4b9d13\",\n      \"tamagotchiId\": \"7e3a91d4-0b6c-4f25-8a1e-5d9c3b2f6a70\",\n      \"globalCurrency\": 120,\n      \"xp\": 40\n    }\n  ],\n  \"finishedAt\": \"2026-09-23T12:08:03Z\"\n}"
 						},
 						{
 							"name": "RAID_NOT_FINISHED",
