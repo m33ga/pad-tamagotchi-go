@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Package Registry Service API",
-    "version": "3.0.0",
-    "description": "Owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External clients authenticate at the API Gateway with a bearer token. The gateway removes Authorization and supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers to this internal service; direct requests without X-Caller-Kind are rejected.\n\nPackage developer and moderator permissions come from the service database. Administrators are authenticated user IDs selected by the runtime ADMIN_USER_IDS allowlist, never by a caller-supplied role header. Registration writes and per-user registration listing allow only user-management-service; raid schedule reads allow monster-raid-service or an administrator. Every handler has a request deadline and fail-fast concurrency limit, producing 504 REQUEST_TIMEOUT or 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1.",
+    "version": "4.0.0",
+    "description": "Owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External clients authenticate at the API Gateway with a bearer token. The gateway forwards client requests through the broker, which supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers; direct requests without X-Caller-Kind are rejected.\n\nPackage developer and moderator permissions come from the service database. Administrators are authenticated user IDs selected by the runtime ADMIN_USER_IDS allowlist, never by a caller-supplied role header. Registration writes and per-user registration listing allow only user-management-service; raid schedule reads allow monster-raid-service or an administrator. Every handler has a request deadline and fail-fast concurrency limit, producing 504 REQUEST_TIMEOUT or 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1.\n\nInternal gRPC on 9090 serves all 12 PackageRegistry methods with the same application rules, idempotency, concurrency slots and deadlines as REST. OpenTelemetry instruments both transports and PostgreSQL. The five service-only REST routes remain until all callers migrate. Numeric writes must fit their protobuf ranges; legacy out-of-range records return gRPC FAILED_PRECONDITION instead of wrapped values.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -1741,7 +1741,7 @@
                 "type": "string",
                 "description": "Human-readable error description"
               },
-"correlationId": {
+              "correlationId": {
                 "type": "string",
                 "description": "Correlation identifier of the failed operation"
               },
@@ -2161,7 +2161,9 @@
           "maxUsesPerBattle": {
             "type": "integer",
             "minimum": 1,
-            "description": "Maximum number of uses in one battle"
+            "description": "Maximum number of uses in one battle",
+            "format": "int32",
+            "maximum": 2147483647
           }
         }
       },
@@ -2263,12 +2265,16 @@
           "durationSeconds": {
             "type": "integer",
             "minimum": 1,
-            "description": "Maximum raid duration in seconds"
+            "description": "Maximum raid duration in seconds",
+            "format": "int32",
+            "maximum": 2147483647
           },
           "participantLimit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Maximum number of participants"
+            "description": "Maximum number of participants",
+            "format": "int32",
+            "maximum": 2147483647
           },
           "rewards": {
             "$ref": "#/components/schemas/RaidRewardConfiguration"
@@ -2338,12 +2344,16 @@
           "durationSeconds": {
             "type": "integer",
             "minimum": 1,
-            "description": "Maximum raid duration in seconds"
+            "description": "Maximum raid duration in seconds",
+            "format": "int32",
+            "maximum": 2147483647
           },
           "participantLimit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Maximum number of participants"
+            "description": "Maximum number of participants",
+            "format": "int32",
+            "maximum": 2147483647
           },
           "rewards": {
             "$ref": "#/components/schemas/RaidRewardConfiguration"
@@ -2360,12 +2370,16 @@
           "attack": {
             "type": "integer",
             "minimum": 0,
-            "description": "Monster attack value"
+            "description": "Monster attack value",
+            "format": "int32",
+            "maximum": 2147483647
           },
           "defense": {
             "type": "integer",
             "minimum": 0,
-            "description": "Monster defense value"
+            "description": "Monster defense value",
+            "format": "int32",
+            "maximum": 2147483647
           }
         }
       },

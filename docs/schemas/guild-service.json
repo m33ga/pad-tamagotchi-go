@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Guild Service API",
-    "version": "3.0.0",
-    "description": "Owns guild identity, membership, roles, permissions, and Guild Chat. External REST clients authenticate at the API Gateway with a bearer token. The gateway removes Authorization and supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers to this internal service; a direct request without X-Caller-Kind is rejected. User Management and Package Registry calls also pass through the gateway with guild-service client credentials.\n\nGuild Chat is negotiated with POST /guilds/{guildId}/chat-sessions. The returned ticket is 32 random bytes encoded base64url, expires after 60 seconds and is consumed atomically once by the direct WebSocket handshake. The WebSocket protocol at `/ws/v1/guilds/{guildId}/chat?ticket=...` cannot be expressed in OpenAPI and is documented in the repository README.\n\nEvery REST handler has a request deadline and fail-fast concurrency limit. Saturation returns 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1; expiry returns 504 REQUEST_TIMEOUT. The service publishes the `guild.invitation.created.v1` queue event.",
+    "version": "4.0.0",
+    "description": "Owns guild identity, membership, roles, permissions, and Guild Chat. External REST clients authenticate at the API Gateway with a bearer token. The gateway forwards client requests through the broker, which supplies trusted X-Caller-Kind, X-User-ID, X-Session-ID, X-Service-Name and X-Scopes headers; a direct request without X-Caller-Kind is rejected. User Management and Package Registry checks are REST operations over Broker.Send using the guild-service token; peer gRPC migration remains stage 4.\n\nGuild Chat is negotiated with POST /guilds/{guildId}/chat-sessions. The returned ticket is 32 random bytes encoded base64url, expires after 60 seconds and is consumed atomically once by the direct WebSocket handshake. The WebSocket protocol at `/ws/v1/guilds/{guildId}/chat?ticket=...` cannot be expressed in OpenAPI and is documented in the repository README.\n\nEvery REST handler has a request deadline and fail-fast concurrency limit. Saturation returns 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1; expiry returns 504 REQUEST_TIMEOUT. The transactional invitation outbox publishes `guild.invitation.created.v1` with Broker.Publish. Internal gRPC on 9090 serves the four Guild reads with the same application rules and shared concurrency slots as REST; public REST routes stay available. OpenTelemetry instruments HTTP, gRPC and PostgreSQL.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -1330,7 +1330,10 @@
           "Retry-After": {
             "schema": {
               "type": "integer",
-              "enum": [1, 14]
+              "enum": [
+                1,
+                14
+              ]
             }
           }
         },
@@ -1471,7 +1474,7 @@
                 "type": "string",
                 "description": "Human-readable error description"
               },
-"correlationId": {
+              "correlationId": {
                 "type": "string",
                 "description": "Correlation identifier of the failed operation"
               },
@@ -1914,7 +1917,7 @@
               "guild-service"
             ]
           },
-"correlationId": {
+          "correlationId": {
             "type": "string",
             "description": "Identifier connecting the event to the originating operation"
           },

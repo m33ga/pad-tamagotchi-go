@@ -219,7 +219,7 @@ set it. `OTEL_SDK_DISABLED=true` turns their telemetry off.
 Guild and Package Registry load only their own `secrets/<client-id>.env` file,
 not the shared `.env`. Both accept the generated `OAUTH_CLIENT_ID` and
 `OAUTH_CLIENT_SECRET` aliases. Compose maps other required settings explicitly.
-Their REST APIs and databases have no published host ports. Only Guild's separate
+Their REST APIs, gRPC listeners and databases have no published host ports. Only Guild's separate
 WebSocket listeners are published, at ports 8081 and 8083 by default. Each instance
 has its own public address; use the URL returned by negotiation. Set
 `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` to client-reachable `ws://` or
@@ -234,9 +234,22 @@ existing UMS user UUIDs. An empty value grants no administrator access.
 Guild runs as `guild-api-1` and `guild-api-2`, sharing PostgreSQL messages, tickets
 and presence. LISTEN/NOTIFY delivers chat across instances, and broadcasts check
 current membership. Package Registry uses `deploy.replicas: 2` and a shared
-PostgreSQL database. Both services serialize startup migrations, register their
-REST listener with Discovery, and expose `/health` and `/status` internally. The
-broker routes to both Guild instances from the Discovery catalogue.
+PostgreSQL database. Version 4.0.0 of both services adds gRPC on internal port 9090;
+Discovery registrations include `grpcAddress: <hostname>:9090` and `topics: []`.
+Both serialize startup migrations and expose `/health` and `/status` internally.
+REST and gRPC share each instance's concurrency slots and request deadline. Their
+OpenTelemetry SDKs default to `http://otel-collector:4317`, so no additional
+Compose or `.env` settings are needed for export.
+
+Guild defaults `MESSAGE_BROKER_ADDRESS` in code to `broker:9090`; do not add it
+to `.env`. Its OAuth token request and peer checks are REST operations over
+`Broker.Send` until stage 4 switches the peer checks to generated gRPC messages.
+Invitation outbox entries are sent with `Broker.Publish`. Before rolling out
+Guild 4.0.0, start the already-pinned Notification consumer and verify
+`guild.invitation.created.v1` appears in its broker subscription; events published
+before the first subscription are not replayed. Registry 4.0.0 supplies the gRPC
+server needed by the User Management rollout and Guild's next stage. Keep its
+service-only REST routes until every caller has migrated.
 
 ## Storage and Rotation
 
