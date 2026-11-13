@@ -55,11 +55,10 @@ allowlist.
 Every service uses a 4 second request deadline, below the gateway's 5 second
 upstream timeout, so a slow request ends with the service's own
 `504 REQUEST_TIMEOUT`. The per-service overrides `TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS`
-and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi 4.2.0
-validates health statistics against Package Registry over gRPC through the broker.
-Registry 4.0.0 supplies that server. Compose still forces Tamagotchi's built-in
-registry mock; its owner can remove that temporary override after verifying the
-real peer. `USE_MOCK_PACKAGE_REGISTRY` still applies to User Management.
+and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi follows
+`USE_MOCK_PACKAGE_REGISTRY` like User Management: `false` validates health statistics with
+Package Registry's `ListStatDefinitions` over gRPC through the broker, as the
+`tamagotchi-service` client; `true` keeps Tamagotchi's built-in registry mock.
 
 ## Message Broker
 
