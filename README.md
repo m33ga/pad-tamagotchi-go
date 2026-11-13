@@ -2299,7 +2299,7 @@ pinned service releases also use the broker for peer calls and event delivery:
 - **Monster Raid 4.4.1** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`.
 - **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
 - **Package Registry 4.0.0** serves gRPC alongside REST and has no outbound dependency. Administrator access comes from `ADMIN_USER_IDS`.
-- **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; the temporary registry mock is disabled.
+- **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
 - **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.
 
 ### Postman Collections
