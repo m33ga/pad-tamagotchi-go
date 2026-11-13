@@ -167,8 +167,8 @@ The following interactions correspond to the arrows in the architecture diagram 
 | Map Service | Notification Service | Event through a broker topic | Report that nearby players were detected |
 | User Management Service | Package Registry Service | gRPC through the broker | Validate package information associated with a user |
 | User Management Service | Notification Service | Event through a broker topic | Report newly created friend requests |
-| Guild Service | User Management Service | gRPC through the broker | Validate users, relationships, and permissions used by guild operations |
-| Guild Service | Package Registry Service | gRPC through the broker | Validate package-related membership information when required |
+| Guild Service | User Management Service | REST operation through `Broker.Send` (gRPC migration pending) | Validate users, relationships, and permissions used by guild operations |
+| Guild Service | Package Registry Service | REST operation through `Broker.Send` (gRPC migration pending) | Validate package-related membership information when required |
 | Guild Service | Notification Service | Event through a broker topic | Report newly created guild invitations |
 | Monster Raid Service | Guild Service | gRPC through the broker | Validate guild membership and raid eligibility |
 | Monster Raid Service | Tamagotchi Service | gRPC through the broker | Obtain participating Tamagotchi combat properties |
@@ -855,7 +855,11 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS` - the former caller-supplied role header is not accepted.
 
-Lab 3 runs two Package Registry instances on the internal network. Each registers its REST address with Service Discovery and exposes internal `GET /health` (liveness, always `200 {"status":"UP"}`) and `GET /status` (readiness/load/PostgreSQL, `200` for `UP`/`DEGRADED`, `503` for `DOWN`). These operational endpoints are not client routes through the gateway; `/healthz` is removed. Each response includes `X-Instance-Id`. PostgreSQL serializes startup migrations so both replicas may start together.
+Version 4.0.0 runs two Package Registry instances on the internal network, with REST on 8082 and gRPC on 9090. Each registers its REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. Internal `GET /health` reports liveness; `GET /status` reports readiness, load and PostgreSQL health. These endpoints and both listeners have no published host port. Responses include the instance ID, and PostgreSQL serializes startup migrations so both replicas may start together.
+
+The `tamagotchigo.packageregistry.v1.PackageRegistry` API serves all 12 methods in the [protobuf contract](docs/schemas/proto/tamagotchigo/packageregistry/v1/package_registry.proto). REST and gRPC share application authorization, registration idempotency, concurrency slots and deadlines. The broker supplies verified service metadata; gRPC errors include `google.rpc.ErrorInfo` with the business error code and domain `package-registry`. Both transports and PostgreSQL export OpenTelemetry to the collector. The five service-only REST routes remain until every caller has migrated; this release completes #97 stages 1 and 2, not stage 3.
+
+Raid attack/defense accept `0..2147483647`; duration, participant limit and battle-boost `maxUsesPerBattle` accept `1..2147483647`. Invalid writes return `422`; legacy stored values outside those ranges return gRPC `FAILED_PRECONDITION` instead of wrapping or returning partial results. HP and rewards retain their `int64` range. An administrator can inspect and repair a legacy record through REST.
 
 `POST /packages/{packageId}/registrations` and `GET /users/{userId}/package-registrations` require `X-Service-Name: user-management-service`. Raid schedule reads accept `X-Service-Name: monster-raid-service` or a configured administrator. Every handler has a bounded deadline and fail-fast concurrency limit, returning `504 REQUEST_TIMEOUT` or `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
 
@@ -1058,7 +1062,11 @@ Lab 3 runs two Package Registry instances on the internal network. Each register
 
 Guild Service owns guild identity, membership, roles, permissions, and Guild Chat. Guilds, memberships, membership requests and chat messages are stored in PostgreSQL. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package.
 
-Lab 3 runs two explicit Guild instances. Both register their REST address with Service Discovery and expose internal `GET /health` (liveness) and `GET /status` (readiness, load, PostgreSQL, peer circuits and chat fan-out); `/healthz` is removed. REST responses include `X-Instance-Id`. User Management and Package Registry calls each have a separate circuit breaker; an open one returns `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without disconnecting existing chat sockets.
+Version 4.0.0 runs two explicit Guild instances. Both register their REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. REST on 8081 and gRPC on 9090 stay internal; the separate WebSocket listeners retain their published ports. Internal `GET /health` reports liveness and `GET /status` reports readiness, load, PostgreSQL, peer circuits and chat fan-out. REST and gRPC share application rules, deadlines and concurrency slots; gRPC serves `GetGuild`, `ListUserGuilds`, `ListMembers` and `GetMember` for Monster Raid and returns instance/correlation metadata plus rich business errors.
+
+Every outbound call uses the broker's long-lived gRPC connection. In this release the OAuth token request and User Management/Package Registry checks are REST operations inside `Broker.Send`; converting peer checks to generated gRPC messages is #96 stage 4, after the User Management rollout and Registry release. Each peer retains its circuit breaker; an open one returns `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without disconnecting existing chat sockets. HTTP, gRPC and PostgreSQL export OpenTelemetry, and request logs include trace IDs.
+
+The transactional invitation outbox publishes `guild.invitation.created.v1` using `Broker.Publish`. Workers claim rows exclusively across replicas, keep the event ID and trace context across retries, and mark an event published only after durable acknowledgement. Before rolling out Guild, verify Notification's broker-consuming version is running and has registered this topic: the broker does not replay events published before the first subscription. This release completes #96 stages 1–3 and 5; the combined notification, chat and trace demonstrations remain part of integration acceptance.
 
 ##### Endpoint Catalog
 
@@ -1225,10 +1233,10 @@ If a message cannot be processed, the sender receives `guild.chat.error.v1` with
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Outbound | User Management Service | Read users and relationships | Validate inviter, invitee, and relationship rules |
-| Outbound | Package Registry Service | Read package and user-package registration | Enforce an optional package membership restriction |
-| Inbound | Monster Raid Service | Read guild and membership | Validate whether a user may participate in a guild raid |
-| Outbound | Notification Service through Queue | Publish guild invitation event | Notify the invited user asynchronously |
+| Outbound | User Management Service through `Broker.Send` | REST user and relationship reads; gRPC migration pending | Validate inviter, invitee, and relationship rules |
+| Outbound | Package Registry Service through `Broker.Send` | REST package and registration reads; gRPC migration pending | Enforce an optional package membership restriction |
+| Inbound | Monster Raid Service through the broker | Guild gRPC reads | Validate whether a user may participate in a guild raid |
+| Outbound | Broker topic `guild.invitation.created.v1` | `Broker.Publish` from the transactional outbox | Deliver the invitation event to Notification's durable subscription |
 
 #### Tamagotchi Service
 
@@ -2283,9 +2291,9 @@ The message broker is deployed, and the gateway hands every client request to it
 - **Battle** calls User Management, Tamagotchi and Package Registry through the gateway; queue publishing remains mocked.
 - **Map** reads User Management relationships through the gateway and logs the proximity events it would publish.
 - **Monster Raid** calls Guild, Package Registry, Tamagotchi and User Management through the gateway, and logs the raid lifecycle events it would publish.
-- **Guild** calls User Management and Package Registry through the gateway with its service credentials; invitation events remain in its transactional outbox without a deployed broker.
-- **Package Registry** has no outbound dependency, receives gateway-derived identities, and derives administrator access from `ADMIN_USER_IDS`.
-- **Tamagotchi** answers its peers over gRPC through the broker and validates health statistics with Package Registry the same way. Until Package Registry serves gRPC (#97), Compose keeps Tamagotchi on its built-in registry mock.
+- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` with its service token; its outbox publishes invitation events with `Broker.Publish`. Peer gRPC conversion remains stage 4 and waits for the User Management rollout and Registry release.
+- **Package Registry 4.0.0** serves its internal gRPC contract alongside REST, has no outbound dependency, authorizes broker-supplied identities, and derives administrator access from `ADMIN_USER_IDS`. Service-only REST removal waits for all callers to migrate.
+- **Tamagotchi** answers its peers over gRPC through the broker and supports the same transport for Registry health-stat validation. Registry 4.0.0 supplies the required server; Compose still forces Tamagotchi's registry mock until its owner verifies the real peer and removes that override.
 - **Notification** calls no other service. Firebase is mocked. It receives its events by subscribing to their topics on the broker; it has no internal event endpoint any more.
 
 ### Postman Collections
