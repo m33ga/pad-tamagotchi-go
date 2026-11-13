@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "2548694d-5793-4818-843d-b4e8688d009c",
     "name": "Tamagotchi Go - Battle Service",
-    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Service-only operations need the documented allowed client and its private client credential; a user token cannot authorize them. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens.",
+    "description": "Client requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores access tokens and subjects for later requests. Battle peer calls use Broker.Send and battle events use Broker.Publish; no service credentials or internal balance/XP commands belong in this client collection. Business scenarios require existing packages and pets. Never export passwords, secrets or populated tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
