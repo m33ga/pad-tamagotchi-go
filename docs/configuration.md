@@ -2,14 +2,14 @@
 
 The deployment uses one `compose.yaml` and two networks. `internal` carries all
 traffic between containers and is declared `internal: true`, so nothing on it can
-reach the internet. `edge` is joined only by the seven containers that publish a
+reach the internet. `edge` is joined only by the six containers that publish a
 port: the gateway, the two Guild chat instances, Service Discovery, which also
-needs it to reach the Discord webhook, the message broker, Grafana and Jaeger.
+needs it to reach the Discord webhook, the message broker and Grafana.
 Every container names its networks explicitly.
 
 Only `GATEWAY_PORT`, `GUILD_CHAT_PORT_1` and `GUILD_CHAT_PORT_2` are published to the
 network. Service Discovery publishes `127.0.0.1:8500`, the broker's admin endpoints
-`127.0.0.1:8501`, Grafana `127.0.0.1:3000` and the Jaeger UI `127.0.0.1:16686`, all
+`127.0.0.1:8501` and Grafana `127.0.0.1:3000`, all
 reachable from the host and nowhere else.
 Guild's REST listener stays on container port 8081 and its separate socket
 listener uses port 8082. Each negotiation returns its serving instance's socket
@@ -126,7 +126,6 @@ volume forgets the fleet until every service is restarted.
 |---|---|---|
 | `GRAFANA_ADMIN_PASSWORD` | none, required | Password of Grafana's `admin` user, needed to change dashboards or settings. Viewing needs no login |
 | `GRAFANA_PORT` | `3000` | Loopback port of Grafana |
-| `JAEGER_UI_PORT` | `16686` | Loopback port of the Jaeger UI |
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` does not appear in `.env.example`: every
 instrumented service defaults it in code or in its image to
@@ -143,7 +142,7 @@ stopped, Discovery continues probing, serving its API and delivering alerts.
 
 Instance gauges read live registry membership. Deleted instances stop producing samples;
 Prometheus keeps their historical data and applies its normal lookback to instant queries.
-Request log lines carry `traceId` and `spanId`, so the existing Loki/Jaeger links work.
+Request log lines carry `traceId` and `spanId`, so a log line opens its trace in Grafana and a trace its log lines.
 
 ## Generate Client Credentials
 

@@ -118,7 +118,7 @@ Each service owns its datastore. Events are published to broker topics and persi
 
 ![Architecture Diagram](docs/architecture.png)
 
-The diagram shows the Lab 4 target. Compose currently uses Jaeger for traces; object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
+The diagram shows the Lab 4 target. Object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
 
 [Back to top](#table-of-contents)
 
@@ -597,7 +597,7 @@ Every service, the gateway and Service Discovery write one JSON object per line 
 | `event` | always | a value from the vocabulary below |
 | `message` | always | human readable; structured data goes in fields, not in the message |
 | `correlationId`, `method`, `path`, `status`, `durationMs` | request-scoped lines | `correlationId` is the `X-Correlation-ID` of the request |
-| `traceId`, `spanId` | lines written inside a traced request | the W3C trace and span ids of the request's span, so a line leads to its trace in Jaeger |
+| `traceId`, `spanId` | lines written inside a traced request | the W3C trace and span ids of the request's span, so a line leads to its trace in Grafana |
 | `errorCode` | failures | the error code of the common error envelope |
 | `peer`, `failures`, `windowSeconds` | breaker events | |
 
@@ -2166,7 +2166,6 @@ Docker Compose runs the gateway, Service Discovery, the message broker and all e
 | Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
 | Message broker admin endpoints, from the host only | [`grdz/broker`](https://hub.docker.com/r/grdz/broker) | `http://127.0.0.1:8501` |
 | Grafana, from the host only | [`grafana/grafana`](https://hub.docker.com/r/grafana/grafana) | `http://127.0.0.1:3000` |
-| Jaeger UI, from the host only | [`jaegertracing/jaeger`](https://hub.docker.com/r/jaegertracing/jaeger) | `http://127.0.0.1:16686` |
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
@@ -2184,9 +2183,8 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | Service Discovery, loopback only | 8500 |
 | Message broker admin endpoints, loopback only | 8501 |
 | Grafana, loopback only | 3000 |
-| Jaeger UI, loopback only | 16686 |
 
-`GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2`, `GRAFANA_PORT` and `JAEGER_UI_PORT` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
+`GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2` and `GRAFANA_PORT` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
 
 ### Run the Services
 
@@ -2232,7 +2230,7 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. The broker's event store, `broker-db`, takes its credentials from `BROKER_DB_NAME`, `BROKER_DB_USER` and `BROKER_DB_PASSWORD` in `.env`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
 
-Data persists in sixteen named volumes: `service-discovery-data`, `broker-db-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`, and for the [observability stack](#observability) `otel-collector-data`, `prometheus-data`, `loki-data` and `grafana-data`. `broker-db-data` holds the events queued for each subscribing service and the dead letter channel, so queued events survive `docker compose restart broker broker-db`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+Data persists in seventeen named volumes: `service-discovery-data`, `broker-db-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`, and for the [observability stack](#observability) `otel-collector-data`, `prometheus-data`, `loki-data`, `tempo-data` and `grafana-data`. `broker-db-data` holds the events queued for each subscribing service and the dead letter channel, so queued events survive `docker compose restart broker broker-db`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
 
 No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, Guild and Package Registry ship idempotent migrations inside their images, and the broker applies its own ordered SQL migrations at startup.
 
@@ -2243,25 +2241,25 @@ The deployment watches itself with OpenTelemetry. All configuration lives under 
 ```
 instrumented services ──OTLP──> otel-collector ──> Prometheus  (metrics, OTLP receiver)
 container stdout (json-file) ──> otel-collector ──> Loki        (logs, the platform JSON parsed into fields)
-                                                ──> Jaeger      (traces)
-Grafana: Prometheus, Loki and Jaeger datasources and provisioned dashboards
+                                                ──> Tempo       (traces) ──> Prometheus (span metrics, service graph)
+Grafana: Prometheus, Loki and Tempo datasources, provisioned dashboards, Drilldown for metrics, logs and traces
 ```
 
 | Container | Image | Role | Published |
 |---|---|---|---|
 | `otel-collector` | `otel/opentelemetry-collector-contrib:0.165.0` | receives OTLP on `4317` (gRPC) and `4318` (HTTP) and reads every container's log file | none |
 | `prometheus` | `prom/prometheus:v3.16.0` | metrics, through its OTLP receiver; kept 7 days | none |
-| `loki` | `grafana/loki:3.6.20` | logs; kept 7 days | none |
-| `jaeger` | `jaegertracing/jaeger:2.20.0` | traces, in memory | UI on `127.0.0.1:16686` |
+| `loki` | `grafana/loki:3.6.20` | logs, with patterns for Logs Drilldown; kept 7 days | none |
+| `tempo` | `grafana/tempo:2.10.10` | traces, kept 3 days; writes span metrics and the service graph to Prometheus | none |
 | `grafana` | `grafana/grafana:13.2.6` | dashboards and Explore over the three | `127.0.0.1:3000` |
 
-Every container has a memory limit, and no observability port is reachable from another machine. Jaeger stays at 2.20 because later versions serve only the v3 query API, which Grafana's Jaeger datasource does not read yet.
+Every container has a memory limit, and no observability port is reachable from another machine. Traces are stored in Tempo rather than Jaeger because Grafana's trace features (Traces Drilldown, TraceQL, the service graph, links from a span to its service's metrics) work only with Tempo; Grafana is the one UI for all three signals.
 
-**Opening it.** Grafana is at <http://127.0.0.1:3000> and opens on the system overview. Anyone on the machine may view the dashboards and use Explore without logging in; changing anything needs the `admin` login with `GRAFANA_ADMIN_PASSWORD` from `.env`. The Jaeger UI is at <http://127.0.0.1:16686>; the same traces are in Grafana's Explore, and Jaeger keeps them only until it restarts.
+**Opening it.** Grafana is at <http://127.0.0.1:3000> and opens on the system overview. Anyone on the machine may view the dashboards and use Explore without logging in; changing anything needs the `admin` login with `GRAFANA_ADMIN_PASSWORD` from `.env`. Traces are in Drilldown → Traces and in Explore with the Tempo datasource.
 
-**Traces and metrics.** Services export OTLP to `http://otel-collector:4317`, with `service.name` set to the canonical service name and `service.instance.id` to the hostname; in Prometheus these become the `job` and `instance` labels. A request carries `traceparent` through the gateway, the broker and every service it reaches, so one client request, and everything it causes, is one trace.
+**Traces and metrics.** Services export OTLP to `http://otel-collector:4317`, with `service.name` set to the canonical service name and `service.instance.id` to the hostname; in Prometheus these become the `job` and `instance` labels. A request carries `traceparent` through the gateway, the broker and every service it reaches, so one client request, and everything it causes, is one trace. Health probes (Service Discovery's `/status`, Docker's `/health`) reach each instance directly, outside the gateway and the broker, and are traces of their own; the collector drops those traces whole, so Tempo and its service graph hold only real requests.
 
-**Logs.** Every container logs through Docker's `json-file` driver with rotation (`x-logging` in `compose.yaml`; Docker Desktop otherwise defaults to the `local` driver, which the collector cannot read). The collector mounts `/var/lib/docker/containers` read-only, keeps only the lines of this stack's containers, and parses each platform JSON line: `service` and `instanceId` become the Loki labels `service_name` and `service_instance_id`, `level` the label `level`, and every other field (`event`, `correlationId`, `traceId`, `status`, `durationMs`, ...) structured metadata that queries can filter on. A line that is not JSON, from a database or a cache, is kept as text under its container's name. Read offsets are checkpointed, so a restarted collector neither loses nor repeats lines. From Git Bash on Windows, run Compose with `MSYS_NO_PATHCONV=1` so the mount path is kept.
+**Logs.** Every container logs through Docker's `json-file` driver with rotation (`x-logging` in `compose.yaml`; Docker Desktop otherwise defaults to the `local` driver, which the collector cannot read). The collector mounts `/var/lib/docker/containers` read-only, keeps only the lines of this stack's containers, and parses each platform JSON line: `service` and `instanceId` become the Loki labels `service_name` and `service_instance_id`, `level` the label `level`, and every other field (`event`, `correlationId`, `traceId`, `status`, `durationMs`, ...) structured metadata that queries can filter on. A request line's text is rebuilt from its fields, the same for every service (`GET /api/v1/users/:userId/map 200 21 ms`, or for the broker `user-management POST /api/v1/oauth2/token 200 244 ms`, followed by the `errorCode` of a failure); the service's own message stays in the `message` field. A line that is not JSON, from a database or a cache, is kept as text under its container's name, with its level read from the line (`level=error`, or a PostgreSQL or Redis severity prefix). Read offsets are checkpointed, so a restarted collector neither loses nor repeats lines. From Git Bash on Windows, run Compose with `MSYS_NO_PATHCONV=1` so the mount path is kept.
 
 **Dashboards**, provisioned from [`observability/grafana/dashboards`](observability/grafana/dashboards) in the `Tamagotchi Go` folder:
 
@@ -2270,7 +2268,10 @@ Every container has a memory limit, and no observability port is reachable from 
 | System overview | every instance's health and utilization from Service Discovery's metrics, instances by health, evictions and recoveries, and every service's request rate and errors, from metrics and from request log lines |
 | Requests | latency percentiles and error rates per service and instance from the services' HTTP server metrics, and the same from the `request` log lines (`status`, `durationMs`) for services without metrics |
 | Message broker | request queue depth and wait time per service, the instance each delivery went to, breaker state per instance, failovers, quarantines and readmissions, events published and delivered per topic and subscriber, waiting events and dead letters |
-| Logs | every line, filtered by service, instance, level, correlation id and text; open a line in Explore and its `traceId` links to the trace |
+| Request explorer | one service at a time, from its traces: request rate, failed share and p95/p99 per operation, its recent and failed requests (a trace id opens the trace, and Related logs on any span shows every log line of that request), its error and request log lines, and the service graph |
+| Logs | every line, filtered by service, instance, level, correlation id, trace id and text, health probes hidden by default; a line's `traceId` opens its trace |
+
+**Following a request.** A trace and its logs lead to each other: in a trace, Related logs on a span opens every log line written for that request by any service; on a log line, the `traceId` field opens the trace. A span also links to its service's request rate and p95 latency. Services that log nothing for health probes (Map, Monster Raid) show up in Logs Drilldown and the dashboards only for time ranges in which they served requests.
 
 A panel stays empty until its source reports: the system overview's health and utilization need Service Discovery's metrics, and the message broker dashboard the broker's.
 

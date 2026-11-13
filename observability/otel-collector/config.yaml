@@ -1,6 +1,6 @@
 # The OpenTelemetry Collector of the platform. Services send traces and metrics over OTLP;
 # container logs are read from Docker's json-file logs. Everything leaves to one backend each:
-# traces to Jaeger, metrics to Prometheus, logs to Loki.
+# traces to Tempo, metrics to Prometheus, logs to Loki.
 
 receivers:
   otlp:
@@ -15,7 +15,7 @@ receivers:
   #   {"log": "<the line>\n", "stream": "stdout", "attrs": {"tag": "<container>"}, "time": "..."}
   # and the line itself is one JSON object in the platform schema for every service, or plain
   # text for the databases and caches.
-  filelog/docker:
+  file_log/docker:
     include: [/var/lib/docker/containers/*/*-json.log]
     # From the start of each file, with the read offsets checkpointed, so lines written before
     # the collector started are kept and a restarted collector sends nothing twice.
@@ -99,30 +99,81 @@ processors:
       - context: log
         statements:
           - replace_pattern(body, "\\s+$$", "") where IsString(body)
+          # A plain line's level is read from the line itself. A logfmt level (level=warn, as Loki,
+          # Prometheus, Tempo and Grafana write) decides on its own, whatever else the line says;
+          # only a line without one is read for a PostgreSQL or Redis severity prefix.
+          - set(attributes["level"], "ERROR") where attributes["level"] == nil and IsString(body) and IsMatch(body, "(?i)\\blevel=\"?(error|fatal|panic|crit)")
+          - set(attributes["level"], "WARN") where attributes["level"] == nil and IsString(body) and IsMatch(body, "(?i)\\blevel=\"?warn")
+          - set(attributes["level"], "DEBUG") where attributes["level"] == nil and IsString(body) and IsMatch(body, "(?i)\\blevel=\"?(debug|trace)")
+          - set(attributes["level"], "INFO") where attributes["level"] == nil and IsString(body) and IsMatch(body, "(?i)\\blevel=\"?")
+          - set(attributes["level"], "ERROR") where attributes["level"] == nil and IsString(body) and IsMatch(body, "\\b(ERROR|FATAL|PANIC):")
+          - set(attributes["level"], "WARN") where attributes["level"] == nil and IsString(body) and IsMatch(body, "\\bWARNING:|# WARNING")
           - set(attributes["level"], "INFO") where attributes["level"] == nil
           # One spelling of the platform's levels, whatever a component writes.
           - set(attributes["level"], ConvertCase(attributes["level"], "upper")) where IsString(attributes["level"])
           - set(attributes["level"], "WARN") where attributes["level"] == "WARNING"
+
+  # Services log a constant message ("request completed", "Send finished") and put the request in
+  # fields. Grafana shows a line's text, so request lines get one text built from those fields,
+  # the same for every service; the service's own message stays searchable as "message".
+  transform/line-text:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["message"], body) where attributes["event"] == "request" and (attributes["path"] != nil or attributes["operation"] != nil)
+          # An HTTP request: GET /api/v1/users/:userId/map 200 21 ms
+          - set(body, Format("%v %v %v %v ms", [attributes["method"], attributes["path"], attributes["status"], attributes["durationMs"]])) where attributes["event"] == "request" and attributes["path"] != nil and attributes["operation"] == nil
+          # A call the broker delivered: user-management POST /api/v1/oauth2/token 200 244 ms
+          - set(body, Format("%v %v %v %v ms", [attributes["serviceName"], attributes["operation"], attributes["status"], attributes["durationMs"]])) where attributes["event"] == "request" and attributes["operation"] != nil
+          - set(body, Concat([body, attributes["errorCode"]], " ")) where attributes["event"] == "request" and IsString(attributes["errorCode"]) and attributes["errorCode"] != ""
+          # A published event: event published map.proximity.detected.v1
+          - set(body, Concat([body, attributes["eventType"]], " ")) where attributes["event"] == "event_published" and IsString(attributes["eventType"])
+
+  # Health probes (Service Discovery's /status every 4 s, Docker's /health) reach each instance
+  # directly by design and are traces of their own, with no caller span. Kept, they would be
+  # most of all traces and show in the service graph as calls from "user". A trace waits here
+  # until it is complete and is dropped whole, its database spans included, if a probe started
+  # it.
+  tail_sampling/drop-probes:
+    decision_wait: 5s
+    num_traces: 50000
+    policies:
+      - name: drop-health-probes
+        type: drop
+        drop:
+          drop_sub_policy:
+            - name: probe-request
+              type: ottl_condition
+              ottl_condition:
+                error_mode: ignore
+                span:
+                  - 'kind == SPAN_KIND_SERVER and IsMatch(name, "^GET /(health|status)$")'
+                  # Map's and Monster Raid's probe handlers are untraced, so their Redis ping
+                  # arrives as a trace of its own.
+                  - 'IsRootSpan() and kind == SPAN_KIND_CLIENT and name == "ping"'
+      - name: keep-everything-else
+        type: always_sample
 
   batch:
     timeout: 2s
     send_batch_size: 1024
 
 exporters:
-  otlp/jaeger:
-    endpoint: jaeger:4317
+  otlp_grpc/tempo:
+    endpoint: tempo:4317
     tls:
       insecure: true
 
   # Prometheus's own OTLP receiver (--web.enable-otlp-receiver): service.name becomes the job
   # label and service.instance.id the instance label.
-  otlphttp/prometheus:
+  otlp_http/prometheus:
     endpoint: http://prometheus:9090/api/v1/otlp
     tls:
       insecure: true
 
   # Loki's native OTLP endpoint; which attributes are labels is set in observability/loki.
-  otlphttp/loki:
+  otlp_http/loki:
     endpoint: http://loki:3100/otlp
     tls:
       insecure: true
@@ -143,13 +194,13 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlp/jaeger]
+      processors: [memory_limiter, tail_sampling/drop-probes, batch]
+      exporters: [otlp_grpc/tempo]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/prometheus]
+      exporters: [otlp_http/prometheus]
     logs:
-      receivers: [filelog/docker]
-      processors: [memory_limiter, transform/plain-logs, batch]
-      exporters: [otlphttp/loki]
+      receivers: [file_log/docker]
+      processors: [memory_limiter, transform/plain-logs, transform/line-text, batch]
+      exporters: [otlp_http/loki]
