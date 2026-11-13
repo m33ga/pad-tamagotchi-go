@@ -26,7 +26,7 @@ When upgrading an existing `.env`, replace `GUILD_CHAT_PORT` with
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
 The gateway, Service Discovery and message broker images, `grdz/gateway:4.3.1`,
-`grdz/service-discovery:4.1.0` and `grdz/broker:4.5.1`, are pinned directly in
+`grdz/service-discovery:4.1.1` and `grdz/broker:4.5.1`, are pinned directly in
 Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v4.2.0`
 and `johnnyc05/pad-notification-service:v4.2.0`. All five export traces and metrics to
 the [observability stack](../README.md#observability).
@@ -131,7 +131,7 @@ instrumented service defaults it in code or in its image to
 `http://otel-collector:4317`. The collector, Prometheus, Loki and Grafana read
 their configuration from `observability/`; see [Observability](../README.md#observability).
 
-Service Discovery 4.1.0 exports registry health/load gauges, lifecycle counters and HTTP
+Service Discovery 4.1.1 exports registry health/load gauges, lifecycle counters and HTTP
 traces to that collector. Its resource is `service.name = service-discovery` and
 `service.instance.id = <hostname>`. The metric reader runs every 4 seconds by default;
 `OTEL_METRIC_EXPORT_INTERVAL` is an optional positive-millisecond override, and an empty
