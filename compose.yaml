@@ -40,7 +40,7 @@ services:
 
   service-discovery:
     logging: *default-logging
-    image: grdz/service-discovery:4.1.0
+    image: grdz/service-discovery:4.1.1
     pull_policy: always
     restart: unless-stopped
     # Nothing calls it from outside. It joins edge only to reach the Discord webhook,
