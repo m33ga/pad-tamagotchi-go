@@ -45,6 +45,23 @@ service Tamagotchi {
   // INVALID_ARGUMENT, NOT_FOUND, ALREADY_EXISTS `OWNERSHIP_ALREADY_TRANSFERRED`, ABORTED
   // `TAMAGOTCHI_NOT_OWNED`, FAILED_PRECONDITION `INVALID_TRANSFER`, PERMISSION_DENIED.
   rpc TransferOwnership(TransferOwnershipRequest) returns (TransferOwnershipResponse);
+
+  // Saga compensation of `GrantXp`: removes exactly the XP that grant added and recomputes the
+  // level; the grant stays recorded with its revocation. The grant is found by (`tamagotchi_id`,
+  // `source`, `reference_id`). Idempotent: a repeated call answers like the first; when no such
+  // grant exists the call succeeds with `revoked_amount` 0 and records the revocation, so a later
+  // grant with that reference is refused with FAILED_PRECONDITION `XP_GRANT_REVOKED`. Callers:
+  // battle, as a step of its settlement saga. Errors: INVALID_ARGUMENT, NOT_FOUND,
+  // PERMISSION_DENIED.
+  rpc RevokeXp(RevokeXpRequest) returns (RevokeXpResponse);
+
+  // Saga compensation of `TransferOwnership`: gives the Tamagotchi back to its previous owner with
+  // its previous role. Found by (`tamagotchi_id`, `reference_id`). Refused with FAILED_PRECONDITION
+  // `TRANSFER_SUPERSEDED` when the Tamagotchi changed owner again since. Idempotent like
+  // `RevokeXp`; a later transfer with a reverted reference is refused with FAILED_PRECONDITION
+  // `TRANSFER_REVERTED`. Callers: battle, as a step of its settlement saga. Errors:
+  // INVALID_ARGUMENT, NOT_FOUND, FAILED_PRECONDITION `TRANSFER_SUPERSEDED`, PERMISSION_DENIED.
+  rpc RevertTransfer(RevertTransferRequest) returns (RevertTransferResponse);
 }
 
 enum OwnershipRole {
@@ -165,4 +182,37 @@ message TransferOwnershipResponse {
   // Always `OWNERSHIP_ROLE_SECONDARY`.
   OwnershipRole new_ownership_role = 5;
   google.protobuf.Timestamp transferred_at = 6;
+}
+
+message RevokeXpRequest {
+  string tamagotchi_id = 1;
+  XpSource source = 2;
+  // The reference of the grant to revoke (the battle id).
+  string reference_id = 3;
+}
+
+message RevokeXpResponse {
+  string tamagotchi_id = 1;
+  // 0 when there was nothing to revoke.
+  int64 revoked_amount = 2;
+  int32 previous_level = 3;
+  int32 new_level = 4;
+  int64 total_xp = 5;
+  google.protobuf.Timestamp processed_at = 6;
+}
+
+message RevertTransferRequest {
+  string tamagotchi_id = 1;
+  // The reference of the transfer to revert (the battle id).
+  string reference_id = 2;
+}
+
+message RevertTransferResponse {
+  // The reverted transfer; absent when there was nothing to revert.
+  optional string transfer_id = 1;
+  string tamagotchi_id = 2;
+  // The owner after the revert.
+  string owner_user_id = 3;
+  OwnershipRole ownership_role = 4;
+  google.protobuf.Timestamp reverted_at = 5;
 }

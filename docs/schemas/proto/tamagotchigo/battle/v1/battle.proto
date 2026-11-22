@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package tamagotchigo.battle.v1;
+
+option csharp_namespace = "TamagotchiGo.Battle.V1";
+
+// Internal API of Battle: the callbacks of the battle settlement saga. Only the broker's saga
+// coordinator calls them, as the `on_completed` and `on_failed` calls of the plan Battle started:
+// authorize on `x-service-name: broker`. Both are idempotent by `battle_id`.
+service Battle {
+  // The settlement saga finished: the battle becomes `COMPLETED` (or `FORFEITED` when it ended by a
+  // forfeiture) and `battle.completed.v1` goes to the outbox. Errors: NOT_FOUND
+  // `BATTLE_NOT_FOUND`, FAILED_PRECONDITION `BATTLE_NOT_SETTLING` (already `VOIDED`),
+  // PERMISSION_DENIED.
+  rpc CompleteSettlement(CompleteSettlementRequest) returns (CompleteSettlementResponse);
+
+  // The settlement saga was compensated: the battle becomes `VOIDED` with the reason taken from the
+  // `x-saga-failed-step` and `x-saga-failure-reason` headers, and `battle.voided.v1` goes to the
+  // outbox. Errors: NOT_FOUND `BATTLE_NOT_FOUND`, FAILED_PRECONDITION `BATTLE_NOT_SETTLING`
+  // (already `COMPLETED` or `FORFEITED`), PERMISSION_DENIED.
+  rpc VoidSettlement(VoidSettlementRequest) returns (VoidSettlementResponse);
+}
+
+enum BattleStatus {
+  BATTLE_STATUS_UNSPECIFIED = 0;
+  BATTLE_STATUS_ACTIVE = 1;
+  BATTLE_STATUS_SETTLING = 2;
+  BATTLE_STATUS_COMPLETED = 3;
+  BATTLE_STATUS_FORFEITED = 4;
+  BATTLE_STATUS_VOIDED = 5;
+}
+
+message CompleteSettlementRequest {
+  string battle_id = 1;
+}
+
+message CompleteSettlementResponse {
+  string battle_id = 1;
+  // `BATTLE_STATUS_COMPLETED` or `BATTLE_STATUS_FORFEITED`.
+  BattleStatus status = 2;
+}
+
+message VoidSettlementRequest {
+  string battle_id = 1;
+}
+
+message VoidSettlementResponse {
+  string battle_id = 1;
+  // `BATTLE_STATUS_VOIDED`.
+  BattleStatus status = 2;
+}

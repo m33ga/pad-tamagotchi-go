@@ -41,6 +41,17 @@ service UserManagement {
   // `INSUFFICIENT_BALANCE`, PERMISSION_DENIED.
   rpc CreateBalanceTransaction(CreateBalanceTransactionRequest) returns (CreateBalanceTransactionResponse);
 
+  // Saga compensation of `CreateBalanceTransaction`: records a ledger entry with the opposite amount
+  // and reason `TRANSACTION_REASON_REVERSAL`, pointing at the entry it reverses; the original entry
+  // is never changed or deleted. The entry is found by (`user_id`, `reason`, `reference_id`). A debit
+  // reversal never fails for balance; a credit reversal may take the balance below zero, because
+  // money already handed out is taken back. Idempotent: a repeated call answers like the first and
+  // changes nothing; when no such entry exists the call succeeds without `transaction_id` and
+  // records that nothing was reversed, so a later original with that reference is refused with
+  // FAILED_PRECONDITION `TRANSACTION_REVERSED`. Callers: battle, as a step of its settlement saga.
+  // Errors: INVALID_ARGUMENT, NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
+  rpc ReverseBalanceTransaction(ReverseBalanceTransactionRequest) returns (ReverseBalanceTransactionResponse);
+
   // Mirrors `GET /api/v1/users/{userId}/packages`. Callers: any internal service.
   // Errors: NOT_FOUND `USER_NOT_FOUND`, PERMISSION_DENIED.
   rpc ListUserPackages(ListUserPackagesRequest) returns (ListUserPackagesResponse) {
@@ -68,6 +79,8 @@ enum TransactionReason {
   TRANSACTION_REASON_BATTLE_LOSS = 2;
   TRANSACTION_REASON_RAID_REWARD = 3;
   TRANSACTION_REASON_ADMIN_ADJUSTMENT = 4;
+  // Recorded by `ReverseBalanceTransaction` only; never accepted by `CreateBalanceTransaction`.
+  TRANSACTION_REASON_REVERSAL = 5;
 }
 
 message User {
@@ -162,4 +175,31 @@ message ListUserPackagesRequest {
 
 message ListUserPackagesResponse {
   repeated PackageReference packages = 1;
+}
+
+message ReverseBalanceTransactionRequest {
+  string user_id = 1;
+  // The reason of the entry to reverse, e.g. `TRANSACTION_REASON_BATTLE_REWARD`.
+  TransactionReason reason = 2;
+  // The reference of the entry to reverse (the battle id).
+  string reference_id = 3;
+}
+
+message ReverseBalanceTransactionResponse {
+  // The reversal entry; absent when there was nothing to reverse.
+  optional string transaction_id = 1;
+  // The entry it reverses; absent when there was nothing to reverse.
+  optional string reversed_transaction_id = 2;
+  // The balance of the reversed entry's currency after the reversal.
+  int64 resulting_balance = 3;
+  google.protobuf.Timestamp processed_at = 4;
+}
+
+// The `Participant.Prepare` operation `JoinPackage` of User Management, used when a user joins a
+// package (registration with `initialPackageId`, or `PUT /api/v1/users/{userId}/packages/{packageId}`):
+// adds the package reference and creates the local wallet. Refusals: NOT_FOUND `USER_NOT_FOUND`,
+// ALREADY_EXISTS `PACKAGE_ALREADY_REGISTERED`.
+message JoinPackageOperation {
+  string user_id = 1;
+  string package_id = 2;
 }

@@ -27,6 +27,29 @@ service Broker {
   // Publishes an event to a topic. Returns once the broker has stored the event; delivery to the
   // subscribing services is then the broker's job. `UNAVAILABLE` when the event store is down.
   rpc Publish(Message) returns (google.protobuf.Empty);
+
+  // Runs a two-phase commit across the listed participants and returns once it is decided.
+  // Phase 1 sends `tamagotchigo.transactions.v1.Participant/Prepare` to every participant in
+  // parallel; all accepting means `DECISION_COMMIT`, anything else `DECISION_ABORT`. The decision
+  // is logged before phase 2, and phase 2 (`Commit` or `Abort`) is retried until every
+  // participant acknowledges it, also after a broker restart. Repeating a call with the same
+  // `transaction_id` returns the recorded outcome. `INVALID_ARGUMENT` for a malformed request,
+  // `UNAVAILABLE` while the transaction log is unavailable.
+  rpc ExecuteTransaction(ExecuteTransactionRequest) returns (ExecuteTransactionResponse);
+
+  // The coordinator's decision for a transaction, for a participant holding a prepared
+  // transaction past the prepare timeout. A transaction the coordinator has no record of is
+  // `DECISION_ABORT` (presumed abort: nothing is logged `COMMIT` before every vote is in).
+  rpc GetTransactionDecision(GetTransactionDecisionRequest) returns (GetTransactionDecisionResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Stores a saga plan and returns; the broker then runs the steps in order, compensates the
+  // completed ones in reverse order when a step is refused permanently or exhausts its attempts,
+  // and finally calls the completion or the failure callback. Repeating a call with the same
+  // `saga_id` and the same plan changes nothing; a different plan under a known id is
+  // `ALREADY_EXISTS`.
+  rpc StartSaga(StartSagaRequest) returns (StartSagaResponse);
 }
 
 // One envelope for requests and events.
@@ -85,4 +108,101 @@ message Reply {
 
   // The REST response body, or the serialized gRPC response message.
   bytes body = 5;
+}
+
+// The outcome of a two-phase commit.
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  // Every participant prepared; every participant commits.
+  DECISION_COMMIT = 1;
+  // A participant refused, failed or timed out in phase 1; every participant aborts.
+  DECISION_ABORT = 2;
+  // Phase 1 is still running. Only `GetTransactionDecision` answers it.
+  DECISION_PENDING = 3;
+}
+
+// One participant of a two-phase commit.
+message TransactionParticipant {
+  // Canonical service name, e.g. `package-registry`.
+  string service = 1;
+  // The participant-defined operation name passed to `Participant.Prepare`, e.g.
+  // `RegisterUserPackage`.
+  string operation = 2;
+  // Normally `application/protobuf`.
+  string content_type = 3;
+  // The serialized operation message, e.g. a `RegisterUserPackageRequest`.
+  bytes body = 4;
+}
+
+message ExecuteTransactionRequest {
+  // UUID chosen by the initiator; also the PostgreSQL global transaction id of every prepared
+  // transaction. Derive it from the operation's idempotency key so a retried request reuses it.
+  string transaction_id = 1;
+  // Two or more participants. The initiator may be one of them.
+  repeated TransactionParticipant participants = 2;
+}
+
+message ExecuteTransactionResponse {
+  string transaction_id = 1;
+  // `DECISION_COMMIT` or `DECISION_ABORT`.
+  Decision decision = 2;
+  // On abort: the participant whose refusal or failure caused it.
+  optional string failed_service = 3;
+  // On abort: that participant's gRPC status code.
+  optional int32 failed_status = 4;
+  // On abort: its serialized `google.rpc.Status`, with the `google.rpc.ErrorInfo` whose `reason`
+  // is the business error code, so the initiator can answer its client as before.
+  optional bytes failed_status_details = 5;
+}
+
+message GetTransactionDecisionRequest {
+  string transaction_id = 1;
+}
+
+message GetTransactionDecisionResponse {
+  string transaction_id = 1;
+  Decision decision = 2;
+}
+
+// A call the saga coordinator makes on the initiator's behalf, delivered like a `Send`.
+message SagaCall {
+  // Canonical service name.
+  string service = 1;
+  // A full gRPC method name or a REST operation, as in `Message.operation`.
+  string operation = 2;
+  string content_type = 3;
+  bytes body = 4;
+  // Extra lower-case headers. The broker sets `idempotency-key` to
+  // `<saga_id>:<step>:action`, `<saga_id>:<step>:compensation` or `<saga_id>:<callback>` when it
+  // is absent, plus `x-saga-id` and `x-correlation-id` of the `StartSaga` call.
+  map<string, string> headers = 5;
+}
+
+// One step of a saga: an action and the compensation that undoes it.
+message SagaStep {
+  // Short name shown in the admin views, e.g. `credit-winner`.
+  string name = 1;
+  SagaCall action = 2;
+  SagaCall compensation = 3;
+  // Attempts of the action before the saga compensates; transient failures only. Default 5.
+  optional int32 max_attempts = 4;
+}
+
+message StartSagaRequest {
+  // UUID chosen by the initiator, normally its business reference (the battle id).
+  string saga_id = 1;
+  // Saga type for filtering and metrics, e.g. `battle-settlement`.
+  string saga_type = 2;
+  // Run in order.
+  repeated SagaStep steps = 3;
+  // Called after the last step succeeded, until acknowledged.
+  SagaCall on_completed = 4;
+  // Called after every completed step was compensated, until acknowledged. The broker adds
+  // `x-saga-failed-step` (the step name) and `x-saga-failure-reason` (the refusing service's
+  // error code, or `ATTEMPTS_EXHAUSTED`) to its headers.
+  SagaCall on_failed = 5;
+}
+
+message StartSagaResponse {
+  string saga_id = 1;
 }

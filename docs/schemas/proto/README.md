@@ -6,12 +6,14 @@ The single source of truth for every gRPC interface in Tamagotchi Go. The rules 
 
 | File | Package | Served by | Called by |
 |---|---|---|---|
-| [`tamagotchigo/broker/v1/broker.proto`](tamagotchigo/broker/v1/broker.proto) | `tamagotchigo.broker.v1` | message broker (`Broker.Send`, `Broker.Publish`) | the gateway and every service |
+| [`tamagotchigo/broker/v1/broker.proto`](tamagotchigo/broker/v1/broker.proto) | `tamagotchigo.broker.v1` | message broker (`Broker.Send`, `Broker.Publish`; the coordinator's `ExecuteTransaction`, `GetTransactionDecision`, `StartSaga`) | the gateway and every service |
 | [`tamagotchigo/events/v1/events.proto`](tamagotchigo/events/v1/events.proto) | `tamagotchigo.events.v1` | every subscribing service (`EventConsumer.Deliver`) | the broker |
 | [`tamagotchigo/usermanagement/v1/user_management.proto`](tamagotchigo/usermanagement/v1/user_management.proto) | `tamagotchigo.usermanagement.v1` | User Management | Map, Guild, Battle |
 | [`tamagotchigo/packageregistry/v1/package_registry.proto`](tamagotchigo/packageregistry/v1/package_registry.proto) | `tamagotchigo.packageregistry.v1` | Package Registry | User Management, Guild, Tamagotchi, Battle, Monster Raid |
 | [`tamagotchigo/guild/v1/guild.proto`](tamagotchigo/guild/v1/guild.proto) | `tamagotchigo.guild.v1` | Guild | Monster Raid |
 | [`tamagotchigo/tamagotchi/v1/tamagotchi.proto`](tamagotchigo/tamagotchi/v1/tamagotchi.proto) | `tamagotchigo.tamagotchi.v1` | Tamagotchi | Battle, Monster Raid |
+| [`tamagotchigo/battle/v1/battle.proto`](tamagotchigo/battle/v1/battle.proto) | `tamagotchigo.battle.v1` | Battle (saga callbacks) | the broker's transaction coordinator |
+| [`tamagotchigo/transactions/v1/participant.proto`](tamagotchigo/transactions/v1/participant.proto) | `tamagotchigo.transactions.v1` | every two-phase commit participant (User Management, Package Registry) | the broker's transaction coordinator |
 
 ## Using them in a service
 

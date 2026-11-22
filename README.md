@@ -257,7 +257,7 @@ Every service, the gateway and Service Discovery included, serves the same two e
   "service": "map",
   "instanceId": "3f9a1c2e8b11",
   "uptimeSeconds": 1423,
-  "load": { "inFlight": 12, "limit": 64, "utilization": 0.19 },
+  "load": { "cpu": 0.31, "memory": 0.42, "utilization": 0.42, "inFlight": 12, "limit": 64 },
   "dependencies": [
     { "name": "redis",           "status": "UP",   "latencyMs": 2 },
     { "name": "user-management", "status": "DOWN", "circuit": "OPEN" }
@@ -272,9 +272,11 @@ Every service, the gateway and Service Discovery included, serves the same two e
 | `service` | string | the canonical service name ([Instance Identity and Load Balancing](#instance-identity-and-load-balancing)), a compile-time constant |
 | `instanceId` | string | the container hostname |
 | `uptimeSeconds` | integer | seconds since the process started serving |
-| `load.inFlight` | integer | requests currently held by the concurrency limiter |
-| `load.limit` | integer | the service's `MAX_CONCURRENCY` |
-| `load.utilization` | number, two decimals | `inFlight / limit`, `0.0` when the limit is 0 |
+| `load.cpu` | number, two decimals | the container's CPU use as a share of its CPU limit, see below |
+| `load.memory` | number, two decimals | the container's memory working set as a share of its memory limit |
+| `load.utilization` | number, two decimals | `max(load.cpu, load.memory)`: the instance's load |
+| `load.inFlight` | integer | requests currently held by the concurrency limiter, for information |
+| `load.limit` | integer | the service's `MAX_CONCURRENCY`, for information |
 | `dependencies[].name` | string | an own datastore (`postgres`, `redis`) or a peer's canonical service name |
 | `dependencies[].status` | enum | `UP` or `DOWN` |
 | `dependencies[].latencyMs` | integer, optional | omitted when `DOWN` |
@@ -291,6 +293,24 @@ The status is computed in order, the first match winning:
 | `load.utilization` at or above `0.8` | `DEGRADED` | `200` |
 | a peer is `DOWN` or its circuit is open | `DEGRADED` | `200` |
 | otherwise | `UP` | `200` |
+
+**Load is measured from the container, not from requests in flight.** Requests in flight measure concurrency, not load: an instance whose requests wait on a slow peer looks busy while it idles, a CPU-heavy request counts as one slot, and background work (outbox relays, event consumers, workers) does not count at all. Every process therefore reads its own container's cgroup v2 files, with no Docker socket and no extra dependency:
+
+| Share | Source |
+|---|---|
+| `cpu` | the growth of `usage_usec` in `/sys/fs/cgroup/cpu.stat`, sampled every second in the background, divided by the elapsed time and by the CPU limit from `/sys/fs/cgroup/cpu.max` (quota / period; with `max`, the number of CPUs the container may use), smoothed over about 10 seconds |
+| `memory` | `memory.current` minus the `inactive_file` line of `memory.stat`, divided by `memory.max` (with `max`, the host's total memory) |
+
+Outside a container (tests, a local run) both are `0.0`. Each process also exports them as the gauges `container.cpu.utilization` and `container.memory.utilization`, which the System overview dashboard shows per instance. A share only means something against a limit, so every application container sets one in `compose.yaml`:
+
+| Containers | `cpus` | memory limit |
+|---|---:|---:|
+| User Management, Battle, Tamagotchi, Notification (C#) | 1.0 | 512M |
+| Map, Monster Raid, Guild, Package Registry (Go) | 0.5 | 256M |
+| gateway, Service Discovery (Python) | 1.0 | 384M |
+| broker | 2.0 | 1G |
+
+The memory limit must leave headroom: an idle instance should stay below 0.4 memory, or it would sit near `DEGRADED` doing nothing. An owner whose service needs more raises its limit in their own compose block and states it here.
 
 **Load never produces `DOWN`.** A saturated instance taken out of rotation pushes its share onto the others, which saturate in turn, and the service goes from slow to absent within a few intervals. Load lowers an instance's routing priority and raises an alert; it never removes it. **A failing peer never produces `DOWN` either**, because the instance can still serve everything that does not need that peer, and taking it out would spread one service's outage to another.
 
@@ -434,7 +454,7 @@ Services stay plain servers: they receive ordinary REST requests and gRPC calls 
 
 **Failover is a re-queue.** A delivery that fails in a way that counts against the instance (see [Failure Handling](#failure-handling)) is recorded in that instance's circuit breaker. If the request is safe to repeat, it goes back to the front of the queue and is delivered to another instance within its deadline; otherwise the failure becomes the reply. A request is safe to repeat when the connection was never established, when the operation is idempotent (`GET`, `PUT`, `DELETE`, or a gRPC method marked `NO_SIDE_EFFECTS`), or when it carries an `idempotency-key`.
 
-**Instance selection.** The broker reads the Service Discovery catalogue every 4 seconds, prefers `UP` instances, falls back to `DEGRADED` ones, and skips instances that are `DOWN`, quarantined or at their concurrency limit. Among them it chooses round-robin or by least load (the lowest share of the instance's limit in use, with the utilization Service Discovery last reported as a tie-break). The per-instance circuit breaker and quarantine follow the rules in [Failure Handling](#failure-handling).
+**Instance selection.** The broker reads the Service Discovery catalogue every 4 seconds, prefers `UP` instances, falls back to `DEGRADED` ones, and skips instances that are `DOWN`, quarantined or at their concurrency limit. Among them it chooses round-robin or by least load: the lowest container `utilization` Service Discovery last reported (see [Operational Endpoints](#operational-endpoints)); among instances within 0.1 of each other, the one with the lowest share of its limit the broker itself has in flight, so a value up to 8 seconds old does not send every request to the same instance. The per-instance circuit breaker and quarantine follow the rules in [Failure Handling](#failure-handling).
 
 **Identity.** Every `Send` and `Publish` carries the sender's service token as `authorization: Bearer <token>` gRPC metadata, verified against User Management's JWKS. The broker delivers the verified identity to the callee (`x-caller-kind`, `x-service-name`, `x-scopes`) and accepts a user identity only from the gateway; values a sender puts in those headers are discarded. The OAuth2 client credentials request and the JWKS read are the only `Send`s accepted without a token.
 
@@ -470,6 +490,8 @@ Services stay plain servers: they receive ordinary REST requests and gRPC calls 
 A consumer deduplicates by business reference, not only by `eventId`, returns `OK` only after its own commit, and never depends on event order. A producer whose event drives state in another service (a reward, a balance) writes it to a transactional outbox in the same transaction as its own state change, so an event is never lost between the commit and `Publish`.
 
 The broker's admin endpoints list its topics with their subscribers and queue depths, and the messages in the dead letter channel.
+
+The broker also caches the replies their owners mark cacheable ([Caching](#caching)) and coordinates two-phase commits and sagas ([Distributed Transactions](#distributed-transactions)) through three more calls on the same interface: `ExecuteTransaction`, `GetTransactionDecision` and `StartSaga`.
 
 ### Failure Handling
 
@@ -560,6 +582,8 @@ Every event is published with `Broker.Publish`: the topic is the event type, and
 | `battle.request.created.v1`, `battle.completed.v1` | battle | notification |
 | `raid.started.v1`, `raid.failed.v1` | monster-raid | notification |
 | `raid.completed.v1` | monster-raid | notification, user-management, tamagotchi |
+| `battle.voided.v1` | battle | notification |
+| `cache.invalidate.v1` | user-management, tamagotchi, guild, package-registry | none: the broker handles it itself, see [Caching](#caching) |
 
 ### Data Ownership and Storage
 
@@ -577,6 +601,182 @@ Every event is published with `Broker.Publish`: the topic is the event type, and
 MongoDB is not part of the selected architecture. An S3-compatible object store keeps blobs, images and large JSON documents. Services store only the corresponding object key or URL in their own database; Package Registry Service owns shared package and monster assets, while Tamagotchi Service stores references to creature assets.
 
 Cross-service references use resource identifiers rather than direct database access. APIs and events may include the data snapshot required to complete an operation. Package Registry Service is the authority for package definitions and registrations; User Management Service keeps only the package references needed in a user profile. Tamagotchi Service remains the authority for Tamagotchi ownership, including transfers after battles.
+
+### Replication and Failover
+
+Every database and every Redis instance that holds state has a replica and fails over on its own. Services do not change their connection strings, and every private service already runs at least two instances (User Management 2, Battle 2, Tamagotchi 2, Notification 2, Guild 2, Package Registry 2, Map 3, Monster Raid 3).
+
+**PostgreSQL: Patroni, etcd and HAProxy.** Each database is a Patroni cluster of two PostgreSQL 17 nodes, `<db>-1` and `<db>-2`, one volume each. Whichever node holds the cluster's leader lease in etcd is the primary; the other streams the primary's WAL asynchronously. One etcd cluster of three nodes (`etcd-1..3`) serves every Patroni cluster, each under its own scope. In front of each cluster an HAProxy keeps the database's old host name:
+
+| Host and port | Reaches | Use |
+|---|---|---|
+| `<db>:5432` | the node whose Patroni `/primary` answers `200` | every service connection, unchanged |
+| `<db>:5433` | the nodes whose Patroni `/replica` answers `200`, the primary as fallback | read-only: the ETL ([Analytics](#analytics)) |
+
+The clusters are `broker-db`, `user-management-db`, `battle-db`, `tamagotchi-db`, `guild-db`, `package-registry-db`, `monster-raid-db` and `notification-db`. Patroni runs with `ttl: 10`, `loop_wait: 2`, `retry_timeout: 5` and `pg_rewind` on, so a dead primary is replaced within about 10 seconds and rejoins as a replica when it comes back. `user-management-db` and `package-registry-db` set `max_prepared_transactions: 64` for [two-phase commits](#distributed-transactions). The image is `grdz/patroni` (PostgreSQL 17 with Patroni), built from `infra/patroni`; its bootstrap creates the service's user and database from the same `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` values as before, and the read-only role `analytics_reader`.
+
+**Why Patroni with etcd.** The leader holds a lease in a consensus store: without the lease there is no primary, so a network partition cannot produce two primaries, and two database nodes per cluster are enough because etcd's three nodes provide the quorum. etcd is a small Go binary implementing Raft. The alternatives were rejected: Stolon is no longer maintained, repmgr has no consensus store and its usual images are gone, pg_auto_failover's monitor is a single point of failure, ZooKeeper is a heavy JVM, and Consul is far more product than we need.
+
+**Redis: replicas and Sentinel.** `map-redis`, `monster-raid-redis` and `notification-redis` each get a replica (`<name>-replica`). Three Sentinels (`sentinel-1:26379`, `sentinel-2:26379`, `sentinel-3:26379`, quorum 2, `down-after-milliseconds 3000`) watch the three primaries under the names `map`, `monster-raid` and `notification` and promote a replica within about 5 seconds. Clients ask the Sentinels for the current primary (Go `redis.NewFailoverClient`, StackExchange.Redis with `serviceName`), so a promotion reaches them without a proxy in between. Replication is asynchronous: a write acknowledged by a primary that dies before replicating it is lost, which every one of the three tolerates (a position is resent, a lost HP decrement makes a monster slightly easier, a lost deduplication key may repeat a notification). The broker's cache nodes `cache-1..3` have no replicas, see [Caching](#caching).
+
+**What a service must handle.** On a failover, connections to the old primary drop and new connections reach the new primary through the same host name. A dropped connection may fail the request in flight, never the process: no exit, no connection pool left holding dead connections, startup that waits for the database as before. A service never pins a node and never reads from `5433`.
+
+### Caching
+
+The message broker is the system's only response cache. It sits on the path of every read that crosses it: client requests from the gateway and calls between services alike, which is where the repeated reads are (Battle reads the same user, Tamagotchi and package data on every challenge, Map reads relationships on every location update). **The owner of a reply decides whether it is cached**, through metadata on the reply; the broker never caches anything its owner did not mark.
+
+**Which requests are looked up.** REST `GET`, and gRPC methods marked `option idempotency_level = NO_SIDE_EFFECTS`. Nothing else is ever looked up or stored; `PUT` and `DELETE` are idempotent but not reads.
+
+**Reply metadata** (REST response headers, or gRPC response metadata):
+
+| Metadata | Meaning |
+|---|---|
+| `cache-control: max-age=N` | the reply may be stored for N seconds. Without it, or with `no-store` or `private`, it is never stored |
+| `cache-control: public` | the reply is the same for every caller: one entry for everyone |
+| `vary: x-user-id` | the reply depends only on the listed request headers: one entry per value |
+| `x-cache-tags: <prefix>:<id> ...` | space-separated entities the reply depends on, at most 32 |
+
+Without `public` or `vary`, the entry is keyed by every identity header the broker delivered (`x-caller-kind`, `x-user-id`, `x-service-name`), so a reply can never reach another caller. Only `200` and gRPC `OK` replies are stored, for `min(max-age, 3600)` seconds and up to 256 KiB. The broker removes `x-cache-tags` from what it returns.
+
+**What the caller sees.** A looked-up request gets `x-cache: HIT`, `MISS` (delivered, and stored if cacheable) or `BYPASS` (the cache was unavailable or switched off; delivered as usual). A hit carries the stored reply with the caller's own `x-correlation-id`, the `x-instance-id` of the instance that produced it, and `age` in seconds. The gateway passes all three to clients unchanged. A cache failure is never a request failure: the broker gives the cache 50 ms and delivers normally without it.
+
+**Invalidation.** After committing a write that changes a tagged entity, the owner publishes `cache.invalidate.v1` with `Broker.Publish` in the common envelope, `data: {"tags": ["guild:<guildId>"]}`. The broker handles this topic itself: it checks every tag's prefix against the publisher's verified name (`x-producer`), refuses the whole event with `PERMISSION_DENIED` when one prefix belongs to another service, and deletes every entry carrying an accepted tag. A read that started before the invalidation is not stored afterwards. Invalidation is not stored as an event and has no subscribers; publish it after the commit, log a failed publish and carry on, since the TTL bounds how long a missed invalidation matters. A reply may carry any service's tags, because it can depend on another service's entities; only invalidation is restricted to the owner.
+
+| Tag prefix | Owner (may invalidate) | Entity |
+|---|---|---|
+| `user:<userId>` | user-management | a user's profile, relationships and package list |
+| `tamagotchi:<tamagotchiId>` | tamagotchi | a Tamagotchi's record and combat profile |
+| `tamagotchi-owner:<userId>` | tamagotchi | the list and the primary Tamagotchi of a user |
+| `guild:<guildId>` | guild | a guild and its members |
+| `guild-user:<userId>` | guild | the guilds of a user |
+| `package:<packageId>` | package-registry | a package with its statistic definitions and battle boosts |
+| `registration:<userId>` | package-registry | a user's package registrations |
+| `raid-config:<raidConfigurationId>` | package-registry | a raid configuration |
+| `raid-schedule:<scheduleId>` | package-registry | a raid schedule |
+| `<prefix>:all` | the prefix's owner | a list reply that any create, delete or status change of that entity kind may change, e.g. `package:all` on `ListPackages` |
+
+**What is cached.** Each owner marks these reads on both transports (the REST `GET` and the gRPC method that mirrors it) and invalidates the tags on every write that changes them:
+
+| Owner | Reads | `max-age` | Keyed by | Tags |
+|---|---|---:|---|---|
+| Package Registry | `GetPackage`, `ListStatDefinitions`, `ListBattleBoosts`, `GetBattleBoost` | 300 | `public` | `package:<packageId>` |
+| Package Registry | `ListPackages`, `ListRaidConfigurations`, `ListRaidSchedules` | 60 | `public` | `package:all`, `raid-config:all`, `raid-schedule:all` |
+| Package Registry | `GetRaidConfiguration`, `GetRaidSchedule` | 300 | `public` | `raid-config:<id>`, `raid-schedule:<id>` |
+| Package Registry | `GetRegistration`, `ListUserRegistrations` | 60 | caller | `registration:<userId>` |
+| User Management | `GetUser`, `ListUserPackages` | 60 | caller | `user:<userId>` |
+| User Management | `ListRelationships`, `GetRelationship` | 60 | caller | `user:<userId>` (and `user:<otherUserId>`) |
+| Guild | `GetGuild`, `ListMembers`, `GetMember` | 60 | caller | `guild:<guildId>` |
+| Guild | `ListUserGuilds` | 60 | caller | `guild-user:<userId>` and every `guild:<guildId>` listed |
+| Tamagotchi | `GetTamagotchi`, `GetCombatProfile` | 30 | caller | `tamagotchi:<tamagotchiId>` |
+| Tamagotchi | `ListUserTamagotchis`, `GetPrimaryTamagotchi` | 30 | caller | `tamagotchi-owner:<userId>` and every `tamagotchi:<id>` listed |
+
+"Caller" means no `public` and no `vary`: one entry per verified caller. **Never cached:** balances and the ledger (money is always read fresh), `/health` and `/status`, the OAuth2 token request and the JWKS read, Map's views (a position lives 60 seconds anyway), notification history, raid state and anything read inside a [transaction or saga](#distributed-transactions) step.
+
+**Sharding.** The cache is spread over `cache-1..3` (plain Redis, no persistence, `allkeys-lru`) by a consistent-hash ring in the broker: each node owns about 150 points on a 64-bit ring, and an entry belongs to the first point clockwise of its key's hash. Adding or removing a node moves only about `1/N` of the entries, where `hash mod N` would move nearly all of them. A node that fails leaves the ring and its share misses until it refills; it rejoins empty. The nodes have no replicas, because a lost node costs misses, not data. `docs/consistent-hashing.md` compares the ring with Redis Cluster's hash slots. The broker's admin listener shows the cache: `GET /cache` (nodes, state, keys, memory, hit ratio, the last membership change and the share of keys it moved), `POST /cache/nodes` and `DELETE /cache/nodes/{node}` (loopback only, like `/topics`).
+
+**Authentication data.** Every piece of authentication data is cached where it is used, and nothing is cached for its own sake:
+
+| Data | Cached where | Why there |
+|---|---|---|
+| JWKS | in each verifier's memory (gateway, broker): 300 s, refetched at once for an unknown `kid` with a cooldown, kept when User Management is unreachable | a few hundred public bytes read by two processes; a shared cache would add a network hop and a failure mode to every token check |
+| Service tokens | in each calling service's memory until shortly before they expire | a per-caller credential: sharing it would be a leak, not a cache |
+| User and permission lookups between services | the broker's response cache (relationships, profiles, package registrations, guild membership) | the authorization reads that actually repeat on hot paths |
+| User sessions | not cached and not checked per request | the gateway is stateless by design: an access token is valid until it expires (15 minutes) and a revoked session ends at its next refresh |
+
+### Distributed Transactions
+
+The broker contains a **transaction coordinator** for the two kinds of distributed transaction the system uses: a two-phase commit when a short change must land in two databases or in neither, and a saga when a long-running process spans several services and each step can be undone. The coordinator keeps its log in `broker-db` and reaches participants only through the broker's ordinary delivery path, with the same queues, load balancing, circuit breakers, tracing and identity as any `Send`. It could run as a separate service (as Temporal or Camunda would in production) without any participant changing.
+
+| | Two-phase commit | Saga |
+|---|---|---|
+| Started with | `Broker.ExecuteTransaction`, which returns once decided | `Broker.StartSaga`, which returns once the plan is stored |
+| Used for | a user joining a package | battle settlement |
+| Participants | User Management, Package Registry | User Management, Tamagotchi; Battle receives the callbacks |
+| Isolation | locks held between the phases | none: each step commits on its own; the battle's `SETTLING` status is the semantic lock |
+| Failure | every participant rolls back | the completed steps are compensated in reverse order |
+| Admin (loopback) | `GET /transactions?state=`, `GET /transactions/{id}` | `GET /sagas?type=&state=`, `GET /sagas/{id}` |
+
+**Identity.** Calls the coordinator makes for a two-phase commit (`Prepare`, `Commit`, `Abort`) and saga callbacks carry `x-service-name: broker`; `Prepare` also carries `x-transaction-initiator`, the verified name of the service that called `ExecuteTransaction`. Saga steps and compensations are delivered **as the initiator**: with the identity of the service that called `StartSaga`, plus `x-saga-id`, so a participant authorizes them exactly as it authorizes that service's direct calls today.
+
+#### Two-phase commit
+
+The protocol is [`tamagotchigo.transactions.v1.Participant`](docs/schemas/proto/tamagotchigo/transactions/v1/participant.proto), served on the gRPC port of every participant.
+
+1. The initiator calls `ExecuteTransaction` with a `transaction_id` (a UUID derived from the operation's idempotency key, so a retry reuses it) and one `Prepare` operation per participant.
+2. **Phase 1.** The coordinator records the transaction and sends `Prepare` to every participant in parallel, within the request's deadline and at most 3 seconds. A participant runs the change in one database transaction and ends it with `PREPARE TRANSACTION '<transaction_id>'`: `OK` is a yes vote. A business refusal is a no vote, with the same status and `ErrorInfo` the equivalent direct call would return, and leaves nothing behind.
+3. **Decision.** All yes: `COMMIT` is logged. Any no vote, error or timeout: `ABORT` is logged. The decision is written before phase 2 starts.
+4. **Phase 2.** `Commit` (`COMMIT PREPARED`) or `Abort` (`ROLLBACK PREPARED`) is sent to every participant and retried until each acknowledges, also after a broker restart: on startup, decided transactions are finished and undecided ones aborted. Both calls are idempotent, and any instance may receive them for a transaction another instance prepared.
+5. `ExecuteTransaction` answers with the decision; on abort it carries the refusing participant's status and error details, which the initiator maps to its own client response as before.
+
+**In-doubt recovery.** Every participant instance checks `pg_prepared_xacts` of its own database every 10 seconds. A transaction prepared more than 30 seconds ago is resolved with `Broker.GetTransactionDecision`: `COMMIT` commits it, `ABORT` rolls it back, `PENDING` or an unreachable broker means asking again next time. A participant never decides alone. The coordinator answers `ABORT` for a transaction it has no record of, which is safe because nothing is logged `COMMIT` before every vote is in. A prepared transaction keeps its locks until it is resolved: that blocking is the protocol's known cost.
+
+**Joining a package** is the two-phase commit. Registration with `initialPackageId` and `PUT /api/v1/users/{userId}/packages/{packageId}` both run it, initiated by User Management:
+
+| Participant | `Prepare` operation | Body | Effect | No votes |
+|---|---|---|---|---|
+| user-management | `JoinPackage` | `tamagotchigo.usermanagement.v1.JoinPackageOperation` | adds the package reference and creates the local wallet; at registration, inside the transaction that creates the account | `USER_NOT_FOUND`, `PACKAGE_ALREADY_REGISTERED` |
+| package-registry | `RegisterUserPackage` | `tamagotchigo.packageregistry.v1.RegisterUserPackageRequest` | records the registration | `PACKAGE_NOT_FOUND`, `PACKAGE_NOT_ACTIVE`, `PACKAGE_ALREADY_REGISTERED` |
+
+Package Registry accepts `RegisterUserPackage` only when `x-transaction-initiator` is `user-management`. The endpoints keep their responses and error codes; the earlier sequence (call Package Registry, then write locally) is removed.
+
+#### Sagas
+
+The initiator sends the whole plan to `Broker.StartSaga`: an id, a type, the ordered steps (each an action and its compensation, ready to deliver), and a completion and a failure callback. The broker stores it and runs it in the background, recording every step's attempts and outcome, so a broker restart resumes the saga where it stood.
+
+| Outcome of an action | The coordinator |
+|---|---|
+| success | runs the next step |
+| `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, `RESOURCE_EXHAUSTED`, a broker refusal (`503`, `504`), or the REST equivalents | retries with backoff (0.5 s doubling, at most 30 s) up to the step's `max_attempts` (default 5); then compensates |
+| `INVALID_ARGUMENT`, `NOT_FOUND`, `FAILED_PRECONDITION`, `ALREADY_EXISTS`, `PERMISSION_DENIED`, `ABORTED`, or a REST `4xx` | compensates at once |
+
+Compensation runs the compensations of the completed steps in reverse order, each retried with the same backoff until it succeeds, for at most 20 attempts; a compensation that still fails leaves the saga `FAILED`, logged at `ERROR` and shown in `GET /sagas`, for manual repair. Then the failure callback is called with `x-saga-failed-step` and `x-saga-failure-reason` (the refusing service's error code, or `ATTEMPTS_EXHAUSTED`). After the last step the completion callback is called instead. Callbacks are retried until acknowledged. Saga states: `RUNNING`, `COMPENSATING`, `COMPLETED`, `COMPENSATED`, `FAILED`.
+
+**Rules for participants.** An action and its compensation are idempotent by their business reference, and each call carries an `idempotency-key` derived from the saga id and the step. A compensation of an action that never arrived succeeds, records that it ran, and makes a later arrival of that action fail with `FAILED_PRECONDITION`, so a delayed action cannot land after its undo. A compensation never deletes history: it records an opposite entry.
+
+**Battle settlement** is the saga, initiated by Battle when an action or a forfeiture ends the fight (see the [Battle Service contract](#battle-service-1)). Its id is the battle id, its type `battle-settlement`, and every reference is the battle id:
+
+| # | Step | Action | Compensation |
+|---|---|---|---|
+| 1 | `credit-winner` | User Management `CreateBalanceTransaction`, `+winnerGlobalCurrency`, `BATTLE_REWARD` | `ReverseBalanceTransaction` |
+| 2 | `debit-loser` | User Management `CreateBalanceTransaction`, `-loserGlobalCurrencyLoss`, `BATTLE_LOSS`; may be refused with `INSUFFICIENT_BALANCE` | `ReverseBalanceTransaction` |
+| 3-6 | `grant-xp-<n>` | Tamagotchi `GrantXp` for each of the four Tamagotchis, source `BATTLE` | `RevokeXp` |
+| 7 | `transfer-primary` | Tamagotchi `TransferOwnership` of the loser's primary to the winner; may be refused if it changed owner | `RevertTransfer` |
+| | completion | Battle `CompleteSettlement`: `COMPLETED` (or `FORFEITED`), `battle.completed.v1` | |
+| | failure | Battle `VoidSettlement`: `VOIDED`, `battle.voided.v1` | |
+
+The credit comes before the debit on purpose: a loser who cannot pay voids the battle and exercises the compensation path. While the saga runs, other players may already see the winner's credit; that missing isolation is the price of not holding locks across services.
+
+### Analytics
+
+A data warehouse holds the history of the game for analysis, separate from the services' operational databases.
+
+```
+<db>:5433 (a replica)  ──extract──>  Airflow (ETL)  ──load──>  ClickHouse  ──>  Grafana "Analytics"
+  analytics.* views, role analytics_reader     every 5 minutes        staging.*  →  dw.* (star schema)
+```
+
+- **Warehouse**: ClickHouse (`clickhouse`), a columnar database built for aggregations over large tables. `staging` keeps the extracted rows (`ReplacingMergeTree`, one row per key in its latest version); `dw` is a star schema of dimensions and facts, transformed with SQL inside ClickHouse.
+- **ETL**: Apache Airflow 3 running the DAGs of the `analytics` repository (image `grdz/analytics`): one extract DAG per source every 5 minutes, then a transform DAG; retries, backfills and a run history in its UI. Each owner maintains the ETL of their own source in that repository.
+- **Sources**: each service with a database publishes read-only views in a schema `analytics`, created by its own migrations, and grants `SELECT` on them to `analytics_reader`. The ETL reads only these views, only through the replica port `5433`, so it never couples to private tables and never loads a primary. A view never exposes credentials, password hashes, tokens, e-mail addresses or message contents. Changing a view's columns is a contract change.
+- **Watermarks**: every view has an `updated_at` column (`timestamptz`), set on insert and on every change of the row. The ETL reads rows with `updated_at` greater than its stored watermark minus 5 minutes (late commits with an earlier timestamp are caught by the overlap; the staging engine drops the duplicates) and advances the watermark after the load. Rows the owner deletes disappear from the view and stay in the warehouse as last loaded; entities whose end matters keep their row and set an end timestamp instead.
+
+| Service | View | Columns (key first) |
+|---|---|---|
+| User Management | `analytics.users` | `user_id`, `username`, `created_at`, `updated_at` |
+| User Management | `analytics.user_packages` | `user_id`, `package_id`, `registered_at`, `updated_at` |
+| User Management | `analytics.ledger_entries` | `entry_id`, `user_id`, `currency` (`GLOBAL`, `LOCAL`), `package_id` (null for `GLOBAL`), `amount` (signed), `reason` (`BATTLE_REWARD`, `BATTLE_LOSS`, `RAID_REWARD`, `ADMIN_ADJUSTMENT`, `REVERSAL`), `reference_id`, `reverses_entry_id` (null unless `REVERSAL`), `resulting_balance`, `created_at`, `updated_at` |
+| Battle | `analytics.battles` | `battle_id`, `battle_request_id`, `status`, `challenger_user_id`, `opponent_user_id`, `winner_user_id`, `loser_user_id`, `winner_global_currency`, `loser_global_currency_loss`, `transferred_tamagotchi_id`, `turn_count`, `void_reason`, `created_at`, `ended_at` (the fight ended), `settled_at` (completed or voided), `updated_at` |
+| Battle | `analytics.battle_combatants` | `battle_id`, `tamagotchi_id`, `user_id`, `role` (`PRIMARY`, `SECONDARY`), `xp_awarded`, `defeated`, `updated_at` |
+| Tamagotchi | `analytics.tamagotchis` | `tamagotchi_id`, `owner_user_id`, `package_id`, `combat_type`, `ownership_role`, `level`, `total_xp`, `created_at`, `updated_at` |
+| Tamagotchi | `analytics.xp_grants` | `grant_id`, `tamagotchi_id`, `owner_user_id` (at grant time), `source` (`BATTLE`, `RAID`), `reference_id`, `amount`, `previous_level`, `new_level`, `revoked_at`, `created_at`, `updated_at` |
+| Tamagotchi | `analytics.ownership_transfers` | `transfer_id`, `tamagotchi_id`, `from_user_id`, `to_user_id`, `reason`, `reference_id`, `transferred_at`, `reverted_at`, `updated_at` |
+| Guild | `analytics.guilds` | `guild_id`, `name`, `owner_id`, `required_package_id`, `member_count`, `created_at`, `deleted_at`, `updated_at` |
+| Guild | `analytics.guild_members` | `guild_id`, `user_id`, `role`, `joined_at`, `left_at` (null while a member), `updated_at`; one row per membership, kept after the member leaves |
+| Package Registry | `analytics.packages` | `package_id`, `name`, `version`, `status`, `created_at`, `updated_at` |
+| Monster Raid | `analytics.raids` | `raid_id`, `guild_id`, `schedule_id`, `raid_configuration_id`, `monster_name`, `maximum_hp`, `status`, `participant_count`, `total_damage`, `starts_at`, `ends_at`, `finished_at`, `updated_at` |
+| Monster Raid | `analytics.raid_participants` | `raid_id`, `user_id`, `tamagotchi_id`, `damage_dealt`, `global_currency_reward`, `xp_reward`, `joined_at`, `updated_at` |
+
+Map and Notification publish no views: Map keeps only the last 60 seconds of positions, and notification history is not game data.
 
 ### Logging
 
@@ -659,6 +859,8 @@ The 4.1.0 image includes .NET zero-code instrumentation; OTLP/gRPC goes to `http
 | `PUT /api/v1/users/{userId}/packages/{packageId}` | Account owner | None | `201 PackageReference` | `403`, `404 USER_OR_PACKAGE_NOT_FOUND`, `409 PACKAGE_ALREADY_REGISTERED`, `503 PACKAGE_REGISTRY_UNAVAILABLE / PEER_CIRCUIT_OPEN` |
 
 Registration accepts an omitted or null `initialPackageId`. This creates an account with `packageIds: []` and only the global wallet, without calling Package Registry. If a package is supplied, it must exist and be ACTIVE. The account owner can later join an ACTIVE package with `PUT /api/v1/users/{userId}/packages/{packageId}`, which also creates its local wallet. Existing registration requests with a package remain valid.
+
+Joining a package, at registration or later, is a [two-phase commit](#two-phase-commit) between User Management (`JoinPackage`) and Package Registry (`RegisterUserPackage`), initiated by User Management with `Broker.ExecuteTransaction`: the package reference, the local wallet and the registration commit together or not at all. User Management serves `tamagotchigo.transactions.v1.Participant` and `ReverseBalanceTransaction`, the compensation of `CreateBalanceTransaction` in [battle settlement](#sagas); a reversal is a new ledger entry with reason `REVERSAL`, never a change to the original. Its cacheable reads and the tag `user:<userId>` are listed in [Caching](#caching), its views in [Analytics](#analytics).
 
 ##### Token Issuance
 
@@ -849,7 +1051,7 @@ instead of querying each pair; it follows additional pages for larger graphs.
 | Receiver | Operation | Reason |
 |---|---|---|
 | Package Registry Service through Broker.Send | gRPC GetPackage | Validate that a package exists and is active |
-| Package Registry Service through Broker.Send | gRPC RegisterUserPackage | Make Package Registry the authority for the registration |
+| Package Registry Service through Broker.ExecuteTransaction | `Participant.Prepare` `RegisterUserPackage`, then `Commit` or `Abort` | Make Package Registry the authority for the registration, atomically with the local wallet |
 
 #### Package Registry Service
 
@@ -1052,7 +1254,7 @@ Raid attack/defense accept `0..2147483647`; duration, participant limit and batt
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Inbound | User Management Service | Read package and create/read registration | Validate and record a user's package membership |
+| Inbound | User Management Service | Read package and registrations; create the registration as a two-phase commit participant (`Participant.Prepare` `RegisterUserPackage`, delivered by the broker with `x-transaction-initiator: user-management`) | Validate and record a user's package membership |
 | Inbound | Tamagotchi Service | Read statistic definitions | Validate package-local Tamagotchi statistics |
 | Inbound | Battle Service | Read statistic and battle-boost definitions | Calculate package-specific combat bonuses |
 | Inbound | Monster Raid Service | Read statistic definitions, raid configurations, and active schedules | Calculate combat bonuses and initialize scheduled raids |
@@ -1373,7 +1575,7 @@ The transfer updates the existing Tamagotchi instead of creating a new entry. Th
 |---|---|---|---|
 | Outbound | Package Registry Service through Broker.Send | gRPC ListStatDefinitions as the `tamagotchi-service` client | Validate package-local health statistics |
 | Outbound | User Management Service through Broker.Send | REST `POST /api/v1/oauth2/token` | Obtain the service token |
-| Inbound | Battle Service through the broker | gRPC reads, GrantXp and TransferOwnership | Execute and settle PvP combat |
+| Inbound | Battle Service through the broker | gRPC reads; GrantXp, TransferOwnership and their compensations RevokeXp and RevertTransfer as steps of the settlement saga | Execute and settle PvP combat |
 | Inbound | Monster Raid Service through the broker | gRPC reads and combat profiles; `raid.completed.v1` | Calculate raid damage and distribute raid XP |
 
 #### Battle Service
@@ -1416,8 +1618,8 @@ Both use the shared error envelope. The Battle API publishes no host port;
 | `POST /api/v1/battle-requests/{battleRequestId}/responses` | Opponent | `RespondToBattleRequest` | `200 BattleRequestDecisionResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED`, `422 INVALID_SELECTION`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/battles/{battleId}` | Participant | None | `200 BattleResponse` | `403`, `404 BATTLE_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/battles?status={status}&cursor={cursor}&limit={limit}` | Account owner | Query parameters | `200 BattlePageResponse` | `400`, `403` |
-| `POST /api/v1/battles/{battleId}/actions` | Current-turn participant | `CreateBattleActionRequest` | `200 BattleActionResponse` | `400`, `403`, `404`, `409 NOT_CURRENT_TURN`, `422 INVALID_ACTION`, `503 PEER_CIRCUIT_OPEN` |
-| `POST /api/v1/battles/{battleId}/forfeitures` | Participant | None | `200 BattleResponse` | `403`, `404`, `409 BATTLE_NOT_ACTIVE`, `503 PEER_CIRCUIT_OPEN` |
+| `POST /api/v1/battles/{battleId}/actions` | Current-turn participant | `CreateBattleActionRequest` | `200 BattleActionResponse`; `202 BattleActionResponse` with the battle `SETTLING` when the action ends the fight | `400`, `403`, `404`, `409 NOT_CURRENT_TURN`, `422 INVALID_ACTION`, `503 PEER_CIRCUIT_OPEN` |
+| `POST /api/v1/battles/{battleId}/forfeitures` | Participant | None | `202 BattleResponse` with the battle `SETTLING` | `403`, `404`, `409 BATTLE_NOT_ACTIVE`, `503 PEER_CIRCUIT_OPEN` |
 
 ##### Battle Request Schemas
 
@@ -1467,7 +1669,8 @@ Both use the shared error envelope. The Battle API publishes no host port;
   "BattleResponse": {
     "battleId": "UUID string; required. Battle identifier",
     "battleRequestId": "UUID string; required. Request that created the battle",
-    "status": "ACTIVE, SETTLING, COMPLETED, or FORFEITED; required. Battle lifecycle state",
+    "status": "ACTIVE, SETTLING, COMPLETED, FORFEITED, or VOIDED; required. Battle lifecycle state",
+    "voidReason": "String or null; required. Why settlement was undone, e.g. INSUFFICIENT_BALANCE; null unless VOIDED",
     "participants": "Array of two BattleParticipant objects; required. Current state for both players",
     "currentTurnUserId": "UUID string or null; required. User allowed to act, or null after the battle ends",
     "turnNumber": "Positive integer; required. Current turn number",
@@ -1534,14 +1737,15 @@ By default, each participant's total battle XP is split 60 percent to the primar
 
 ##### Settlement Rules
 
-When combat ends, Battle Service enters `SETTLING` and performs idempotent commands using `battleId` as the business reference:
+Settlement is a [saga](#sagas) run by the broker's coordinator. When an action knocks out the last Tamagotchi, or a participant forfeits, Battle stores the battle `SETTLING` with its result, builds the plan from the peers' generated request types with `battleId` as every reference (see the battle settlement table in [Sagas](#sagas)), calls `Broker.StartSaga` with saga id `battleId`, and answers `202` with the battle. The client follows the battle with `GET /api/v1/battles/{battleId}` or the events:
 
-1. Credit the winner and debit the loser through User Management Service.
-2. Grant XP to both selected Tamagotchis through Tamagotchi Service.
-3. Transfer the loser's primary Tamagotchi to the winner through Tamagotchi Service.
-4. Mark the battle `COMPLETED` only after every required command succeeds.
+| Status | Reached when |
+|---|---|
+| `SETTLING` | the fight ended; rewards, XP and the transfer are being applied |
+| `COMPLETED`, or `FORFEITED` after a forfeiture | the broker called `CompleteSettlement`: every step succeeded; `battle.completed.v1` is published |
+| `VOIDED` | the broker called `VoidSettlement`: a step was refused (for example the loser's `INSUFFICIENT_BALANCE`) or kept failing, and every applied step was undone; `voidReason` says why and `battle.voided.v1` is published |
 
-If a dependency is unavailable, the battle remains `SETTLING` and the failed command can be retried without applying a reward twice. A completion event is published only after settlement succeeds. The existing database locks, durable step records and stored idempotency key survive process loss. Original trace context is stored in the settlement document and outbox so background retries stay linked to the initiating request.
+While a battle is `SETTLING`, further actions answer `409 BATTLE_NOT_ACTIVE`, and its Tamagotchis cannot be used in a new challenge. Battle serves `tamagotchigo.battle.v1.Battle` (`CompleteSettlement`, `VoidSettlement`) on gRPC port 9090 and registers its `grpcAddress`; both callbacks accept only `x-service-name: broker` and are idempotent. Retries, durability and resumption after a crash belong to the coordinator, so Battle keeps no settlement worker or step records of its own. The original trace context travels with the saga, so every step and callback stays in the initiating request's trace.
 
 ##### Published Queue Events
 
@@ -1553,6 +1757,18 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
   "challengerUserId": "UUID string; required. User who created the challenge",
   "opponentUserId": "UUID string; required. User who should be notified",
   "expiresAt": "UTC timestamp; required. Challenge expiration time"
+}
+```
+
+`battle.voided.v1` is published after a settlement is undone. Notification Service consumes it to notify both players that the battle counts for nothing.
+
+```json
+{
+  "battleId": "UUID string; required. Voided battle",
+  "winnerUserId": "UUID string; required. Player who would have won",
+  "loserUserId": "UUID string; required. Player who would have lost",
+  "reason": "String; required. The refusing service's error code, e.g. INSUFFICIENT_BALANCE, or ATTEMPTS_EXHAUSTED",
+  "voidedAt": "UTC timestamp; required. Time at which the battle became VOIDED"
 }
 ```
 
@@ -1577,7 +1793,8 @@ If a dependency is unavailable, the battle remains `SETTLING` and the failed com
 | Outbound through Broker.Send | User Management Service | Read users and balances; create balance transactions | Validate participants and settle currency rewards and losses |
 | Outbound through Broker.Send | Tamagotchi Service | Read combat profiles; grant XP; transfer ownership | Calculate combat and settle progression and capture rewards |
 | Outbound through Broker.Send | Package Registry Service | Read statistic and battle-boost definitions | Calculate package-specific bonuses and validate equipped boosts |
-| Broker.Publish | Notification through broker topics | Publish request and completion events | Notify challenged users and battle participants asynchronously |
+| Broker.StartSaga | the broker's coordinator, then User Management and Tamagotchi | The settlement plan, with the callbacks `CompleteSettlement` and `VoidSettlement` back to Battle | Settle rewards, XP and the transfer, or undo them all |
+| Broker.Publish | Notification through broker topics | Publish request, completion and voided events | Notify challenged users and battle participants asynchronously |
 
 ##### Tracing and Release
 
@@ -1963,6 +2180,7 @@ All messages use the common asynchronous event envelope and arrive through the b
 | `guild.invitation.created.v1` | `guild` | `inviteeUserId` | `GUILD_INVITATION` |
 | `battle.request.created.v1` | `battle` | `opponentUserId` | `BATTLE_REQUEST` |
 | `battle.completed.v1` | `battle` | `winnerUserId` and `loserUserId` | `BATTLE_RESULT` |
+| `battle.voided.v1` | `battle` | `winnerUserId` and `loserUserId` | `BATTLE_RESULT` |
 | `raid.started.v1` | `monster-raid` | `recipientUserIds` | `RAID_LIFECYCLE` |
 | `raid.completed.v1` | `monster-raid` | `participantUserIds` | `RAID_LIFECYCLE` |
 | `raid.failed.v1` | `monster-raid` | `participantUserIds` | `RAID_LIFECYCLE` |
@@ -2283,6 +2501,16 @@ Every container has a memory limit, and no observability port is reachable from 
 | Message broker | request queue depth and wait time per service, the instance each delivery went to, breaker state per instance, failovers, quarantines and readmissions, events published and delivered per topic and subscriber, waiting events and dead letters |
 | Request explorer | one service at a time, from its traces: request rate, failed share and p95/p99 per operation, its recent and failed requests (a trace id opens the trace, and Related logs on any span shows every log line of that request), its error and request log lines, and the service graph |
 | Logs | every line, filtered by service, instance, level, correlation id, trace id and text, health probes hidden by default; a line's `traceId` opens its trace |
+
+Lab 5 adds these dashboards and panels as the features land:
+
+| Dashboard | Shows |
+|---|---|
+| System overview | CPU and memory share per instance, against the `DEGRADED` threshold |
+| Message broker, Cache row | hit ratio per service, lookups by result, stores and invalidations, refused invalidations, keys and memory per cache node, the share of keys moved by each membership change |
+| Databases | the leader of every PostgreSQL cluster over time, replication lag, timeline, connections, prepared transactions and the oldest one's age, etcd health, Redis primaries and replicas |
+| Transactions | two-phase commits by decision, phase durations, no votes per participant, transactions in doubt; sagas by outcome, running and compensating, duration, retries per step, failed sagas; Battle's settlements by outcome |
+| Analytics | the ETL's runs, rows loaded and freshness per source; the warehouse; players and battles, guilds and packages, raids (read from ClickHouse) |
 
 **Following a request.** A trace and its logs lead to each other: in a trace, Related logs on a span opens every log line written for that request by any service; on a log line, the `traceId` field opens the trace. A span also links to its service's request rate and p95 latency. Services that log nothing for health probes (Map, Monster Raid) show up in Logs Drilldown and the dashboards only for time ranges in which they served requests.
 
