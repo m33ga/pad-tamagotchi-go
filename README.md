@@ -2506,6 +2506,41 @@ The collector scrapes the 16 Patroni nodes and the three etcd members. In Promet
 
 The 16 PostgreSQL nodes are limited to 192 MiB each with `shared_buffers=16MB`. Databases and caches publish no host ports. Service Discovery, Redis and observability keep their named volumes. The Redis passwords are `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`. Application images apply their migrations on startup.
 
+### Redis Replication and Cache Nodes
+
+The Redis instances that hold state run as a primary and a replica each, watched by three Sentinels, as described in [Replication and Failover](#replication-and-failover). The broker's response cache runs on three plain Redis nodes of its own, described in [Caching](#caching). All of them use `redis:8-alpine`, join only `internal` and publish no port.
+
+| Container | Role | Persistence | Memory limit |
+|---|---|---|---:|
+| `map-redis`, `monster-raid-redis`, `notification-redis` | initial primary of the Sentinel group `map`, `monster-raid`, `notification` | as before: RDB snapshots, plus the append-only file for `notification-redis`; one volume each | 256 MiB |
+| `map-redis-replica`, `monster-raid-redis-replica`, `notification-redis-replica` | replica of the group's primary (`replicaof`), promoted on failover | the same as its primary, on its own volume | 256 MiB |
+| `sentinel-1`, `sentinel-2`, `sentinel-3` | Sentinel on port `26379`, watching the three groups with quorum 2, `down-after-milliseconds 3000`, `failover-timeout 10000` | its own config file, which it rewrites with the current topology | 64 MiB |
+| `cache-1`, `cache-2`, `cache-3` | the broker's cache nodes, `maxmemory 64mb` with `allkeys-lru`, no replica | none (`save ""`, `appendonly no`) | 128 MiB |
+| `cache-4` | a fourth cache node for the sharding demo, only with the `cache-demo` profile | none | 128 MiB |
+
+Both nodes of a group take the group's password for clients (`requirepass`) and for replicating (`masterauth`), so either can be the primary. Nodes and Sentinels announce their host names rather than addresses (`replica-announce-ip`, `sentinel resolve-hostnames yes`, `sentinel announce-hostnames yes`), so a recreated container with a new address is still found. Each Sentinel writes its config file on its first start, with the passwords from `.env`; a restarted Sentinel keeps what it learned, and a recreated one starts from the initial primaries and is corrected by the other two. The data nodes have no restart policy, so a killed primary stays down until it is started again.
+
+**Clients.** The pinned Map 4.3.0, Monster Raid 4.4.1 and Notification 4.2.0 still connect to `<name>-redis:6379` directly. Until their Sentinel-aware releases ask the Sentinels for the primary (`sentinel-1:26379,sentinel-2:26379,sentinel-3:26379`, master names `map`, `monster-raid`, `notification`), a failover keeps the data but not the service: the service fails its Redis calls while `<name>-redis` is down, and once that node is back as a replica its writes fail with `READONLY` until the next failover returns the primary role to it. A full `docker compose down` and `up` also restores the initial roles: each `<name>-redis` starts as the primary again and its replica resynchronizes from it, dropping what was written to the replica while it was the primary.
+
+**Failover drill.** Kill a primary and watch a Sentinel promote its replica within about 5 seconds:
+
+```bash
+docker compose exec sentinel-1 redis-cli -p 26379 SENTINEL get-master-addr-by-name map
+# 1) "map-redis"  2) "6379"
+docker compose kill map-redis
+docker compose logs -f sentinel-1    # +sdown, +odown, +switch-master map map-redis 6379 map-redis-replica 6379
+docker compose exec sentinel-1 redis-cli -p 26379 SENTINEL get-master-addr-by-name map
+# 1) "map-redis-replica"  2) "6379"
+docker compose start map-redis       # Sentinel logs +convert-to-slave: map-redis rejoins as a replica
+docker compose exec map-redis redis-cli INFO replication    # role:slave, master_host:map-redis-replica
+```
+
+`SENTINEL replicas map` lists the replicas, and `SENTINEL ckquorum map` confirms that the three Sentinels can still authorize a failover. Every Sentinel must report the same primary; ask `sentinel-2` and `sentinel-3` the same question. Run `SENTINEL failover map` on a Sentinel to hand the primary role back without killing anything.
+
+**Cache nodes.** Start the fourth node for the sharding demo with `docker compose --profile cache-demo up -d cache-4`, and stop it with `docker compose stop cache-4`. A plain `docker compose up` never starts it.
+
+**Metrics.** The collector's Redis receivers read `INFO` from every data node, cache node and Sentinel every 15 seconds and send it to Prometheus under the job `redis`, one `instance` per container (`cache-4` is not scraped). The `Databases` dashboard shows the role of each node over time, the primaries every Sentinel watches, connected replicas, replication offsets and memory, and per cache node memory, keys and evictions.
+
 ### Observability
 
 The deployment watches itself with OpenTelemetry. All configuration lives under [`observability/`](observability) and starts with the rest of the stack in the same `docker compose up -d --wait`.
