@@ -696,7 +696,7 @@ The broker contains a **transaction coordinator** for the two kinds of distribut
 | Failure | every participant rolls back | the completed steps are compensated in reverse order |
 | Admin (loopback) | `GET /transactions?state=`, `GET /transactions/{id}` | `GET /sagas?type=&state=`, `GET /sagas/{id}` |
 
-**Identity.** Calls the coordinator makes for a two-phase commit (`Prepare`, `Commit`, `Abort`) and saga callbacks carry `x-service-name: broker`; `Prepare` also carries `x-transaction-initiator`, the verified name of the service that called `ExecuteTransaction`. Saga steps and compensations are delivered **as the initiator**: with the identity of the service that called `StartSaga`, plus `x-saga-id`, so a participant authorizes them exactly as it authorizes that service's direct calls today.
+**Identity.** Calls the coordinator makes for a two-phase commit (`Prepare`, `Commit`, `Abort`) and saga callbacks carry `x-service-name: broker`; `Prepare` also carries `x-transaction-initiator`: the client id of the service that called `ExecuteTransaction`, the same value its direct calls carry in `x-service-name` (for example `user-management-service`). Saga steps and compensations are delivered **as the initiator**: with the identity of the service that called `StartSaga` (`x-service-name: battle-service`), plus `x-saga-id`, so a participant authorizes them exactly as it authorizes that service's direct calls today.
 
 #### Two-phase commit
 
@@ -717,7 +717,7 @@ The protocol is [`tamagotchigo.transactions.v1.Participant`](docs/schemas/proto/
 | user-management | `JoinPackage` | `tamagotchigo.usermanagement.v1.JoinPackageOperation` | adds the package reference and creates the local wallet; at registration, inside the transaction that creates the account | `USER_NOT_FOUND`, `PACKAGE_ALREADY_REGISTERED` |
 | package-registry | `RegisterUserPackage` | `tamagotchigo.packageregistry.v1.RegisterUserPackageRequest` | records the registration | `PACKAGE_NOT_FOUND`, `PACKAGE_NOT_ACTIVE`, `PACKAGE_ALREADY_REGISTERED` |
 
-Package Registry accepts `RegisterUserPackage` only when `x-transaction-initiator` is `user-management`. The endpoints keep their responses and error codes; the earlier sequence (call Package Registry, then write locally) is removed.
+Package Registry accepts `RegisterUserPackage` only when `x-transaction-initiator` is `user-management-service`. The endpoints keep their responses and error codes; the earlier sequence (call Package Registry, then write locally) is removed.
 
 #### Sagas
 
@@ -1254,7 +1254,7 @@ Raid attack/defense accept `0..2147483647`; duration, participant limit and batt
 
 | Direction | Service | Operation | Reason |
 |---|---|---|---|
-| Inbound | User Management Service | Read package and registrations; create the registration as a two-phase commit participant (`Participant.Prepare` `RegisterUserPackage`, delivered by the broker with `x-transaction-initiator: user-management`) | Validate and record a user's package membership |
+| Inbound | User Management Service | Read package and registrations; create the registration as a two-phase commit participant (`Participant.Prepare` `RegisterUserPackage`, delivered by the broker with `x-transaction-initiator: user-management-service`) | Validate and record a user's package membership |
 | Inbound | Tamagotchi Service | Read statistic definitions | Validate package-local Tamagotchi statistics |
 | Inbound | Battle Service | Read statistic and battle-boost definitions | Calculate package-specific combat bonuses |
 | Inbound | Monster Raid Service | Read statistic definitions, raid configurations, and active schedules | Calculate combat bonuses and initialize scheduled raids |

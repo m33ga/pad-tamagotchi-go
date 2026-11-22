@@ -6,9 +6,9 @@ option csharp_namespace = "TamagotchiGo.Transactions.V1";
 
 // Served on its gRPC port by every service that takes part in two-phase commits (User Management
 // and Package Registry). Only the broker's transaction coordinator calls it: authorize on
-// `x-service-name: broker`. The broker also sets `x-transaction-initiator`, the verified service
-// name of the `ExecuteTransaction` caller; authorize the operation itself on that value, as the
-// equivalent direct call would be authorized on `x-service-name`.
+// `x-service-name: broker`. The broker also sets `x-transaction-initiator`, the verified client id
+// of the `ExecuteTransaction` caller (the value its direct calls carry in `x-service-name`, e.g.
+// `user-management-service`); authorize the operation itself on that value.
 //
 // The transaction id is a UUID and is used as the PostgreSQL global transaction id
 // (`PREPARE TRANSACTION '<transaction_id>'`). Any instance may receive `Commit` or `Abort` for a
