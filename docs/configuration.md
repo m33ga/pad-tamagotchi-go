@@ -81,12 +81,18 @@ Every broker setting defaults in code to its deployment value. Compose sets only
 | `BROKER_DB_USER` | Its user |
 | `BROKER_DB_PASSWORD` | Its password, a secret like the other database passwords |
 
-The event store is the `broker-db` container (`postgres:17-alpine`, internal network
-only) with its data in the `broker-db-data` volume. It holds the events queued for
+The event store is reached through `broker-db:5432` (HAProxy, internal network
+only), with two Patroni-managed PostgreSQL nodes and independent `broker-db-1-data`
+and `broker-db-2-data` volumes. It holds the events queued for
 every subscribing service and the dead letter channel, so queued events survive a
 restart of the broker or of its database. Requests and replies live only in the
 broker's memory and expire with their deadline. The broker starts once Service
 Discovery and `broker-db` are healthy, and the gateway once the broker is.
+
+Set the five infrastructure passwords in `.env.example` before starting the replicated
+databases. See [Replication and Failover](../README.md#replication-and-failover) for
+bootstrap, backups, the replica read port, timings and recovery. Existing standalone
+volumes are retained but are not automatically imported into the new clusters.
 
 The per-instance circuit breaker and quarantine belong to the broker, so the
 gateway's `GATEWAY_INSTANCE_BREAKER` setting no longer exists.

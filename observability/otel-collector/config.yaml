@@ -32,9 +32,9 @@ receivers:
           parse_from: attributes.time
           layout_type: gotime
           layout: "2006-01-02T15:04:05.999999999Z07:00"
-      # Containers of other projects carry no tag: they are not this stack's.
+      # Another checkout can use the same logging driver. Keep this project only.
       - type: filter
-        expr: 'attributes.attrs == nil or attributes.attrs.tag == nil'
+        expr: 'attributes.attrs == nil or attributes.attrs.tag == nil or not (attributes.attrs.tag startsWith "${env:COMPOSE_PROJECT_NAME}-")'
       - type: move
         from: attributes.attrs.tag
         to: resource["container.name"]
@@ -80,6 +80,69 @@ receivers:
       - type: remove
         if: 'attributes.timestamp != nil'
         field: attributes.timestamp
+
+  # Database control-plane and SQL metrics remain on the internal network.
+  prometheus/databases:
+    config:
+      scrape_configs:
+        - job_name: patroni
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['broker-db-1:8008', 'broker-db-2:8008']
+              labels:
+                cluster: broker
+            - targets: ['user-management-db-1:8008', 'user-management-db-2:8008']
+              labels:
+                cluster: user-management
+            - targets: ['battle-db-1:8008', 'battle-db-2:8008']
+              labels:
+                cluster: battle
+            - targets: ['monster-raid-db-1:8008', 'monster-raid-db-2:8008']
+              labels:
+                cluster: monster-raid
+            - targets: ['guild-db-1:8008', 'guild-db-2:8008']
+              labels:
+                cluster: guild
+            - targets: ['package-registry-db-1:8008', 'package-registry-db-2:8008']
+              labels:
+                cluster: package-registry
+            - targets: ['tamagotchi-db-1:8008', 'tamagotchi-db-2:8008']
+              labels:
+                cluster: tamagotchi
+            - targets: ['notification-db-1:8008', 'notification-db-2:8008']
+              labels:
+                cluster: notification
+        - job_name: postgres
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['broker-db-exporter:9187']
+              labels:
+                cluster: broker
+            - targets: ['user-management-db-exporter:9187']
+              labels:
+                cluster: user-management
+            - targets: ['battle-db-exporter:9187']
+              labels:
+                cluster: battle
+            - targets: ['monster-raid-db-exporter:9187']
+              labels:
+                cluster: monster-raid
+            - targets: ['guild-db-exporter:9187']
+              labels:
+                cluster: guild
+            - targets: ['package-registry-db-exporter:9187']
+              labels:
+                cluster: package-registry
+            - targets: ['tamagotchi-db-exporter:9187']
+              labels:
+                cluster: tamagotchi
+            - targets: ['notification-db-exporter:9187']
+              labels:
+                cluster: notification
+        - job_name: etcd
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['etcd-1:2379', 'etcd-2:2379', 'etcd-3:2379']
 
 processors:
   memory_limiter:
@@ -197,7 +260,7 @@ service:
       processors: [memory_limiter, tail_sampling/drop-probes, batch]
       exporters: [otlp_grpc/tempo]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, prometheus/databases]
       processors: [memory_limiter, batch]
       exporters: [otlp_http/prometheus]
     logs:

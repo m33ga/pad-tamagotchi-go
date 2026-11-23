@@ -1,0 +1,29 @@
+# Metrics absent from Patroni. The monitoring role has pg_monitor, no application writes.
+pad_postgres_prepared_transactions:
+  query: >-
+    SELECT current_database() AS database,
+           count(*) AS count,
+           COALESCE(max(EXTRACT(EPOCH FROM (clock_timestamp() - prepared))), 0) AS oldest_age_seconds
+    FROM pg_prepared_xacts WHERE database = current_database()
+  metrics:
+    - database:
+        usage: LABEL
+        description: Database holding the prepared transaction
+    - count:
+        usage: GAUGE
+        description: Open prepared transactions
+    - oldest_age_seconds:
+        usage: GAUGE
+        description: Age of the oldest prepared transaction, zero when none exist
+pad_postgres_replication_lag:
+  query: >-
+    SELECT COALESCE(max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)), 0) AS bytes,
+           COALESCE(max(EXTRACT(EPOCH FROM replay_lag)), 0) AS seconds
+    FROM pg_stat_replication
+  metrics:
+    - bytes:
+        usage: GAUGE
+        description: Largest acknowledged standby replay lag in bytes
+    - seconds:
+        usage: GAUGE
+        description: Largest acknowledged standby replay lag in seconds
