@@ -606,73 +606,16 @@ Cross-service references use resource identifiers rather than direct database ac
 
 Every database and every Redis instance that holds state has a replica and fails over on its own. Services do not change their connection strings, and every private service already runs at least two instances (User Management 2, Battle 2, Tamagotchi 2, Notification 2, Guild 2, Package Registry 2, Map 3, Monster Raid 3).
 
-**PostgreSQL: Patroni, etcd and HAProxy.** Each database has two PostgreSQL 17.12 nodes managed by Patroni 4.1.5. A shared three-member etcd 3.6.17 cluster stores independent leader leases under `/patroni/<service>/`. Each node has its own data volume; one is primary and the other streams WAL asynchronously. HAProxy 3.2.27 keeps the previous database service name:
+**PostgreSQL: Patroni, etcd and HAProxy.** Each database is a Patroni cluster of two PostgreSQL 17 nodes, `<db>-1` and `<db>-2`, one volume each. Whichever node holds the cluster's leader lease in etcd is the primary; the other streams the primary's WAL asynchronously. One etcd cluster of three nodes (`etcd-1..3`) serves every Patroni cluster, each under its own scope. In front of each cluster an HAProxy keeps the database's old host name:
 
 | Host and port | Reaches | Use |
 |---|---|---|
-| `<service>-db:5432` | the node whose Patroni `/primary` answers `200` | service connection strings, unchanged |
-| `<service>-db:5433` | a streaming `/replica`, with the primary as fallback | ETL reads using `analytics_reader` |
+| `<db>:5432` | the node whose Patroni `/primary` answers `200` | every service connection, unchanged |
+| `<db>:5433` | the nodes whose Patroni `/replica` answers `200`, the primary as fallback | read-only: the ETL ([Analytics](#analytics)) |
 
-The eight clusters are `broker`, `user-management`, `battle`, `monster-raid`, `guild`, `package-registry`, `tamagotchi` and `notification`. Every cluster has `<service>-db-1`, `<service>-db-2`, `<service>-db` (HAProxy), and `<service>-db-exporter`. Neither PostgreSQL nor the Patroni administration API is published on the host. HAProxy checks roles every second and closes sessions to a backend that loses its role; it does not replay a failed SQL transaction. Clients reconnect through the same address after promotion.
+The clusters are `broker-db`, `user-management-db`, `battle-db`, `tamagotchi-db`, `guild-db`, `package-registry-db`, `monster-raid-db` and `notification-db`. Patroni runs with `ttl: 10`, `loop_wait: 2`, `retry_timeout: 5` and `pg_rewind` on, so a dead primary is replaced within about 10 seconds and rejoins as a replica when it comes back. `user-management-db` and `package-registry-db` set `max_prepared_transactions: 64` for [two-phase commits](#distributed-transactions). The image is `grdz/patroni` (PostgreSQL 17 with Patroni), built from `infra/patroni`; its bootstrap creates the service's user and database from the same `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` values as before, and the read-only role `analytics_reader`.
 
-**Timings and durability.** The supported settings are `ttl: 20`, `loop_wait: 2`, `retry_timeout: 5`, `primary_start_timeout: 0`. Patroni requires `ttl >= 20` and `loop_wait + 2 * retry_timeout <= ttl`; the initially proposed `10/2/5` is not a supported configuration. A killed container normally requires expiry of the existing lease before promotion, so budget approximately 20 seconds plus health-check/reconnection time, not a guaranteed 10 seconds. The local measured result is recorded below after the failover tests. `pg_rewind`, WAL hints and data checksums allow a restarted former primary to rejoin; Patroni can reclone it if rewind cannot repair a divergent timeline.
-
-Replication is asynchronous: a commit not yet received by the standby can be lost at failover, including a prepared transaction. The failover tests wait for the tested WAL to be replayed before the crash; they demonstrate replicated-state survival, not zero data loss for arbitrary writes. The two participant clusters, `user-management` and `package-registry`, set `max_prepared_transactions: 64`; the other six keep it disabled. Their coordinators must still perform the recovery described in [Distributed Transactions](#distributed-transactions).
-
-**Why Patroni and etcd.** Patroni manages replication, promotion and rejoin; etcd's Raft quorum owns the leader lease, independently of the two database nodes. Loss of the quorum prevents a new election and a healthy Patroni process demotes a primary that cannot renew its lease. This is preferable here to an unmaintained Stolon deployment, repmgr without a consensus service, or an additional single monitor. ZooKeeper and Consul add components this topology does not otherwise need. A container-only deployment has no mandatory hardware watchdog/fencing: it does not claim protection against every frozen-agent/paused-host failure, and the single HAProxy per cluster and single Docker host remain separate availability limits.
-
-**Bootstrap and credentials.** `infra/patroni` builds `grdz/patroni:5.0.0`; its workflow tests the image before publishing the version and `latest` on a main merge. The generated per-node configuration is private (0600). Bootstrap creates the existing `POSTGRES_USER`/`POSTGRES_DB`, a non-superuser owner, plus `analytics_reader` and `monitoring`. Set the five new password entries in `.env.example` in your private `.env`; never use an infrastructure role name as the service's `POSTGRES_USER`. These role credentials are initialized once, not silently rotated when an environment variable changes. `analytics_reader` defaults to read-only transactions and receives only `CONNECT` until service migrations grant schema usage and SELECT on their `analytics` views. The exporter has `pg_monitor` and no application write grants. Port 5433 is a routing preference, not an authorization boundary; use the reader role even when it falls back to the primary.
-
-**Existing data: back up before changing the topology.** New Patroni volumes intentionally do not mount the old standalone database volumes. A fresh start is empty; do not run this branch over a populated deployment expecting an in-place conversion. Stop all writers, take and verify a dump of every database from the old checkout, then start the new clusters, restore with `--no-owner --no-privileges` as the existing service owner, and verify data before restarting writers. Keep the old volumes and dumps for rollback. For example, while the old Guild database container is still running:
-
-```sh
-# From the OLD deployment, after stopping its Guild writers:
-docker compose exec -T guild-db sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > guild-before-ha.dump
-# After switching to this checkout and starting the new Guild cluster:
-docker compose exec -T guild-db-1 sh -c 'export PGPASSWORD="$POSTGRES_PASSWORD"; exec pg_restore -h guild-db -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-privileges' < guild-before-ha.dump
-```
-
-Repeat the backup/restore for every cluster. Do not delete old volumes as part of this change. Rollback uses the previous checkout and its original volumes after stopping the HA writers; newly written HA data needs its own verified dump before rolling back.
-
-**Run a failover.** First verify one leader and one streaming replica, then kill the leader named in the output (it may be either node). Patroni nodes use `restart: "no"` so a killed node remains down until the explicit recovery step; Patroni supervises the PostgreSQL process inside each running node.
-
-```sh
-docker compose up -d --build --wait guild-db guild-db-exporter
-docker compose exec -u postgres guild-db-1 patronictl list
-# Replace guild-db-1 below if patronictl shows guild-db-2 as leader.
-docker compose kill -s SIGKILL guild-db-1
-# New connections to guild-db:5432 reach the promoted node after the election.
-docker compose start guild-db-1
-docker compose exec -u postgres guild-db-2 patronictl list
-```
-
-The image tests in `infra/patroni/tests` check routing, the restricted analytics role, a crash, preserved replayed data, primary fallback on 5433 and automatic rejoin. The UMS/Registry scenarios additionally commit a replicated prepared transaction after promotion and check rollback. `gateway.py` creates resources through the public API, kills the Guild/Registry primary, then verifies reads and new writes with the same application containers and restart counts. Run these only in a dedicated test project as documented in that directory; they never target another Compose project or remove volumes.
-
-**Measured locally, 2026-11-23 (Docker Desktop, Apple Silicon).** The Guild pilot passed before the other seven clusters were started. With the final ARM64 image, all eight crash/rejoin tests passed:
-
-| Cluster | Promotion reachable through the write proxy |
-|---|---:|
-| Broker | 19.77 s |
-| User Management | 19.72 s |
-| Battle | 20.78 s |
-| Monster Raid | 21.63 s |
-| Guild | 19.51 s |
-| Package Registry | 21.25 s |
-| Tamagotchi | 19.26 s |
-| Notification | 19.96 s |
-
-Both participant clusters preserved the explicitly replayed prepared transaction, committed it after promotion, rolled back a second one, and exported the changing count/age. Public Guild and Package Registry reads and writes recovered in 28.93 s and 28.19 s respectively, including broker/client recovery; no application container restarted. The five image configuration tests passed on both ARM64 and amd64; the live database and application scenarios ran on ARM64. All 12 Databases dashboard expressions returned real series and Prometheus recorded leader changes. These measurements do not establish a worst-case recovery guarantee.
-
-**Database monitoring.** The collector scrapes all 16 Patroni `/metrics` endpoints, eight PostgreSQL exporters through the stable primary proxies, and all three etcd members. Grafana's **Databases** dashboard shows the primary per node over time, timeline, WAL replay lag in bytes/seconds, connections, transactions per second, open prepared transactions and their oldest age, plus etcd member/leader health. Prepared-transaction metrics come from SQL (`pg_prepared_xacts`), not Patroni. All endpoints stay internal.
-
-| Component | Per-container CPU limit | Per-container memory limit |
-|---|---:|---:|
-| PostgreSQL + Patroni (16 nodes) | 0.5 | 256M (`shared_buffers=16MB`) |
-| etcd (3 members) | 0.5 | 128M |
-| HAProxy (8 proxies) | 0.25 | 64M |
-| PostgreSQL exporter (8) | 0.1 | 64M |
-
-These are limits, not reserved memory. Two local snapshots with all **64 containers** of this PR running measured **3988.9–3999.8 MiB** (about 3.90 GiB) using `docker stats --no-stream`; the later snapshot included 1294.8 MiB for the database infrastructure and 2694.0 MiB for applications, caches and observability. Docker Desktop had 10 CPUs and 8319504384 bytes (7.75 GiB) of RAM. The 17 containers of unrelated projects were excluded from these sums and were left running. This is the current Compose topology (Lab 4 application images plus PostgreSQL HA), without the future Sentinel/cache-node, ClickHouse, Airflow and ETL additions. It is a light-workload working-set snapshot, not peak memory or a reservation budget. The simultaneous full startup required staged retries after temporary DNS/resource failures in the existing C# images; a single clean full-stack `up --wait` was not proven on this busy host. Validate that separately on the final integrated topology.
+**Why Patroni with etcd.** The leader holds a lease in a consensus store: without the lease there is no primary, so a network partition cannot produce two primaries, and two database nodes per cluster are enough because etcd's three nodes provide the quorum. etcd is a small Go binary implementing Raft. The alternatives were rejected: Stolon is no longer maintained, repmgr has no consensus store and its usual images are gone, pg_auto_failover's monitor is a single point of failure, ZooKeeper is a heavy JVM, and Consul is far more product than we need.
 
 **Redis: replicas and Sentinel.** `map-redis`, `monster-raid-redis` and `notification-redis` each get a replica (`<name>-replica`). Three Sentinels (`sentinel-1:26379`, `sentinel-2:26379`, `sentinel-3:26379`, quorum 2, `down-after-milliseconds 3000`) watch the three primaries under the names `map`, `monster-raid` and `notification` and promote a replica within about 5 seconds. Clients ask the Sentinels for the current primary (Go `redis.NewFailoverClient`, StackExchange.Redis with `serviceName`), so a promotion reaches them without a proxy in between. Replication is asynchronous: a write acknowledged by a primary that dies before replicating it is lost, which every one of the three tolerates (a position is resent, a lost HP decrement makes a monster slightly easier, a lost deduplication key may repeat a notification). The broker's cache nodes `cache-1..3` have no replicas, see [Caching](#caching).
 
@@ -2516,11 +2459,36 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 ### Storage
 
-Databases and caches have no host ports; inspect them through a Patroni node, for example `docker compose exec -u postgres user-management-db-1 patronictl list`. The stable `*-db` containers are HAProxy instances, not SQL shells. The broker's event store, `broker-db`, takes its credentials from `BROKER_DB_NAME`, `BROKER_DB_USER` and `BROKER_DB_PASSWORD` in `.env`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+Eight databases (broker, User Management, Battle, Monster Raid, Guild, Package Registry, Tamagotchi and Notification) each have two Patroni-managed PostgreSQL nodes with separate volumes. Three etcd members share the leadership leases by quorum, and Patroni handles promotion and rejoin with `pg_rewind`. Replication is asynchronous, so a write that has yet to reach the standby can be lost. The 20 s etcd lease, 2 s loop and 5 s retry timeout give roughly 20 s to promote after a crash.
 
-Data persists in 28 active named volumes: two per PostgreSQL cluster (16), three for etcd, one for Service Discovery, three for Redis, and five for observability. `broker-db-1-data` and `broker-db-2-data` hold the replicated event store, so queued events survive broker/database restarts. The eight old standalone database volumes are no longer declared or mounted by this Compose model; they remain available for the documented backup/rollback procedure. `docker compose down` keeps current volumes; `docker compose down --volumes` deletes the data in the current model. Never use it on a deployment whose data you need to retain.
+| Internal endpoint | Routes to |
+|---|---|
+| `<service>-db:5432` | Current primary, using the existing application connection string |
+| `<service>-db:5433` | Replica, with primary fallback while the replica is down |
 
-No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, Guild and Package Registry ship idempotent migrations inside their images, and the broker applies its own ordered SQL migrations at startup.
+Set the three PostgreSQL HA passwords in `.env.example` in your `.env`. The service database owner retains its previous privileges. For ETL use `analytics_reader` on 5433 with read-only transactions and SELECT grants from service migrations. Only User Management and Package Registry enable 64 prepared transactions. Inspect them with `SELECT * FROM pg_prepared_xacts;`. Patroni REST and PostgreSQL stay on the internal network.
+
+**Upgrading from standalone PostgreSQL.** Run `docker compose down` in the old checkout, then start the new deployment. The new PostgreSQL volumes start empty. Back up data you need first, and use `docker volume rm` on the old database volumes only once you have verified they can be discarded.
+
+**Guild failover drill.** On the lab stack, log in via the Guild Postman collection, create a guild and verify `GET /guild/api/v1/guilds/{guildId}` returns 200 through the gateway. Run:
+
+```bash
+docker compose exec guild-db-1 patronictl list
+# Example if guild-db-1 is the leader. Swap node numbers if guild-db-2 leads.
+docker compose kill -s SIGKILL guild-db-1
+docker compose exec guild-db-2 patronictl list
+```
+
+Repeat the list until node 2 is Leader, then repeat the gateway GET and expect 200. The killed node uses `restart: "no"`, so start it manually and repeat the list until node 1 is a streaming replica:
+
+```bash
+docker compose start guild-db-1
+docker compose exec guild-db-2 patronictl list
+```
+
+The collector scrapes the 16 Patroni nodes and the three etcd members. In Prometheus, `patroni_primary` shows leader changes. Compare the primary's `patroni_xlog_location` with the standby's `patroni_xlog_replayed_location` to see WAL replay lag.
+
+The 16 PostgreSQL nodes are limited to 192 MiB each with `shared_buffers=16MB`. Databases and caches publish no host ports. Service Discovery, Redis and observability keep their named volumes. The Redis passwords are `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`. Application images apply their migrations on startup.
 
 ### Observability
 

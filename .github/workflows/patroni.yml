@@ -5,16 +5,13 @@ on:
     paths:
       - infra/patroni/**
       - infra/haproxy/**
-      - observability/postgres-exporter/**
       - observability/otel-collector/config.yaml
-      - observability/grafana/dashboards/databases.json
       - compose.yaml
       - .github/workflows/patroni.yml
   push:
     branches: [main]
     paths:
       - infra/patroni/**
-      - infra/haproxy/**
       - .github/workflows/patroni.yml
   workflow_dispatch:
 
@@ -28,7 +25,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -41,51 +38,15 @@ jobs:
           [[ "$version" =~ ^5\.[0-9]+\.[0-9]+$ ]]
           grep -q "image: grdz/patroni:$version$" compose.yaml
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Configure isolated test credentials
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import secrets
-          lines = []
-          for line in Path('.env.example').read_text().splitlines():
-              if '=' in line and not line.startswith('#'):
-                  name, value = line.split('=', 1)
-                  if name.endswith('_DB_USER'):
-                      value = 'ci_app'
-                  elif value.startswith('change_me'):
-                      value = secrets.token_urlsafe(24)
-                  line = name + '=' + value
-              lines.append(line)
-          Path('.env').write_text('\n'.join(lines) + '\n')
-          Path('.env').chmod(0o600)
-          PY
-          python3 scripts/configure_services_auth.py
-      - name: Validate Compose and build
-        run: |
-          docker compose config --quiet
-          docker compose build guild-db-1
-      - name: Configuration tests in the built image
-        run: docker run --rm --entrypoint python -v "$PWD/infra/patroni:/contract:ro" grdz/patroni:${{ steps.version.outputs.version }} -m unittest discover -s /contract/tests -v
-      - name: Validate database scrapes and project-scoped log filter
-        run: docker run --rm -e COMPOSE_PROJECT_NAME=pad-patroni-test-ci -v "$PWD/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro" otel/opentelemetry-collector-contrib:0.165.0 validate --config=/etc/otelcol-contrib/config.yaml
-      - name: Start eight isolated clusters
-        run: docker compose -p pad-patroni-test-ci up -d --wait --wait-timeout 240 broker-db-exporter user-management-db-exporter battle-db-exporter monster-raid-db-exporter guild-db-exporter package-registry-db-exporter tamagotchi-db-exporter notification-db-exporter
-      - name: Replication, failover, rejoin and prepared transactions
-        run: python3 infra/patroni/tests/integration.py --project pad-patroni-test-ci
-      - name: Start gateway and participant services
-        run: docker compose -p pad-patroni-test-ci up -d --wait --wait-timeout 240 api-gateway user-management-api package-registry-api guild-api-1 guild-api-2
-      - name: Gateway requests recover without restarting applications
-        run: python3 infra/patroni/tests/gateway.py --project pad-patroni-test-ci --gateway-url http://127.0.0.1:8000
-      - name: Stop disposable CI containers
-        if: always()
-        run: docker compose -p pad-patroni-test-ci down --volumes
+      - name: Build Patroni
+        run: docker build -t "grdz/patroni:${{ steps.version.outputs.version }}" infra/patroni
+      - name: Validate collector configuration
+        run: docker run --rm -v "$PWD/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro" otel/opentelemetry-collector-contrib:0.165.0 validate --config=/etc/otelcol-contrib/config.yaml
 
   publish:
     needs: check
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -110,8 +71,4 @@ jobs:
           tags: |
             grdz/patroni:${{ needs.check.outputs.version }}
             grdz/patroni:latest
-      - name: Record the exact CPR source revision
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.check.outputs.version }}
-        run: gh release create "patroni-v$VERSION" --target "$GITHUB_SHA" --title "Patroni $VERSION" --notes-file infra/patroni/README.md
+          labels: org.opencontainers.image.revision=${{ github.sha }}

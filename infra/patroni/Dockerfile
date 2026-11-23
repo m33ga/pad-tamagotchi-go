@@ -3,18 +3,16 @@ FROM postgres:17.12-bookworm@sha256:837bed18782820fe967067cb5328b02b0d9992c1be9a
 RUN apt-get update \
     && apt-get install --no-install-recommends -y python3 python3-venv ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && python3 -m venv /opt/patroni
-COPY requirements.txt /opt/patroni/requirements.txt
-RUN /opt/patroni/bin/pip install --no-cache-dir -r /opt/patroni/requirements.txt
+    && python3 -m venv /opt/patroni \
+    && /opt/patroni/bin/pip install --no-cache-dir 'patroni[etcd3,psycopg3]==4.1.5'
 
 ENV PATH="/opt/patroni/bin:${PATH}" \
-    PGDATA=/var/lib/postgresql/data/pgdata \
-    PATRONICTL_CONFIG_FILE=/run/patroni/patroni.yml
-COPY patroni.yml /etc/patroni/patroni.yml
-COPY configure.py bootstrap.py entrypoint.sh /usr/local/bin/
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/bootstrap.py \
-    && install -d -o postgres -g postgres -m 700 /run/patroni
+    PATRONICTL_CONFIG_FILE=/etc/patroni/patroni.yml
+COPY patroni.yml patroni-participant.yml /etc/patroni/
+COPY --chmod=755 bootstrap.sh /usr/local/bin/bootstrap.sh
 
+USER postgres
 EXPOSE 5432 8008
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["patroni"]
+CMD ["/etc/patroni/patroni.yml"]

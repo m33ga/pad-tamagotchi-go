@@ -1,5 +1,5 @@
 # Metrics arrive from the OpenTelemetry Collector through Prometheus's OTLP receiver
-# (--web.enable-otlp-receiver); the Collector also scrapes Patroni, PostgreSQL and etcd.
+# (--web.enable-otlp-receiver): nothing is scraped but Prometheus itself.
 global:
   scrape_interval: 15s
 
