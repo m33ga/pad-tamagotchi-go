@@ -79,12 +79,18 @@ def metric_value(metrics, name):
 def test_cluster(p, cluster):
     print('\nTesting ' + cluster, flush=True)
     first = cluster + '-db-1'
-    members = p.members(first)
+    def ready_members():
+        members = p.members(first)
+        if (any(m['role'] == 'leader' for m in members)
+                and any(m['role'] == 'replica' and m['state'] == 'streaming' for m in members)):
+            return members
+        return None
+    members = wait(ready_members, seconds=120)
     leader = next(m['name'] for m in members if m['role'] == 'leader')
     replica = next(m['name'] for m in members if m['role'] == 'replica' and m['state'] == 'streaming')
     initial_timeline = next(m['timeline'] for m in members if m['name'] == leader)
     assert p.sql(replica, cluster, 'SELECT pg_is_in_recovery()') == [[False]]
-    assert p.sql(replica, cluster, 'SELECT pg_is_in_recovery()', port=5433) == [[True]]
+    wait(lambda: p.sql(replica, cluster, 'SELECT pg_is_in_recovery()', port=5433) == [[True]], seconds=15)
     print('PASS one leader, one streaming replica; :5432 writes, :5433 replica', flush=True)
     p.sql(replica, cluster, 'CREATE SCHEMA IF NOT EXISTS infra_probe; CREATE TABLE IF NOT EXISTS infra_probe.rows (id text PRIMARY KEY)')
     marker = str(uuid.uuid4())
@@ -115,7 +121,7 @@ def test_cluster(p, cluster):
         wait(lambda: p.sql(replica, cluster, 'SELECT pg_is_in_recovery()') == [[False]], seconds=45)
         elapsed = round(time.monotonic() - started, 2)
         assert p.sql(replica, cluster, 'SELECT count(*) FROM infra_probe.rows WHERE id=%s', [marker]) == [[1]]
-        assert p.sql(replica, cluster, 'SELECT pg_is_in_recovery()', port=5433, role='analytics_reader') == [[False]]
+        wait(lambda: p.sql(replica, cluster, 'SELECT pg_is_in_recovery()', port=5433, role='analytics_reader') == [[False]], seconds=15)
         assert p.sql(replica, cluster, 'SHOW transaction_read_only', port=5433, role='analytics_reader') == [['on']]
         print('PASS crash failover through unchanged proxy in ' + str(elapsed) + ' s; read fallback works', flush=True)
         if prepared:
@@ -145,7 +151,9 @@ def test_cluster(p, cluster):
         return next((m for m in members if m['name'] == leader and m['role'] == 'replica' and m['state'] == 'streaming'), None)
     member = wait(rejoined, seconds=120)
     assert member['timeline'] > initial_timeline
-    assert p.sql(replica, cluster, 'SELECT pg_is_in_recovery()', port=5433) == [[True]]
+    # Patroni's state and HAProxy's independent 1 s health-check cycle converge
+    # separately. Prove replica routing resumes, rather than assuming it is instant.
+    wait(lambda: p.sql(replica, cluster, 'SELECT pg_is_in_recovery()', port=5433) == [[True]], seconds=15)
     p.sql(replica, cluster, 'INSERT INTO infra_probe.rows VALUES (%s)', [str(uuid.uuid4())])
     print('PASS former leader rejoined as streaming replica on timeline ' + str(member['timeline']), flush=True)
     return {'cluster':cluster, 'oldLeader':leader, 'newLeader':replica, 'failoverSeconds':elapsed, 'preparedTransactions':prepared}
