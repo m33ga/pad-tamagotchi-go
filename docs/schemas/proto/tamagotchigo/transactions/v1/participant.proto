@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package tamagotchigo.transactions.v1;
+
+option csharp_namespace = "TamagotchiGo.Transactions.V1";
+
+// Served on its gRPC port by every service that takes part in two-phase commits (User Management
+// and Package Registry). Only the broker's transaction coordinator calls it: authorize on
+// `x-service-name: broker`. The broker also sets `x-transaction-initiator`, the verified client id
+// of the `ExecuteTransaction` caller (the value its direct calls carry in `x-service-name`, e.g.
+// `user-management-service`); authorize the operation itself on that value.
+//
+// The transaction id is a UUID and is used as the PostgreSQL global transaction id
+// (`PREPARE TRANSACTION '<transaction_id>'`). Any instance may receive `Commit` or `Abort` for a
+// transaction another instance prepared.
+service Participant {
+  // Runs the operation in one database transaction and ends it with `PREPARE TRANSACTION`, holding
+  // its locks until `Commit` or `Abort`. `OK` is a yes vote. A business refusal is a no vote: the
+  // usual status and `google.rpc.ErrorInfo` of the equivalent direct call, with nothing left behind.
+  // Repeating `Prepare` for a transaction already prepared answers `OK` again. An unknown
+  // `operation` is `INVALID_ARGUMENT`.
+  rpc Prepare(PrepareRequest) returns (PrepareResponse);
+
+  // `COMMIT PREPARED`. Idempotent: a transaction that is no longer prepared answers `OK`.
+  rpc Commit(CommitRequest) returns (CommitResponse);
+
+  // `ROLLBACK PREPARED`, or rolls back the open transaction if `Prepare` is still running.
+  // Idempotent: a transaction that is not prepared answers `OK`.
+  rpc Abort(AbortRequest) returns (AbortResponse);
+}
+
+message PrepareRequest {
+  string transaction_id = 1;
+  // The participant-defined operation, e.g. `JoinPackage` for User Management or
+  // `RegisterUserPackage` for Package Registry.
+  string operation = 2;
+  // Normally `application/protobuf`.
+  string content_type = 3;
+  // The serialized operation message, e.g. a `tamagotchigo.packageregistry.v1.RegisterUserPackageRequest`.
+  bytes body = 4;
+}
+
+message PrepareResponse {}
+
+message CommitRequest {
+  string transaction_id = 1;
+}
+
+message CommitResponse {}
+
+message AbortRequest {
+  string transaction_id = 1;
+}
+
+message AbortResponse {}
