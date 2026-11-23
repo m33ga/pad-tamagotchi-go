@@ -11,8 +11,14 @@ x-logging: &default-logging
 services:
   api-gateway:
     logging: *default-logging
-    image: grdz/gateway:4.3.1
+    image: grdz/gateway:5.0.0
     pull_policy: always
+    # /status reports load as a share of these limits (README, Operational Endpoints).
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 384M
     # Client traffic arrives on edge; the services and the registry are on internal.
     networks: [edge, internal]
     ports:
@@ -40,8 +46,13 @@ services:
 
   service-discovery:
     logging: *default-logging
-    image: grdz/service-discovery:4.1.1
+    image: grdz/service-discovery:5.0.0
     pull_policy: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 384M
     restart: unless-stopped
     # Nothing calls it from outside. It joins edge only to reach the Discord webhook,
     # because the internal network has no route to the internet, and its port is
@@ -67,8 +78,13 @@ services:
 
   broker:
     logging: *default-logging
-    image: grdz/broker:4.5.1
+    image: grdz/broker:5.2.0
     pull_policy: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
     restart: unless-stopped
     # Carries every client request, every call between services and every event:
     # gRPC on 9090 and health, status and admin on 8080, both on the internal network.
@@ -202,18 +218,25 @@ services:
 
   map-api:
     logging: *default-logging
-    image: grdz/map-service:4.3.0
+    image: grdz/map-service:5.0.0
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
     # replicas. Each one registers itself with Service Discovery at startup.
     deploy:
       replicas: 3
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     networks: [internal]
     env_file:
       - .env
       - ./secrets/map-service.env
     environment:
+      # Plain Redis until the Sentinels are in this stack (#136); an empty list turns
+      # Sentinel discovery off and uses REDIS_ADDR.
+      MAP_REDIS_SENTINELS: ""
       REDIS_ADDR: map-redis:6379
       REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
       # Below the gateway's 5 second upstream timeout, so a slow request ends
@@ -252,13 +275,17 @@ services:
 
   monster-raid-api:
     logging: *default-logging
-    image: grdz/monster-raid-service:4.4.1
+    image: grdz/monster-raid-service:5.0.0
     pull_policy: always
     # Three interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
     # replicas. Each one registers itself with Service Discovery at startup.
     deploy:
       replicas: 3
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     networks: [internal]
     env_file:
       - .env
@@ -268,6 +295,8 @@ services:
       POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
       POSTGRES_USER: ${MONSTER_RAID_DB_USER}
       POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
+      # Plain Redis until the Sentinels are in this stack (#136); 5.0.0 defaults to sentinel.
+      REDIS_MODE: standalone
       REDIS_ADDR: monster-raid-redis:6379
       REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
       # Below the gateway's 5 second upstream timeout, so a slow request ends
