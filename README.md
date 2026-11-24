@@ -2486,7 +2486,7 @@ docker compose start guild-db-1
 docker compose exec guild-db-2 patronictl list
 ```
 
-The collector scrapes the 16 Patroni nodes and the three etcd members. In Prometheus, `patroni_primary` shows leader changes. Compare the primary's `patroni_xlog_location` with the standby's `patroni_xlog_replayed_location` to see WAL replay lag.
+The collector scrapes the 16 Patroni nodes and the three etcd members. In Prometheus, `patroni_primary` shows leader changes. Compare the primary's `patroni_xlog_location_total` with the standby's `patroni_xlog_replayed_location_total` to see WAL replay lag.
 
 The 16 PostgreSQL nodes are limited to 192 MiB each with `shared_buffers=16MB`. Databases and caches publish no host ports. Service Discovery, Redis and observability keep their named volumes. The Redis passwords are `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`. Application images apply their migrations on startup.
 
