@@ -118,7 +118,7 @@ Each service owns its datastore. Events are published to broker topics and persi
 
 ![Architecture Diagram](docs/architecture.png)
 
-The diagram shows the Lab 4 target. Object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
+The diagram shows the Lab 5 target: every PostgreSQL database as a Patroni pair behind its HAProxy, the Redis replicas with their Sentinels, the broker's response cache and transaction coordinator, and the analytics path from the replicas through Airflow and ClickHouse to Grafana. Replication, the Redis failover and the warehouse are being added to the deployment in #135, #136 and #137. Object storage is tracked in #66.
 
 [Back to top](#table-of-contents)
 
