@@ -172,7 +172,7 @@ services:
 
   battle-api:
     logging: *default-logging
-    image: sanda2004/battle-service:4.0.2
+    image: sanda2004/battle-service:5.0.0
     pull_policy: always
     cpus: 1.0
     mem_limit: 512M
