@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "2548694d-5793-4818-843d-b4e8688d009c",
     "name": "Tamagotchi Go - Battle Service",
-    "description": "Client requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores access tokens and subjects for later requests. Battle peer calls use Broker.Send and battle events use Broker.Publish; no service credentials or internal balance/XP commands belong in this client collection. Business scenarios require existing packages and pets. Never export passwords, secrets or populated tokens.",
+    "description": "Client requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores access tokens and subjects for later requests. Battle peer calls use Broker.Send and battle events use Broker.Publish; no service credentials or internal balance/XP commands belong in this client collection. Business scenarios require existing packages and pets. Never export passwords, secrets or populated tokens. Ending combat returns 202 SETTLING. Use Get battle to follow the broker’s settlement to COMPLETED, FORFEITED, or VOIDED.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -388,7 +388,8 @@
                 }
               }
             },
-            "url": "{{baseUrl}}/battles/{{battleId}}/actions"
+            "url": "{{baseUrl}}/battles/{{battleId}}/actions",
+            "description": "Poll Get battle after a 202 response to see the terminal result."
           },
           "response": [],
           "event": [
@@ -407,7 +408,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                  "pm.test(\"Action processed or accepted for settlement\", () => pm.expect(pm.response.code).to.be.oneOf([200, 202]));",
+                  "if (pm.response.code === 202) pm.expect(pm.response.json().battle.status).to.eql(\"SETTLING\");"
                 ]
               }
             }
@@ -428,7 +430,8 @@
                 }
               ]
             },
-            "url": "{{baseUrl}}/battles/{{battleId}}/forfeitures"
+            "url": "{{baseUrl}}/battles/{{battleId}}/forfeitures",
+            "description": "Poll Get battle after a 202 response to see the terminal result."
           },
           "response": [],
           "event": [
@@ -437,7 +440,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                  "pm.test(\"Forfeiture accepted for settlement\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"Battle is settling\", () => pm.expect(pm.response.json().status).to.eql(\"SETTLING\"));"
                 ]
               }
             }
