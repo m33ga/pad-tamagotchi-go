@@ -4,7 +4,7 @@ The broker distributes cached replies across independent Redis instances. When a
 
 ## Modulo and the hash ring
 
-With `hash(key) % N`, node IDs run from 0 to `N - 1`. Changing `N` changes nearly every remainder. From three to four nodes, the shared node IDs are 0, 1 and 2. Only three of the twelve residues modulo 12 keep their owner, so 75% move. In general, for `N → N + 1`, the two moduli are coprime, giving `N` matches out of `N(N + 1)`.
+With `hash(key) % N`, node IDs run from 0 to `N - 1`. When `N` increases by one, most keys change owner. For `N → N + 1`, the two moduli are coprime, giving `N` matches out of `N(N + 1)`.
 
 On a ring, hash the key and each node's points into the same unsigned 64-bit space. Walk clockwise from the key to the first node point, wrapping back to zero when needed. A point owns the arc from its predecessor up to and including itself.
 
@@ -21,6 +21,17 @@ flowchart LR
 In this example the key belongs to B before D is inserted and to D afterwards. Only the arc from A's first point to D changes hands. Removing D gives that arc back to B. Each physical node has many virtual points. Their arcs are spread across the ring, reducing the imbalance that can result from one random point per node. The broker contract uses about 150 points per node. More points increase the size of the sorted routing table.
 
 For equally configured nodes and uniform hashes, adding `K` nodes to reach `N` total moves an expected `K/N` share. Removing `K` of `N` existing nodes has the same expected share. The corresponding denominators for one join and one departure are the node count after the join and before the departure. A particular set of virtual points can differ from that expectation. [Karger et al., Consistent Hashing and Random Trees](https://doi.org/10.1145/258533.258660)
+
+### Worked example with three and four nodes
+
+Take twelve equally spaced key hashes numbered 0 through 11. The same hashes feed both methods.
+
+| Method | Ownership rule | Hashes that change owner |
+| --- | --- | --- |
+| Modulo | Compare each hash modulo 3 and modulo 4. Hashes 0, 1 and 2 keep the same bucket. | 3 through 11, or 9 of 12 (75%) |
+| Hash ring | Place A at 0, B at 4 and C at 8. Add D at 3 and route each hash to the next point clockwise, including a point at the exact hash. | 1 through 3 move from B to D, or 3 of 12 (25%) |
+
+The ring in this example uses one point per node to show exactly which arc changes owner. In the broker, each node gains or loses many arcs across the ring. The share of requests that miss during a change also depends on how frequently those keys are requested and how quickly the cache refills.
 
 ## Other consistent hashing schemes
 
@@ -62,17 +73,10 @@ The separate cluster bus carries gossip, failure detection, slot ownership updat
 | High availability | A failed shard leaves the ring. Reassigned keys miss until they refill. | Replicas can take over slots with cluster failover and retain replicated keys. |
 | Operational cost | Independent instances, plus broker membership, failure detection and refill monitoring. | Cluster topology, replicas, bus connectivity, resharding and client redirect support. |
 
-The broker caches replies that it can fetch again from their source. It can evict or discard a shard's cached values and rebuild them on demand, so a node failure costs hits until those keys refill. That makes a ring over standalone Redis a suitable choice for this deployment. Redis Cluster is useful if the service needs warm replicas, managed slot migration, or a standard cluster protocol shared by multiple clients.
+## Why the broker uses a ring
+
+The source services remain authoritative for every cached reply. The broker can rebuild a shard on demand, so adding or removing a node does not require copying its cached entries. The ring limits which keys need to refill and lets the deployment use independent Redis instances. During a shard failure or a scale-out, those cold keys create extra traffic for the source services until the cache warms up.
+
+Redis Cluster would be worth reconsidering if the platform needed warm replicas to keep that refill traffic low, live slot migration, or a standard cluster protocol shared by multiple clients.
 
 To adopt Redis Cluster, provision primaries and replicas with reachable command and cluster-bus addresses, replace the broker's ring routing with a cluster-aware client, and switch membership operations to slot resharding and replica promotion. Verify that cache lookups and invalidation work across redirects. Review multi-key commands, Lua scripts, and cache/tag key placement for same-slot requirements before enabling live traffic. The broker would still own reply cache policy, TTLs, and invalidation semantics. [Broker caching contract](../README.md#caching), [Redis Cluster scaling guide](https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/)
-
-## Reproduce the 3 → 4 change
-
-From the repository root, run `python3 scripts/measure_cache_remapping.py`. The script compares the owner of each of 100,000 fixed keys before and after adding a node. Both methods use the same 64-bit BLAKE2b key hash. The ring has 150 points per node and keeps all existing points.
-
-| Method | Changed owner | Expected share |
-| --- | ---: | ---: |
-| Ring | 22,990 (22.99%) | about 25% |
-| Modulo | 75,288 (75.29%) | about 75% |
-
-These percentages measure routing changes. Cache hit rates also depend on which keys are requested, how quickly they refill, and whether they expire during a membership change.
