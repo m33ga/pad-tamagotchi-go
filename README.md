@@ -2389,7 +2389,7 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.3.1`, `grdz/service-discovery:4.1.1` and `grdz/broker:4.5.1` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:5.0.0`, `grdz/service-discovery:5.0.0` and `grdz/broker:5.2.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
@@ -2523,8 +2523,8 @@ pinned service releases also use the broker for peer calls and event delivery:
 
 - **User Management 4.1.0** calls Package Registry over gRPC, serves six RPCs, publishes friend requests and consumes raid rewards.
 - **Battle 4.0.2** calls User Management, Tamagotchi and Package Registry over gRPC and publishes durable request/completion events.
-- **Map 4.3.0** reads User Management relationships over gRPC and publishes proximity events.
-- **Monster Raid 4.4.1** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`.
+- **Map 5.0.0** reads User Management relationships over gRPC and publishes proximity events. It can follow its Redis through Sentinel; until the Sentinels are in this stack, `MAP_REDIS_SENTINELS` is empty and it uses `map-redis` directly.
+- **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and runs with `REDIS_MODE=standalone` until the Sentinels are in this stack.
 - **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
 - **Package Registry 4.0.0** serves gRPC alongside REST and has no outbound dependency. Administrator access comes from `ADMIN_USER_IDS`.
 - **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
@@ -2610,8 +2610,8 @@ The Package Registry Service manages application packages and package-specific g
 
 Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the message broker routes from, and posts alerts to Discord. It is the only component that writes the registry.
 
-Version 4.1.1 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
-`discovery_instance_utilization`, `discovery_instance_in_flight` and `discovery_instance_limit`
+Version 5.0.0 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
+`discovery_instance_utilization` (container load), `discovery_instance_cpu`, `discovery_instance_memory`, `discovery_instance_in_flight` and `discovery_instance_limit`
 with `service` and `instance_id` labels, plus `discovery_registry_instances` by service/health.
 The system overview uses these for every registered instance, including services that export
 no telemetry themselves. Counters cover evictions, recoveries, deletions and successfully sent
