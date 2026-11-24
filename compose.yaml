@@ -111,7 +111,7 @@ services:
 
   user-management-api:
     logging: *default-logging
-    image: sanda2004/user-management-service:4.1.0
+    image: sanda2004/user-management-service:5.0.0
     cpus: 1.0
     mem_limit: 512M
     pull_policy: always
