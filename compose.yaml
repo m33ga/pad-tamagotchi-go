@@ -8,7 +8,108 @@ x-logging: &default-logging
     max-file: "3"
     tag: "{{.Name}}"
 
+# PostgreSQL pairs share the etcd quorum but have separate scopes and data volumes.
+x-patroni: &patroni
+  logging: *default-logging
+  image: grdz/patroni:5.0.0
+  build:
+    context: ./infra/patroni
+  networks: [internal]
+  # A crash stays down for the failover demonstration; Patroni supervises PostgreSQL.
+  restart: "no"
+  cpus: 0.5
+  mem_limit: 192M
+  shm_size: 64M
+  stop_grace_period: 30s
+  environment: &patroni-environment
+    PATRONI_SUPERUSER_PASSWORD: ${PATRONI_SUPERUSER_PASSWORD:?}
+    PATRONI_REPLICATION_PASSWORD: ${PATRONI_REPLICATION_PASSWORD:?}
+    ANALYTICS_READER_PASSWORD: ${ANALYTICS_READER_PASSWORD:?}
+  depends_on:
+    etcd-1:
+      condition: service_healthy
+    etcd-2:
+      condition: service_healthy
+    etcd-3:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/readiness', timeout=2)"]
+    interval: 3s
+    timeout: 3s
+    retries: 30
+    start_period: 15s
+
+x-database-proxy: &database-proxy
+  logging: *default-logging
+  image: haproxy:3.2.27-alpine
+  networks: [internal]
+  restart: unless-stopped
+  cpus: 0.25
+  mem_limit: 64M
+  volumes:
+    - ./infra/haproxy/postgres.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/health"]
+    interval: 3s
+    timeout: 3s
+    retries: 30
+    start_period: 15s
+
+x-etcd: &etcd
+  logging: *default-logging
+  image: quay.io/coreos/etcd:v3.6.17
+  networks: [internal]
+  restart: unless-stopped
+  cpus: 0.5
+  mem_limit: 128M
+  command:
+    - /usr/local/bin/etcd
+    - --data-dir=/etcd-data
+    - --listen-client-urls=http://0.0.0.0:2379
+    - --listen-peer-urls=http://0.0.0.0:2380
+    - --initial-cluster=etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380
+    - --initial-cluster-token=pad-postgresql
+    - --initial-cluster-state=new
+    - --auto-compaction-retention=1h
+    - --quota-backend-bytes=134217728
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+    interval: 3s
+    timeout: 3s
+    retries: 20
+    start_period: 5s
+
 services:
+  etcd-1:
+    <<: *etcd
+    hostname: etcd-1
+    environment:
+      ETCD_NAME: etcd-1
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-1:2380
+    volumes:
+      - etcd-1-data:/etcd-data
+
+  etcd-2:
+    <<: *etcd
+    hostname: etcd-2
+    environment:
+      ETCD_NAME: etcd-2
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-2:2380
+    volumes:
+      - etcd-2-data:/etcd-data
+
+  etcd-3:
+    <<: *etcd
+    hostname: etcd-3
+    environment:
+      ETCD_NAME: etcd-3
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd-3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd-3:2380
+    volumes:
+      - etcd-3-data:/etcd-data
+
   api-gateway:
     logging: *default-logging
     image: grdz/gateway:5.0.0
@@ -110,20 +211,33 @@ services:
 
   # The durable event store: queued events survive a broker restart.
   broker-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: broker-db-1, DB_NODE_2: broker-db-2}
+    depends_on:
+      broker-db-1: {condition: service_healthy}
+      broker-db-2: {condition: service_healthy}
+
+  broker-db-1:
+    <<: *patroni
+    environment: &broker-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: broker
       POSTGRES_DB: ${BROKER_DB_NAME}
       POSTGRES_USER: ${BROKER_DB_USER}
       POSTGRES_PASSWORD: ${BROKER_DB_PASSWORD}
-    volumes:
-      - broker-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: broker-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: broker-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: broker-db-1:5432
+    volumes: [broker-db-1-data:/var/lib/postgresql/data]
+
+  broker-db-2:
+    <<: *patroni
+    environment:
+      <<: *broker-db-environment
+      PATRONI_NAME: broker-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: broker-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: broker-db-2:5432
+    volumes: [broker-db-2-data:/var/lib/postgresql/data]
 
   user-management-api:
     logging: *default-logging
@@ -155,20 +269,35 @@ services:
       start_period: 10s
 
   user-management-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: user-management-db-1, DB_NODE_2: user-management-db-2}
+    depends_on:
+      user-management-db-1: {condition: service_healthy}
+      user-management-db-2: {condition: service_healthy}
+
+  user-management-db-1:
+    <<: *patroni
+    command: ["/etc/patroni/patroni-participant.yml"]
+    environment: &user-management-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: user-management
       POSTGRES_DB: ${USER_MANAGEMENT_DB_NAME}
       POSTGRES_USER: ${USER_MANAGEMENT_DB_USER}
       POSTGRES_PASSWORD: ${USER_MANAGEMENT_DB_PASSWORD}
-    volumes:
-      - user-management-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: user-management-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: user-management-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: user-management-db-1:5432
+    volumes: [user-management-db-1-data:/var/lib/postgresql/data]
+
+  user-management-db-2:
+    <<: *patroni
+    command: ["/etc/patroni/patroni-participant.yml"]
+    environment:
+      <<: *user-management-db-environment
+      PATRONI_NAME: user-management-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: user-management-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: user-management-db-2:5432
+    volumes: [user-management-db-2-data:/var/lib/postgresql/data]
 
   battle-api:
     logging: *default-logging
@@ -201,20 +330,33 @@ services:
       start_period: 10s
 
   battle-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: battle-db-1, DB_NODE_2: battle-db-2}
+    depends_on:
+      battle-db-1: {condition: service_healthy}
+      battle-db-2: {condition: service_healthy}
+
+  battle-db-1:
+    <<: *patroni
+    environment: &battle-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: battle
       POSTGRES_DB: ${BATTLE_DB_NAME}
       POSTGRES_USER: ${BATTLE_DB_USER}
       POSTGRES_PASSWORD: ${BATTLE_DB_PASSWORD}
-    volumes:
-      - battle-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: battle-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: battle-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: battle-db-1:5432
+    volumes: [battle-db-1-data:/var/lib/postgresql/data]
+
+  battle-db-2:
+    <<: *patroni
+    environment:
+      <<: *battle-db-environment
+      PATRONI_NAME: battle-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: battle-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: battle-db-2:5432
+    volumes: [battle-db-2-data:/var/lib/postgresql/data]
 
   map-api:
     logging: *default-logging
@@ -323,20 +465,33 @@ services:
       start_period: 10s
 
   monster-raid-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: monster-raid-db-1, DB_NODE_2: monster-raid-db-2}
+    depends_on:
+      monster-raid-db-1: {condition: service_healthy}
+      monster-raid-db-2: {condition: service_healthy}
+
+  monster-raid-db-1:
+    <<: *patroni
+    environment: &monster-raid-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: monster-raid
       POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
       POSTGRES_USER: ${MONSTER_RAID_DB_USER}
       POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
-    volumes:
-      - monster-raid-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: monster-raid-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: monster-raid-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: monster-raid-db-1:5432
+    volumes: [monster-raid-db-1-data:/var/lib/postgresql/data]
+
+  monster-raid-db-2:
+    <<: *patroni
+    environment:
+      <<: *monster-raid-db-environment
+      PATRONI_NAME: monster-raid-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: monster-raid-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: monster-raid-db-2:5432
+    volumes: [monster-raid-db-2-data:/var/lib/postgresql/data]
 
   monster-raid-redis:
     logging: *default-logging
@@ -405,20 +560,33 @@ services:
 
 
   guild-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: guild-db-1, DB_NODE_2: guild-db-2}
+    depends_on:
+      guild-db-1: {condition: service_healthy}
+      guild-db-2: {condition: service_healthy}
+
+  guild-db-1:
+    <<: *patroni
+    environment: &guild-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: guild
       POSTGRES_DB: ${GUILD_DB_NAME}
       POSTGRES_USER: ${GUILD_DB_USER}
       POSTGRES_PASSWORD: ${GUILD_DB_PASSWORD}
-    volumes:
-      - guild-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: guild-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: guild-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: guild-db-1:5432
+    volumes: [guild-db-1-data:/var/lib/postgresql/data]
+
+  guild-db-2:
+    <<: *patroni
+    environment:
+      <<: *guild-db-environment
+      PATRONI_NAME: guild-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: guild-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: guild-db-2:5432
+    volumes: [guild-db-2-data:/var/lib/postgresql/data]
 
   package-registry-api:
     logging: *default-logging
@@ -446,20 +614,35 @@ services:
       start_period: 10s
 
   package-registry-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: package-registry-db-1, DB_NODE_2: package-registry-db-2}
+    depends_on:
+      package-registry-db-1: {condition: service_healthy}
+      package-registry-db-2: {condition: service_healthy}
+
+  package-registry-db-1:
+    <<: *patroni
+    command: ["/etc/patroni/patroni-participant.yml"]
+    environment: &package-registry-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: package-registry
       POSTGRES_DB: ${PACKAGE_REGISTRY_DB_NAME}
       POSTGRES_USER: ${PACKAGE_REGISTRY_DB_USER}
       POSTGRES_PASSWORD: ${PACKAGE_REGISTRY_DB_PASSWORD}
-    volumes:
-      - package-registry-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: package-registry-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: package-registry-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: package-registry-db-1:5432
+    volumes: [package-registry-db-1-data:/var/lib/postgresql/data]
+
+  package-registry-db-2:
+    <<: *patroni
+    command: ["/etc/patroni/patroni-participant.yml"]
+    environment:
+      <<: *package-registry-db-environment
+      PATRONI_NAME: package-registry-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: package-registry-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: package-registry-db-2:5432
+    volumes: [package-registry-db-2-data:/var/lib/postgresql/data]
 
   tamagotchi-api:
     logging: *default-logging
@@ -500,20 +683,33 @@ services:
       start_period: 10s
 
   tamagotchi-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: tamagotchi-db-1, DB_NODE_2: tamagotchi-db-2}
+    depends_on:
+      tamagotchi-db-1: {condition: service_healthy}
+      tamagotchi-db-2: {condition: service_healthy}
+
+  tamagotchi-db-1:
+    <<: *patroni
+    environment: &tamagotchi-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: tamagotchi
       POSTGRES_DB: ${TAMAGOTCHI_DB_NAME}
       POSTGRES_USER: ${TAMAGOTCHI_DB_USER}
       POSTGRES_PASSWORD: ${TAMAGOTCHI_DB_PASSWORD}
-    volumes:
-      - tamagotchi-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: tamagotchi-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: tamagotchi-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: tamagotchi-db-1:5432
+    volumes: [tamagotchi-db-1-data:/var/lib/postgresql/data]
+
+  tamagotchi-db-2:
+    <<: *patroni
+    environment:
+      <<: *tamagotchi-db-environment
+      PATRONI_NAME: tamagotchi-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: tamagotchi-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: tamagotchi-db-2:5432
+    volumes: [tamagotchi-db-2-data:/var/lib/postgresql/data]
 
   notification-api:
     logging: *default-logging
@@ -553,20 +749,33 @@ services:
       start_period: 10s
 
   notification-db:
-    logging: *default-logging
-    image: postgres:17-alpine
-    networks: [internal]
-    environment:
+    <<: *database-proxy
+    environment: {DB_NODE_1: notification-db-1, DB_NODE_2: notification-db-2}
+    depends_on:
+      notification-db-1: {condition: service_healthy}
+      notification-db-2: {condition: service_healthy}
+
+  notification-db-1:
+    <<: *patroni
+    environment: &notification-db-environment
+      <<: *patroni-environment
+      PATRONI_SCOPE: notification
       POSTGRES_DB: ${NOTIFICATION_DB_NAME}
       POSTGRES_USER: ${NOTIFICATION_DB_USER}
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
-    volumes:
-      - notification-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      PATRONI_NAME: notification-db-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: notification-db-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: notification-db-1:5432
+    volumes: [notification-db-1-data:/var/lib/postgresql/data]
+
+  notification-db-2:
+    <<: *patroni
+    environment:
+      <<: *notification-db-environment
+      PATRONI_NAME: notification-db-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: notification-db-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: notification-db-2:5432
+    volumes: [notification-db-2-data:/var/lib/postgresql/data]
 
   notification-redis:
     logging: *default-logging
@@ -725,19 +934,31 @@ networks:
 
 volumes:
   service-discovery-data:
-  broker-db-data:
-  user-management-data:
-  battle-data:
   map-redis-data:
-  monster-raid-data:
   monster-raid-redis-data:
-  guild-data:
-  package-registry-data:
-  tamagotchi-data:
-  notification-data:
   notification-redis-data:
   otel-collector-data:
   prometheus-data:
   loki-data:
   tempo-data:
   grafana-data:
+  # Lab 5: independent data directories; legacy volumes above are retained.
+  etcd-1-data:
+  etcd-2-data:
+  etcd-3-data:
+  broker-db-1-data:
+  broker-db-2-data:
+  user-management-db-1-data:
+  user-management-db-2-data:
+  battle-db-1-data:
+  battle-db-2-data:
+  monster-raid-db-1-data:
+  monster-raid-db-2-data:
+  guild-db-1-data:
+  guild-db-2-data:
+  package-registry-db-1-data:
+  package-registry-db-2-data:
+  tamagotchi-db-1-data:
+  tamagotchi-db-2-data:
+  notification-db-1-data:
+  notification-db-2-data:

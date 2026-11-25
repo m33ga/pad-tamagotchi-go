@@ -81,9 +81,9 @@ Every broker setting defaults in code to its deployment value. Compose sets only
 | `BROKER_DB_USER` | Its user |
 | `BROKER_DB_PASSWORD` | Its password, a secret like the other database passwords |
 
-The event store is the `broker-db` container (`postgres:17-alpine`, internal network
-only) with its data in the `broker-db-data` volume. It holds the events queued for
-every subscribing service and the dead letter channel, so queued events survive a
+The event store uses `broker-db:5432` (HAProxy on the internal network). PostgreSQL
+data lives on two Patroni nodes with [separate volumes](../README.md#storage).
+They store events queued for each subscribing service and the dead letter channel, so queued events survive a
 restart of the broker or of its database. Requests and replies live only in the
 broker's memory and expire with their deadline. The broker starts once Service
 Discovery and `broker-db` are healthy, and the gateway once the broker is.

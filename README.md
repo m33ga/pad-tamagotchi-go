@@ -2459,11 +2459,36 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 ### Storage
 
-Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. The broker's event store, `broker-db`, takes its credentials from `BROKER_DB_NAME`, `BROKER_DB_USER` and `BROKER_DB_PASSWORD` in `.env`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+Eight databases (broker, User Management, Battle, Monster Raid, Guild, Package Registry, Tamagotchi and Notification) each have two Patroni-managed PostgreSQL nodes with separate volumes. Three etcd members share the leadership leases by quorum, and Patroni handles promotion and rejoin with `pg_rewind`. Replication is asynchronous, so a write that has yet to reach the standby can be lost. The 20 s etcd lease, 2 s loop and 5 s retry timeout give roughly 20 s to promote after a crash.
 
-Data persists in seventeen named volumes: `service-discovery-data`, `broker-db-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`, and for the [observability stack](#observability) `otel-collector-data`, `prometheus-data`, `loki-data`, `tempo-data` and `grafana-data`. `broker-db-data` holds the events queued for each subscribing service and the dead letter channel, so queued events survive `docker compose restart broker broker-db`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+| Internal endpoint | Routes to |
+|---|---|
+| `<service>-db:5432` | Current primary, using the existing application connection string |
+| `<service>-db:5433` | Replica, with primary fallback while the replica is down |
 
-No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, Guild and Package Registry ship idempotent migrations inside their images, and the broker applies its own ordered SQL migrations at startup.
+Set the three PostgreSQL HA passwords in `.env.example` in your `.env`. The service database owner retains its previous privileges. For ETL use `analytics_reader` on 5433 with read-only transactions and SELECT grants from service migrations. Only User Management and Package Registry enable 64 prepared transactions. Inspect them with `SELECT * FROM pg_prepared_xacts;`. Patroni REST and PostgreSQL stay on the internal network.
+
+**Upgrading from standalone PostgreSQL.** Run `docker compose down` in the old checkout, then start the new deployment. The new PostgreSQL volumes start empty. Back up data you need first, and use `docker volume rm` on the old database volumes only once you have verified they can be discarded.
+
+**Guild failover drill.** On the lab stack, log in via the Guild Postman collection, create a guild and verify `GET /guild/api/v1/guilds/{guildId}` returns 200 through the gateway. Run:
+
+```bash
+docker compose exec guild-db-1 patronictl list
+# Example if guild-db-1 is the leader. Swap node numbers if guild-db-2 leads.
+docker compose kill -s SIGKILL guild-db-1
+docker compose exec guild-db-2 patronictl list
+```
+
+Repeat the list until node 2 is Leader, then repeat the gateway GET and expect 200. The killed node uses `restart: "no"`, so start it manually and repeat the list until node 1 is a streaming replica:
+
+```bash
+docker compose start guild-db-1
+docker compose exec guild-db-2 patronictl list
+```
+
+The collector scrapes the 16 Patroni nodes and the three etcd members. In Prometheus, `patroni_primary` shows leader changes. Compare the primary's `patroni_xlog_location_total` with the standby's `patroni_xlog_replayed_location_total` to see WAL replay lag.
+
+The 16 PostgreSQL nodes are limited to 192 MiB each with `shared_buffers=16MB`. Databases and caches publish no host ports. Service Discovery, Redis and observability keep their named volumes. The Redis passwords are `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`. Application images apply their migrations on startup.
 
 ### Observability
 

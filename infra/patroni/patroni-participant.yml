@@ -1,0 +1,55 @@
+namespace: /patroni/
+etcd3:
+  hosts: etcd-1:2379,etcd-2:2379,etcd-3:2379
+restapi:
+  listen: 0.0.0.0:8008
+bootstrap:
+  dcs:
+    ttl: 20
+    loop_wait: 2
+    retry_timeout: 5
+    primary_start_timeout: 0
+    maximum_lag_on_failover: 1048576
+    check_timeline: true
+    synchronous_mode: false
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        wal_log_hints: 'on'
+        hot_standby: 'on'
+        password_encryption: scram-sha-256
+        max_connections: 80
+        max_wal_senders: 5
+        max_replication_slots: 5
+        max_prepared_transactions: 64
+        shared_buffers: 16MB
+        work_mem: 2MB
+        maintenance_work_mem: 32MB
+        max_wal_size: 256MB
+        min_wal_size: 80MB
+        wal_keep_size: 64MB
+        max_slot_wal_keep_size: 512MB
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+    - auth-local: peer
+    - auth-host: scram-sha-256
+  # The callback receives a connection URL; credentials stay in the environment.
+  post_bootstrap: /usr/local/bin/bootstrap.sh
+postgresql:
+  listen: 0.0.0.0:5432
+  data_dir: /var/lib/postgresql/data/pgdata
+  bin_dir: /usr/lib/postgresql/17/bin
+  basebackup:
+    checkpoint: fast
+  authentication:
+    superuser:
+      username: patroni_admin
+    replication:
+      username: replicator
+  pg_hba:
+    - local all all peer
+    - host replication replicator all scram-sha-256
+    - host all all all scram-sha-256
