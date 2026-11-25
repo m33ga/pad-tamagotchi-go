@@ -2566,7 +2566,7 @@ pinned service releases also use the broker for peer calls and event delivery:
 - **Battle 4.0.2** calls User Management, Tamagotchi and Package Registry over gRPC and publishes durable request/completion events.
 - **Map 5.0.0** reads User Management relationships over gRPC and publishes proximity events. It can follow its Redis through Sentinel; until the Sentinels are in this stack, `MAP_REDIS_SENTINELS` is empty and it uses `map-redis` directly.
 - **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and runs with `REDIS_MODE=standalone` until the Sentinels are in this stack.
-- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
+- **Guild 5.0.0** calls its peers as REST operations over `Broker.Send` and publishes invitation events. It adds cache metadata and invalidation for membership reads and exposes both Guild analytics views.
 - **Package Registry 5.0.0** serves REST, gRPC and the package join participant. It uses the broker for cache invalidation and transaction recovery. Administrator access comes from `ADMIN_USER_IDS`.
 - **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
 - **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.

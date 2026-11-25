@@ -510,7 +510,7 @@ services:
 
   guild-api-1:
     logging: *default-logging
-    image: cosmak47/pad-guild-service:4.0.0
+    image: cosmak47/pad-guild-service:5.0.0
     pull_policy: always
     cpus: 0.5
     mem_limit: 256M
@@ -537,7 +537,7 @@ services:
 
   guild-api-2:
     logging: *default-logging
-    image: cosmak47/pad-guild-service:4.0.0
+    image: cosmak47/pad-guild-service:5.0.0
     pull_policy: always
     cpus: 0.5
     mem_limit: 256M
