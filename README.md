@@ -118,7 +118,7 @@ Each service owns its datastore. Events are published to broker topics and persi
 
 ![Architecture Diagram](docs/architecture.png)
 
-The diagram shows the Lab 4 target. Object storage is tracked in #66. The remaining service rollout and end-to-end checks are tracked in #96, #97 and #102.
+The diagram shows the Lab 5 target: every PostgreSQL database as a Patroni pair behind its HAProxy, the Redis replicas with their Sentinels, the broker's response cache and transaction coordinator, and the analytics path from the replicas through Airflow and ClickHouse to Grafana. Replication, the Redis failover and the warehouse are being added to the deployment in #135, #136 and #137. Object storage is tracked in #66.
 
 [Back to top](#table-of-contents)
 
@@ -613,7 +613,7 @@ Every database and every Redis instance that holds state has a replica and fails
 | `<db>:5432` | the node whose Patroni `/primary` answers `200` | every service connection, unchanged |
 | `<db>:5433` | the nodes whose Patroni `/replica` answers `200`, the primary as fallback | read-only: the ETL ([Analytics](#analytics)) |
 
-The clusters are `broker-db`, `user-management-db`, `battle-db`, `tamagotchi-db`, `guild-db`, `package-registry-db`, `monster-raid-db` and `notification-db`. Patroni runs with `ttl: 10`, `loop_wait: 2`, `retry_timeout: 5` and `pg_rewind` on, so a dead primary is replaced within about 10 seconds and rejoins as a replica when it comes back. `user-management-db` and `package-registry-db` set `max_prepared_transactions: 64` for [two-phase commits](#distributed-transactions). The image is `grdz/patroni` (PostgreSQL 17 with Patroni), built from `infra/patroni`; its bootstrap creates the service's user and database from the same `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` values as before, and the read-only role `analytics_reader`.
+The clusters are `broker-db`, `user-management-db`, `battle-db`, `tamagotchi-db`, `guild-db`, `package-registry-db`, `monster-raid-db` and `notification-db`. Patroni runs with `ttl: 20` (the smallest value Patroni accepts), `loop_wait: 2`, `retry_timeout: 5` and `pg_rewind` on, so a dead primary is replaced within about 20 seconds and rejoins as a replica when it comes back. `user-management-db` and `package-registry-db` set `max_prepared_transactions: 64` for [two-phase commits](#distributed-transactions). The image is `grdz/patroni` (PostgreSQL 17 with Patroni), built from `infra/patroni`; its bootstrap creates the service's user and database from the same `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` values as before, and the read-only role `analytics_reader`.
 
 **Why Patroni with etcd.** The leader holds a lease in a consensus store: without the lease there is no primary, so a network partition cannot produce two primaries, and two database nodes per cluster are enough because etcd's three nodes provide the quorum. etcd is a small Go binary implementing Raft. The alternatives were rejected: Stolon is no longer maintained, repmgr has no consensus store and its usual images are gone, pg_auto_failover's monitor is a single point of failure, ZooKeeper is a heavy JVM, and Consul is far more product than we need.
 
