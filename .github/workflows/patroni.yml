@@ -1,0 +1,74 @@
+name: Patroni
+
+on:
+  pull_request:
+    paths:
+      - infra/patroni/**
+      - infra/haproxy/**
+      - observability/otel-collector/config.yaml
+      - compose.yaml
+      - .github/workflows/patroni.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/patroni/**
+      - .github/workflows/patroni.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: patroni-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Lab 5 image version
+        id: version
+        shell: bash
+        run: |
+          version=$(cat infra/patroni/VERSION)
+          [[ "$version" =~ ^5\.[0-9]+\.[0-9]+$ ]]
+          grep -q "image: grdz/patroni:$version$" compose.yaml
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build Patroni
+        run: docker build -t "grdz/patroni:${{ steps.version.outputs.version }}" infra/patroni
+      - name: Validate collector configuration
+        run: docker run --rm -v "$PWD/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro" otel/opentelemetry-collector-contrib:0.165.0 validate --config=/etc/otelcol-contrib/config.yaml
+
+  publish:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Refuse to overwrite an existing version
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          if docker buildx imagetools inspect "grdz/patroni:$VERSION" >/dev/null 2>&1; then
+            echo '::error::Version already published. Bump infra/patroni/VERSION and the Compose pin.'
+            exit 1
+          fi
+      - uses: docker/build-push-action@v6
+        with:
+          context: infra/patroni
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            grdz/patroni:${{ needs.check.outputs.version }}
+            grdz/patroni:latest
+          labels: org.opencontainers.image.revision=${{ github.sha }}

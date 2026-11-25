@@ -659,9 +659,11 @@ Without `public` or `vary`, the entry is keyed by every identity header the brok
 
 | Owner | Reads | `max-age` | Keyed by | Tags |
 |---|---|---:|---|---|
-| Package Registry | `GetPackage`, `ListStatDefinitions`, `ListBattleBoosts`, `GetBattleBoost` | 300 | `public` | `package:<packageId>` |
-| Package Registry | `ListPackages`, `ListRaidConfigurations`, `ListRaidSchedules` | 60 | `public` | `package:all`, `raid-config:all`, `raid-schedule:all` |
-| Package Registry | `GetRaidConfiguration`, `GetRaidSchedule` | 300 | `public` | `raid-config:<id>`, `raid-schedule:<id>` |
+| Package Registry | `GetPackage` | 300 | `public` | `package:<packageId>` |
+| Package Registry | `ListStatDefinitions`, `ListBattleBoosts`, `GetBattleBoost` | 300 | caller | `package:<packageId>` |
+| Package Registry | `ListPackages` | 60 | `public` | `package:all` |
+| Package Registry | `ListRaidConfigurations`, `ListRaidSchedules` | 60 | caller | `raid-config:all`, `raid-schedule:all` |
+| Package Registry | `GetRaidConfiguration`, `GetRaidSchedule` | 300 | caller | `raid-config:<id>`, `raid-schedule:<id>` |
 | Package Registry | `GetRegistration`, `ListUserRegistrations` | 60 | caller | `registration:<userId>` |
 | User Management | `GetUser`, `ListUserPackages` | 60 | caller | `user:<userId>` |
 | User Management | `ListRelationships`, `GetRelationship` | 60 | caller | `user:<userId>` (and `user:<otherUserId>`) |
@@ -1061,13 +1063,21 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS` - the former caller-supplied role header is not accepted.
 
-Version 4.0.0 runs two Package Registry instances on the internal network, with REST on 8082 and gRPC on 9090. Each registers its REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. Internal `GET /health` reports liveness; `GET /status` reports readiness, load and PostgreSQL health. These endpoints and both listeners have no published host port. Responses include the instance ID, and PostgreSQL serializes startup migrations so both replicas may start together.
+The deployment runs two Package Registry instances on the internal network, with REST on 8082 and gRPC on 9090. Each registers its REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. Internal `GET /health` reports liveness; `GET /status` reports readiness, load and PostgreSQL health. These endpoints and both listeners have no published host port. Responses include the instance ID, and PostgreSQL serializes startup migrations so both replicas may start together.
 
-The `tamagotchigo.packageregistry.v1.PackageRegistry` API serves all 12 methods in the [protobuf contract](docs/schemas/proto/tamagotchigo/packageregistry/v1/package_registry.proto). REST and gRPC share application authorization, registration idempotency, concurrency slots and deadlines. The broker supplies verified service metadata; gRPC errors include `google.rpc.ErrorInfo` with the business error code and domain `package-registry`. Both transports and PostgreSQL export OpenTelemetry to the collector. The five service-only REST routes remain until every caller has migrated; this release completes #97 stages 1 and 2, not stage 3.
+The `tamagotchigo.packageregistry.v1.PackageRegistry` API serves all 12 methods in the [protobuf contract](docs/schemas/proto/tamagotchigo/packageregistry/v1/package_registry.proto). REST and gRPC share application authorization, registration idempotency, concurrency slots and deadlines. The broker supplies verified service metadata; gRPC errors include `google.rpc.ErrorInfo` with the business error code and domain `package-registry`. Both transports and PostgreSQL export OpenTelemetry to the collector. The service-only REST routes remain available during the migration to gRPC.
 
 Raid attack/defense accept `0..2147483647`; duration, participant limit and battle-boost `maxUsesPerBattle` accept `1..2147483647`. Invalid writes return `422`; legacy stored values outside those ranges return gRPC `FAILED_PRECONDITION` instead of wrapping or returning partial results. HP and rewards retain their `int64` range. An administrator can inspect and repair a legacy record through REST.
 
 `POST /packages/{packageId}/registrations` and `GET /users/{userId}/package-registrations` require `X-Service-Name: user-management-service`. Raid schedule reads accept `X-Service-Name: monster-raid-service` or a configured administrator. Every handler has a bounded deadline and fail-fast concurrency limit, returning `504 REQUEST_TIMEOUT` or `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
+
+##### Lab 5
+
+Package details and lists use a shared broker cache. Stat definitions, boosts, raid configurations, raid schedules and registrations are cached per verified caller so that access restrictions still apply on cache hits. The TTLs and tags are in [Caching](#caching). A committed write publishes `cache.invalidate.v1` for the changed detail and any affected list. The [Registry Postman collection](collections/package-registry-service.postman_collection.json) includes a Lab 5 cache sequence that warms a package, confirms a hit and checks the new response after a write.
+
+Package Registry also serves [`Participant`](docs/schemas/proto/tamagotchigo/transactions/v1/participant.proto). It prepares registration for an active package when the broker calls on behalf of User Management. Either replica can finish the prepared write. When a prepared registration is older than 30 seconds, each replica polls the coordinator on its 10-second recovery cycle. A committed registration invalidates `registration:<userId>`.
+
+`analytics.packages` exposes the six package fields in [Analytics](#analytics) and is readable through the database proxy's replica port. `/status` uses the container's CPU and memory shares for utilization and still exposes the concurrency counters.
 
 ##### Endpoint Catalog
 
@@ -1804,7 +1814,7 @@ While a battle is `SETTLING`, further actions answer `409 BATTLE_NOT_ACTIVE`, an
 
 The 4.0.2 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
 
-The coordinated release pins Battle 4.0.2 with User Management 4.1.0, Tamagotchi v4.2.0 and Package Registry 4.0.0. All three peer protocols select `grpc`; calls use `Broker.Send` and events use `Broker.Publish`. Notification v4.2.0 consumes the Battle topics. Release 4.0.2 normalizes event payload fields to camelCase, including pending legacy outbox rows. Settlement retries preserve business references and idempotency keys. Traces are available in Grafana Explore through Tempo.
+The coordinated Lab 4 release pinned Battle 4.0.2 with User Management 4.1.0, Tamagotchi v4.2.0 and Package Registry 4.0.0. All three peer protocols select `grpc`; calls use `Broker.Send` and events use `Broker.Publish`. Notification v4.2.0 consumes the Battle topics. Release 4.0.2 normalizes event payload fields to camelCase, including pending legacy outbox rows. Settlement retries preserve business references and idempotency keys. Traces are available in Grafana Explore through Tempo.
 
 #### Map Service
 
@@ -2393,7 +2403,7 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:4.3.1`, `grdz/service-discovery:4.1.1` and `grdz/broker:4.5.1` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:5.0.0`, `grdz/service-discovery:5.0.0` and `grdz/broker:5.2.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
@@ -2463,11 +2473,36 @@ Map and Monster Raid also publish their generated OpenAPI document at `/openapi.
 
 ### Storage
 
-Databases and caches have no host ports; inspect them with `docker compose exec`, for example `docker compose exec user-management-db psql`. The broker's event store, `broker-db`, takes its credentials from `BROKER_DB_NAME`, `BROKER_DB_USER` and `BROKER_DB_PASSWORD` in `.env`. Each Redis instance has its own password in `.env`: `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`.
+Eight databases (broker, User Management, Battle, Monster Raid, Guild, Package Registry, Tamagotchi and Notification) each have two Patroni-managed PostgreSQL nodes with separate volumes. Three etcd members share the leadership leases by quorum, and Patroni handles promotion and rejoin with `pg_rewind`. Replication is asynchronous, so a write that has yet to reach the standby can be lost. The 20 s etcd lease, 2 s loop and 5 s retry timeout give roughly 20 s to promote after a crash.
 
-Data persists in seventeen named volumes: `service-discovery-data`, `broker-db-data`, `user-management-data`, `battle-data`, `map-redis-data`, `monster-raid-data`, `monster-raid-redis-data`, `guild-data`, `package-registry-data`, `tamagotchi-data`, `notification-data` and `notification-redis-data`, and for the [observability stack](#observability) `otel-collector-data`, `prometheus-data`, `loki-data`, `tempo-data` and `grafana-data`. `broker-db-data` holds the events queued for each subscribing service and the dead letter channel, so queued events survive `docker compose restart broker broker-db`. `docker compose down` keeps them, while `docker compose down --volumes` deletes the stored data.
+| Internal endpoint | Routes to |
+|---|---|
+| `<service>-db:5432` | Current primary, using the existing application connection string |
+| `<service>-db:5433` | Replica, with primary fallback while the replica is down |
 
-No database needs manual preparation. The C# services apply their ordered SQL migrations when they start, the Monster Raid Service applies its own with goose, Guild and Package Registry ship idempotent migrations inside their images, and the broker applies its own ordered SQL migrations at startup.
+Set the three PostgreSQL HA passwords in `.env.example` in your `.env`. The service database owner retains its previous privileges. For ETL use `analytics_reader` on 5433 with read-only transactions and SELECT grants from service migrations. Only User Management and Package Registry enable 64 prepared transactions. Inspect them with `SELECT * FROM pg_prepared_xacts;`. Patroni REST and PostgreSQL stay on the internal network.
+
+**Upgrading from standalone PostgreSQL.** Run `docker compose down` in the old checkout, then start the new deployment. The new PostgreSQL volumes start empty. Back up data you need first, and use `docker volume rm` on the old database volumes only once you have verified they can be discarded.
+
+**Guild failover drill.** On the lab stack, log in via the Guild Postman collection, create a guild and verify `GET /guild/api/v1/guilds/{guildId}` returns 200 through the gateway. Run:
+
+```bash
+docker compose exec guild-db-1 patronictl list
+# Example if guild-db-1 is the leader. Swap node numbers if guild-db-2 leads.
+docker compose kill -s SIGKILL guild-db-1
+docker compose exec guild-db-2 patronictl list
+```
+
+Repeat the list until node 2 is Leader, then repeat the gateway GET and expect 200. The killed node uses `restart: "no"`, so start it manually and repeat the list until node 1 is a streaming replica:
+
+```bash
+docker compose start guild-db-1
+docker compose exec guild-db-2 patronictl list
+```
+
+The collector scrapes the 16 Patroni nodes and the three etcd members. In Prometheus, `patroni_primary` shows leader changes. Compare the primary's `patroni_xlog_location_total` with the standby's `patroni_xlog_replayed_location_total` to see WAL replay lag.
+
+The 16 PostgreSQL nodes are limited to 192 MiB each with `shared_buffers=16MB`. Databases and caches publish no host ports. Service Discovery, Redis and observability keep their named volumes. The Redis passwords are `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`. Application images apply their migrations on startup.
 
 ### Observability
 
@@ -2527,10 +2562,10 @@ pinned service releases also use the broker for peer calls and event delivery:
 
 - **User Management 4.1.0** calls Package Registry over gRPC, serves six RPCs, publishes friend requests and consumes raid rewards.
 - **Battle 4.0.2** calls User Management, Tamagotchi and Package Registry over gRPC and publishes durable request/completion events.
-- **Map 4.3.0** reads User Management relationships over gRPC and publishes proximity events.
-- **Monster Raid 4.4.1** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`.
+- **Map 5.0.0** reads User Management relationships over gRPC and publishes proximity events. It can follow its Redis through Sentinel; until the Sentinels are in this stack, `MAP_REDIS_SENTINELS` is empty and it uses `map-redis` directly.
+- **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and runs with `REDIS_MODE=standalone` until the Sentinels are in this stack.
 - **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
-- **Package Registry 4.0.0** serves gRPC alongside REST and has no outbound dependency. Administrator access comes from `ADMIN_USER_IDS`.
+- **Package Registry 5.0.0** serves REST, gRPC and the package join participant. It uses the broker for cache invalidation and transaction recovery. Administrator access comes from `ADMIN_USER_IDS`.
 - **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
 - **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.
 
@@ -2614,8 +2649,8 @@ The Package Registry Service manages application packages and package-specific g
 
 Service Discovery is the registry and health authority of the platform. Every instance registers with it once at startup; it probes each instance's `/status` every 4 seconds, marks an instance `DOWN` after three failed probes in 14 seconds, serves the catalogue the message broker routes from, and posts alerts to Discord. It is the only component that writes the registry.
 
-Version 4.1.1 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
-`discovery_instance_utilization`, `discovery_instance_in_flight` and `discovery_instance_limit`
+Version 5.0.0 exports `discovery_instance_health` (UP = 1, DEGRADED = 0.5, DOWN = 0),
+`discovery_instance_utilization` (container load), `discovery_instance_cpu`, `discovery_instance_memory`, `discovery_instance_in_flight` and `discovery_instance_limit`
 with `service` and `instance_id` labels, plus `discovery_registry_instances` by service/health.
 The system overview uses these for every registered instance, including services that export
 no telemetry themselves. Counters cover evictions, recoveries, deletions and successfully sent

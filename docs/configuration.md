@@ -25,8 +25,8 @@ When upgrading an existing `.env`, replace `GUILD_CHAT_PORT` with
 
 Copy `.env.example` to `.env` if it does not exist, then replace the database and
 cache placeholders. Preserve passwords belonging to existing volumes.
-The gateway, Service Discovery and message broker images, `grdz/gateway:4.3.1`,
-`grdz/service-discovery:4.1.1` and `grdz/broker:4.5.1`, are pinned directly in
+The gateway, Service Discovery and message broker images, `grdz/gateway:5.0.0`,
+`grdz/service-discovery:5.0.0` and `grdz/broker:5.2.0`, are pinned directly in
 Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v4.2.0`
 and `johnnyc05/pad-notification-service:v4.2.0`. All five export traces and metrics to
 the [observability stack](../README.md#observability).
@@ -56,8 +56,8 @@ Every service uses a 4 second request deadline, below the gateway's 5 second
 upstream timeout, so a slow request ends with the service's own
 `504 REQUEST_TIMEOUT`. The per-service overrides `TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS`
 and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi 4.2.0
-validates health statistics against Package Registry over gRPC through the broker, which
-Registry 4.0.0 serves. Like User Management it follows `USE_MOCK_PACKAGE_REGISTRY`: `false`,
+validates health statistics through Package Registry's gRPC API via the broker.
+Like User Management it follows `USE_MOCK_PACKAGE_REGISTRY`: `false`,
 the default, uses the real Package Registry as the `tamagotchi-service` client; `true` keeps
 Tamagotchi's built-in registry mock.
 
@@ -81,9 +81,9 @@ Every broker setting defaults in code to its deployment value. Compose sets only
 | `BROKER_DB_USER` | Its user |
 | `BROKER_DB_PASSWORD` | Its password, a secret like the other database passwords |
 
-The event store is the `broker-db` container (`postgres:17-alpine`, internal network
-only) with its data in the `broker-db-data` volume. It holds the events queued for
-every subscribing service and the dead letter channel, so queued events survive a
+The event store uses `broker-db:5432` (HAProxy on the internal network). PostgreSQL
+data lives on two Patroni nodes with [separate volumes](../README.md#storage).
+They store events queued for each subscribing service and the dead letter channel, so queued events survive a
 restart of the broker or of its database. Requests and replies live only in the
 broker's memory and expire with their deadline. The broker starts once Service
 Discovery and `broker-db` are healthy, and the gateway once the broker is.
@@ -131,7 +131,7 @@ instrumented service defaults it in code or in its image to
 `http://otel-collector:4317`. The collector, Prometheus, Loki and Grafana read
 their configuration from `observability/`; see [Observability](../README.md#observability).
 
-Service Discovery 4.1.1 exports registry health/load gauges, lifecycle counters and HTTP
+Service Discovery 5.0.0 exports registry health/load gauges, lifecycle counters and HTTP
 traces to that collector. Its resource is `service.name = service-discovery` and
 `service.instance.id = <hostname>`. The metric reader runs every 4 seconds by default;
 `OTEL_METRIC_EXPORT_INTERVAL` is an optional positive-millisecond override, and an empty
@@ -245,9 +245,14 @@ to `.env`. Its OAuth token request and peer checks are REST operations over
 Invitation outbox entries are sent with `Broker.Publish`. Before rolling out
 Guild 4.0.0, start the already-pinned Notification consumer and verify
 `guild.invitation.created.v1` appears in its broker subscription; events published
-before the first subscription are not replayed. Registry 4.0.0 supplies the gRPC
-server needed by the User Management rollout and Guild's next stage. Keep its
-service-only REST routes until every caller has migrated.
+before the first subscription are not replayed.
+
+Lab 5 Package Registry uses the same `MESSAGE_BROKER_ADDRESS` default of
+`broker:9090` for cache invalidation and transaction recovery. It serves the
+package join participant on port 9090 and keeps the direct registration calls
+available during the User Management rollout. Each replica has a 0.5-CPU quota
+and a 256M memory limit. Analytics readers connect to `package-registry-db:5433`
+for `analytics.packages`. Application writes continue through port 5432.
 
 ## Storage and Rotation
 
@@ -279,7 +284,7 @@ The release pins `sanda2004/user-management-service:4.1.0` and `sanda2004/battle
 Battle uses `USER_MANAGEMENT_PROTOCOL=grpc`, `TAMAGOTCHI_PROTOCOL=grpc` and
 `PACKAGE_REGISTRY_PROTOCOL=grpc`. All three peers now advertise `grpcAddress` in
 Discovery. User Management also calls Package Registry over gRPC. The release
-includes the current broker 4.5.1, Package Registry/Guild 4.0.0,
+includes the current broker 5.2.0, Package Registry/Guild 4.0.0,
 Tamagotchi/Notification v4.2.0, and the Tempo observability configuration from main.
 Notification subscribes to friend-request and Battle topics; User Management and
 Tamagotchi subscribe to `raid.completed.v1`.

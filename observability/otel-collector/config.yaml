@@ -81,6 +81,33 @@ receivers:
         if: 'attributes.timestamp != nil'
         field: attributes.timestamp
 
+  prometheus/postgresql:
+    config:
+      scrape_configs:
+        - job_name: patroni
+          scrape_interval: 5s
+          static_configs:
+            - targets: [broker-db-1:8008, broker-db-2:8008]
+              labels: {cluster: broker}
+            - targets: [user-management-db-1:8008, user-management-db-2:8008]
+              labels: {cluster: user-management}
+            - targets: [battle-db-1:8008, battle-db-2:8008]
+              labels: {cluster: battle}
+            - targets: [monster-raid-db-1:8008, monster-raid-db-2:8008]
+              labels: {cluster: monster-raid}
+            - targets: [guild-db-1:8008, guild-db-2:8008]
+              labels: {cluster: guild}
+            - targets: [package-registry-db-1:8008, package-registry-db-2:8008]
+              labels: {cluster: package-registry}
+            - targets: [tamagotchi-db-1:8008, tamagotchi-db-2:8008]
+              labels: {cluster: tamagotchi}
+            - targets: [notification-db-1:8008, notification-db-2:8008]
+              labels: {cluster: notification}
+        - job_name: etcd
+          scrape_interval: 5s
+          static_configs:
+            - targets: [etcd-1:2379, etcd-2:2379, etcd-3:2379]
+
 processors:
   memory_limiter:
     check_interval: 1s
@@ -197,7 +224,7 @@ service:
       processors: [memory_limiter, tail_sampling/drop-probes, batch]
       exporters: [otlp_grpc/tempo]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, prometheus/postgresql]
       processors: [memory_limiter, batch]
       exporters: [otlp_http/prometheus]
     logs:
