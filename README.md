@@ -1274,11 +1274,17 @@ Package Registry also serves [`Participant`](docs/schemas/proto/tamagotchigo/tra
 
 Guild Service owns guild identity, membership, roles, permissions, and Guild Chat. Guilds, memberships, membership requests and chat messages are stored in PostgreSQL. The service uses User Management Service for user identity and relationships and Package Registry Service only when a guild restricts membership to a package.
 
-Version 4.0.0 runs two explicit Guild instances. Both register their REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. REST on 8081 and gRPC on 9090 stay internal; the separate WebSocket listeners retain their published ports. Internal `GET /health` reports liveness and `GET /status` reports readiness, load, PostgreSQL, peer circuits and chat fan-out. REST and gRPC share application rules, deadlines and concurrency slots; gRPC serves `GetGuild`, `ListUserGuilds`, `ListMembers` and `GetMember` for Monster Raid and returns instance/correlation metadata plus rich business errors.
+The deployment runs two explicit Guild instances. Both register their REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. REST on 8081 and gRPC on 9090 stay internal; the separate WebSocket listeners retain their published ports. Internal `GET /health` reports liveness and `GET /status` reports readiness, load, PostgreSQL, peer circuits and chat fan-out. REST and gRPC share application rules, deadlines and concurrency slots; gRPC serves `GetGuild`, `ListUserGuilds`, `ListMembers` and `GetMember` for Monster Raid and returns instance/correlation metadata plus rich business errors.
 
 Every outbound call uses the broker's long-lived gRPC connection. In this release the OAuth token request and User Management/Package Registry checks are REST operations inside `Broker.Send`; converting peer checks to generated gRPC messages is #96 stage 4, after the User Management rollout and Registry release. Each peer retains its circuit breaker; an open one returns `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without disconnecting existing chat sockets. HTTP, gRPC and PostgreSQL export OpenTelemetry, and request logs include trace IDs.
 
 The transactional invitation outbox publishes `guild.invitation.created.v1` using `Broker.Publish`. Workers claim rows exclusively across replicas, keep the event ID and trace context across retries, and mark an event published only after durable acknowledgement. Before rolling out Guild, verify Notification's broker-consuming version is running and has registered this topic: the broker does not replay events published before the first subscription. This release completes #96 stages 1–3 and 5; the combined notification, chat and trace demonstrations remain part of integration acceptance.
+
+##### Lab 5
+
+Guild detail and membership reads use the broker cache for 60 seconds per verified caller. The tags in [Caching](#caching) link a response to its guild and, for a user's guild list, to that user and the guilds in the result. Lists with more than 31 guilds are served without cache metadata. Commits that change a guild or membership invalidate the affected tags. The [Guild collection](collections/guild-service.postman_collection.json) demonstrates a membership hit followed by removal and a fresh read.
+
+`analytics.guilds` retains deleted guilds, and `analytics.guild_members` keeps each completed membership with its `left_at`. A new membership after rejoining gets its own row. Read both views on the database proxy's replica port using `analytics_reader`. The instance's `/status` includes cgroup CPU and memory shares, along with its concurrency and dependency checks.
 
 ##### Endpoint Catalog
 
@@ -2560,7 +2566,7 @@ pinned service releases also use the broker for peer calls and event delivery:
 - **Battle 4.0.2** calls User Management, Tamagotchi and Package Registry over gRPC and publishes durable request/completion events.
 - **Map 5.0.0** reads User Management relationships over gRPC and publishes proximity events. It can follow its Redis through Sentinel; until the Sentinels are in this stack, `MAP_REDIS_SENTINELS` is empty and it uses `map-redis` directly.
 - **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and runs with `REDIS_MODE=standalone` until the Sentinels are in this stack.
-- **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
+- **Guild 5.0.0** calls its peers as REST operations over `Broker.Send` and publishes invitation events. It adds cache metadata and invalidation for membership reads and exposes both Guild analytics views.
 - **Package Registry 5.0.0** serves REST, gRPC and the package join participant. It uses the broker for cache invalidation and transaction recovery. Administrator access comes from `ADMIN_USER_IDS`.
 - **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
 - **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.

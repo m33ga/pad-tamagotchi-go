@@ -247,6 +247,11 @@ Guild 4.0.0, start the already-pinned Notification consumer and verify
 `guild.invitation.created.v1` appears in its broker subscription; events published
 before the first subscription are not replayed.
 
+Lab 5 Guild sends cache invalidations through the existing broker connection.
+Each Guild replica has a 0.5-CPU quota and a 256M memory limit. The
+`analytics_reader` role reads `analytics.guilds` and `analytics.guild_members`
+through `guild-db:5433`. Guild's application connections continue to use 5432.
+
 Lab 5 Package Registry uses the same `MESSAGE_BROKER_ADDRESS` default of
 `broker:9090` for cache invalidation and transaction recovery. It serves the
 package join participant on port 9090 and keeps the direct registration calls
