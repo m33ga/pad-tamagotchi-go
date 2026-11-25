@@ -709,6 +709,135 @@
           ]
         }
       ]
+    },
+    {
+      "name": "Lab 5 · Membership cache",
+      "description": "Use a test guild. Run the owner and invitee logins, create the guild, send the invitation and accept it. Keep ownership unchanged for this sequence. The removal step ends the invitee membership.",
+      "item": [
+        {
+          "name": "1. Warm the invitee membership cache",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{guildBaseUrl}}/api/v1/guilds/{{guildId}}/members/{{inviteeUserId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"broker cache is enabled\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.be.oneOf([\"MISS\", \"HIT\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Read the invitee membership again",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{guildBaseUrl}}/api/v1/guilds/{{guildId}}/members/{{inviteeUserId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"broker returns a cache HIT\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.equal(\"HIT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Remove the invitee",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{guildBaseUrl}}/api/v1/guilds/{{guildId}}/members/{{inviteeUserId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Read the removed membership",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{guildBaseUrl}}/api/v1/guilds/{{guildId}}/members/{{inviteeUserId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"broker returns a cache MISS\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.equal(\"MISS\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [
