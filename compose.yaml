@@ -592,6 +592,8 @@ services:
     logging: *default-logging
     image: cosmak47/pad-package-registry-service:4.0.0
     pull_policy: always
+    cpus: 0.5
+    mem_limit: 256M
     deploy:
       replicas: 2
     networks: [internal]

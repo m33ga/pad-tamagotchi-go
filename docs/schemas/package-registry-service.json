@@ -1667,6 +1667,8 @@
             "required": [
               "inFlight",
               "limit",
+              "cpu",
+              "memory",
               "utilization"
             ],
             "properties": {
@@ -1677,6 +1679,18 @@
               "limit": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "cpu": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Smoothed CPU usage as a share of the container quota."
+              },
+              "memory": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Working-set memory as a share of the container limit."
               },
               "utilization": {
                 "type": "number",

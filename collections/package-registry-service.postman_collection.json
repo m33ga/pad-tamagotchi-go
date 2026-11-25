@@ -1265,6 +1265,160 @@
           ]
         }
       ]
+    },
+    {
+      "name": "Lab 5 · Package cache",
+      "description": "Run after admin login and package creation, on a stack with the Lab 5 broker cache and Registry. Use a demo package because this sequence changes its description.",
+      "item": [
+        {
+          "name": "1. Warm the package cache",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"broker cache is enabled\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.be.oneOf([\"MISS\", \"HIT\"]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Read the same package from the cache",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"broker returns a cache HIT\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.equal(\"HIT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Update the package description",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"{{lab5PackageDescription}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"lab5PackageDescription\", \"Lab 5 cache demo \" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"description was committed\", () => pm.expect(pm.response.json().description).to.equal(pm.collectionVariables.get(\"lab5PackageDescription\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Read the updated package",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{registryBaseUrl}}/api/v1/packages/{{packageId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the next read misses the invalidated entry\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.equal(\"MISS\"));",
+                  "pm.test(\"the updated description is visible\", () => pm.expect(pm.response.json().description).to.equal(pm.collectionVariables.get(\"lab5PackageDescription\")));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [

@@ -659,9 +659,11 @@ Without `public` or `vary`, the entry is keyed by every identity header the brok
 
 | Owner | Reads | `max-age` | Keyed by | Tags |
 |---|---|---:|---|---|
-| Package Registry | `GetPackage`, `ListStatDefinitions`, `ListBattleBoosts`, `GetBattleBoost` | 300 | `public` | `package:<packageId>` |
-| Package Registry | `ListPackages`, `ListRaidConfigurations`, `ListRaidSchedules` | 60 | `public` | `package:all`, `raid-config:all`, `raid-schedule:all` |
-| Package Registry | `GetRaidConfiguration`, `GetRaidSchedule` | 300 | `public` | `raid-config:<id>`, `raid-schedule:<id>` |
+| Package Registry | `GetPackage` | 300 | `public` | `package:<packageId>` |
+| Package Registry | `ListStatDefinitions`, `ListBattleBoosts`, `GetBattleBoost` | 300 | caller | `package:<packageId>` |
+| Package Registry | `ListPackages` | 60 | `public` | `package:all` |
+| Package Registry | `ListRaidConfigurations`, `ListRaidSchedules` | 60 | caller | `raid-config:all`, `raid-schedule:all` |
+| Package Registry | `GetRaidConfiguration`, `GetRaidSchedule` | 300 | caller | `raid-config:<id>`, `raid-schedule:<id>` |
 | Package Registry | `GetRegistration`, `ListUserRegistrations` | 60 | caller | `registration:<userId>` |
 | User Management | `GetUser`, `ListUserPackages` | 60 | caller | `user:<userId>` |
 | User Management | `ListRelationships`, `GetRelationship` | 60 | caller | `user:<userId>` (and `user:<otherUserId>`) |
@@ -1057,13 +1059,21 @@ instead of querying each pair; it follows additional pages for larger graphs.
 
 Package Registry Service owns package metadata, package membership, package-specific Tamagotchi statistic definitions, and Monster Raid configurations and schedules. External bearer tokens terminate at the gateway; the service authorizes from trusted gateway identity headers and rejects direct requests without `X-Caller-Kind`. Package moderators come from the service database, while globally privileged admins are authenticated users configured through `ADMIN_USER_IDS` - the former caller-supplied role header is not accepted.
 
-Version 4.0.0 runs two Package Registry instances on the internal network, with REST on 8082 and gRPC on 9090. Each registers its REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. Internal `GET /health` reports liveness; `GET /status` reports readiness, load and PostgreSQL health. These endpoints and both listeners have no published host port. Responses include the instance ID, and PostgreSQL serializes startup migrations so both replicas may start together.
+The deployment runs two Package Registry instances on the internal network, with REST on 8082 and gRPC on 9090. Each registers its REST address, `grpcAddress: <hostname>:9090` and `topics: []` with Service Discovery. Internal `GET /health` reports liveness; `GET /status` reports readiness, load and PostgreSQL health. These endpoints and both listeners have no published host port. Responses include the instance ID, and PostgreSQL serializes startup migrations so both replicas may start together.
 
-The `tamagotchigo.packageregistry.v1.PackageRegistry` API serves all 12 methods in the [protobuf contract](docs/schemas/proto/tamagotchigo/packageregistry/v1/package_registry.proto). REST and gRPC share application authorization, registration idempotency, concurrency slots and deadlines. The broker supplies verified service metadata; gRPC errors include `google.rpc.ErrorInfo` with the business error code and domain `package-registry`. Both transports and PostgreSQL export OpenTelemetry to the collector. The five service-only REST routes remain until every caller has migrated; this release completes #97 stages 1 and 2, not stage 3.
+The `tamagotchigo.packageregistry.v1.PackageRegistry` API serves all 12 methods in the [protobuf contract](docs/schemas/proto/tamagotchigo/packageregistry/v1/package_registry.proto). REST and gRPC share application authorization, registration idempotency, concurrency slots and deadlines. The broker supplies verified service metadata; gRPC errors include `google.rpc.ErrorInfo` with the business error code and domain `package-registry`. Both transports and PostgreSQL export OpenTelemetry to the collector. The service-only REST routes remain available during the migration to gRPC.
 
 Raid attack/defense accept `0..2147483647`; duration, participant limit and battle-boost `maxUsesPerBattle` accept `1..2147483647`. Invalid writes return `422`; legacy stored values outside those ranges return gRPC `FAILED_PRECONDITION` instead of wrapping or returning partial results. HP and rewards retain their `int64` range. An administrator can inspect and repair a legacy record through REST.
 
 `POST /packages/{packageId}/registrations` and `GET /users/{userId}/package-registrations` require `X-Service-Name: user-management-service`. Raid schedule reads accept `X-Service-Name: monster-raid-service` or a configured administrator. Every handler has a bounded deadline and fail-fast concurrency limit, returning `504 REQUEST_TIMEOUT` or `503 CONCURRENCY_LIMIT_REACHED` with `Retry-After: 1`.
+
+##### Lab 5
+
+Package details and lists use a shared broker cache. Stat definitions, boosts, raid configurations, raid schedules and registrations are cached per verified caller so that access restrictions still apply on cache hits. The TTLs and tags are in [Caching](#caching). A committed write publishes `cache.invalidate.v1` for the changed detail and any affected list. The [Registry Postman collection](collections/package-registry-service.postman_collection.json) includes a Lab 5 cache sequence that warms a package, confirms a hit and checks the new response after a write.
+
+Package Registry also serves [`Participant`](docs/schemas/proto/tamagotchigo/transactions/v1/participant.proto). It prepares registration for an active package when the broker calls on behalf of User Management. Either replica can finish the prepared write. When a prepared registration is older than 30 seconds, each replica polls the coordinator on its 10-second recovery cycle. A committed registration invalidates `registration:<userId>`.
+
+`analytics.packages` exposes the six package fields in [Analytics](#analytics) and is readable through the database proxy's replica port. `/status` uses the container's CPU and memory shares for utilization and still exposes the concurrency counters.
 
 ##### Endpoint Catalog
 
