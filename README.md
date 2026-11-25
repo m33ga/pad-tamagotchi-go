@@ -1810,7 +1810,7 @@ While a battle is `SETTLING`, further actions answer `409 BATTLE_NOT_ACTIVE`, an
 
 The 4.0.2 image installs verified .NET zero-code instrumentation and exports OTLP/gRPC to `http://otel-collector:4317`, with canonical `service.name=battle` and hostname `service.instance.id`. Request logs include traceId and spanId. No REST route is removed.
 
-The coordinated release pins Battle 4.0.2 with User Management 4.1.0, Tamagotchi v4.2.0 and Package Registry 4.0.0. All three peer protocols select `grpc`; calls use `Broker.Send` and events use `Broker.Publish`. Notification v4.2.0 consumes the Battle topics. Release 4.0.2 normalizes event payload fields to camelCase, including pending legacy outbox rows. Settlement retries preserve business references and idempotency keys. Traces are available in Grafana Explore through Tempo.
+The coordinated Lab 4 release pinned Battle 4.0.2 with User Management 4.1.0, Tamagotchi v4.2.0 and Package Registry 4.0.0. All three peer protocols select `grpc`; calls use `Broker.Send` and events use `Broker.Publish`. Notification v4.2.0 consumes the Battle topics. Release 4.0.2 normalizes event payload fields to camelCase, including pending legacy outbox rows. Settlement retries preserve business references and idempotency keys. Traces are available in Grafana Explore through Tempo.
 
 #### Map Service
 
@@ -2561,7 +2561,7 @@ pinned service releases also use the broker for peer calls and event delivery:
 - **Map 5.0.0** reads User Management relationships over gRPC and publishes proximity events. It can follow its Redis through Sentinel; until the Sentinels are in this stack, `MAP_REDIS_SENTINELS` is empty and it uses `map-redis` directly.
 - **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and runs with `REDIS_MODE=standalone` until the Sentinels are in this stack.
 - **Guild 4.0.0** calls User Management and Package Registry as REST operations over `Broker.Send` and publishes invitation events. Its peer gRPC conversion remains a separate service change.
-- **Package Registry 4.0.0** serves gRPC alongside REST and has no outbound dependency. Administrator access comes from `ADMIN_USER_IDS`.
+- **Package Registry 5.0.0** serves REST, gRPC and the package join participant. It uses the broker for cache invalidation and transaction recovery. Administrator access comes from `ADMIN_USER_IDS`.
 - **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
 - **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.
 

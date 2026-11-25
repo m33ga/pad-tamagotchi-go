@@ -56,8 +56,8 @@ Every service uses a 4 second request deadline, below the gateway's 5 second
 upstream timeout, so a slow request ends with the service's own
 `504 REQUEST_TIMEOUT`. The per-service overrides `TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS`
 and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi 4.2.0
-validates health statistics against Package Registry over gRPC through the broker, which
-Registry 4.0.0 serves. Like User Management it follows `USE_MOCK_PACKAGE_REGISTRY`: `false`,
+validates health statistics through Package Registry's gRPC API via the broker.
+Like User Management it follows `USE_MOCK_PACKAGE_REGISTRY`: `false`,
 the default, uses the real Package Registry as the `tamagotchi-service` client; `true` keeps
 Tamagotchi's built-in registry mock.
 
@@ -245,9 +245,14 @@ to `.env`. Its OAuth token request and peer checks are REST operations over
 Invitation outbox entries are sent with `Broker.Publish`. Before rolling out
 Guild 4.0.0, start the already-pinned Notification consumer and verify
 `guild.invitation.created.v1` appears in its broker subscription; events published
-before the first subscription are not replayed. Registry 4.0.0 supplies the gRPC
-server needed by the User Management rollout and Guild's next stage. Keep its
-service-only REST routes until every caller has migrated.
+before the first subscription are not replayed.
+
+Lab 5 Package Registry uses the same `MESSAGE_BROKER_ADDRESS` default of
+`broker:9090` for cache invalidation and transaction recovery. It serves the
+package join participant on port 9090 and keeps the direct registration calls
+available during the User Management rollout. Each replica has a 0.5-CPU quota
+and a 256M memory limit. Analytics readers connect to `package-registry-db:5433`
+for `analytics.packages`. Application writes continue through port 5432.
 
 ## Storage and Rotation
 
