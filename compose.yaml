@@ -79,6 +79,103 @@ x-etcd: &etcd
     retries: 20
     start_period: 5s
 
+# The three Redis Sentinels (README, Replication and Failover) share everything but their name.
+# Each watches map-redis, monster-raid-redis and notification-redis as map, monster-raid and
+# notification, and promotes a replica when two of them agree a primary is down. The config is
+# written on the first start only, into a directory of its own that Sentinel can rewrite: it
+# records the current primaries, replicas and peer Sentinels there, so a restarted Sentinel
+# resumes where it was. Recreating the container starts from the initial primaries again, and
+# the other Sentinels' announcements bring it up to date.
+#
+# Sentinels and Redis nodes find each other by fixed address (see the internal network), never by
+# host name: Docker removes a stopped container's name, and a Sentinel that cannot resolve a dead
+# primary stalls on every attempt and stays in TILT, the mode in which it never fails over.
+x-sentinel: &sentinel
+  logging: *default-logging
+  image: redis:8-alpine
+  restart: unless-stopped
+  networks: [internal]
+  # Sentinel enters TILT, and refuses to fail over, when its timer runs more than 2 s late. It needs
+  # little CPU but needs it on time: four times the default weight keeps it scheduled when the
+  # rest of the stack saturates the machine.
+  cpu_shares: 4096
+  environment:
+    MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
+    MONSTER_RAID_REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
+    NOTIFICATION_REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
+  command:
+    - sh
+    - -c
+    - |
+      set -eu
+      conf=/etc/redis-sentinel/sentinel.conf
+      monitor() {
+        echo "sentinel monitor $$1 $$2 6379 2"
+        echo "sentinel auth-pass $$1 $$3"
+        echo "sentinel down-after-milliseconds $$1 3000"
+        echo "sentinel failover-timeout $$1 10000"
+        echo "sentinel parallel-syncs $$1 1"
+      }
+      if [ ! -f "$$conf" ]; then
+        mkdir -p "$$(dirname "$$conf")"
+        umask 077
+        {
+          echo "port 26379"
+          echo "protected-mode no"
+          monitor map 10.89.200.11 "$$MAP_REDIS_PASSWORD"
+          monitor monster-raid 10.89.200.21 "$$MONSTER_RAID_REDIS_PASSWORD"
+          monitor notification 10.89.200.31 "$$NOTIFICATION_REDIS_PASSWORD"
+        } > "$$conf"
+      fi
+      exec docker-entrypoint.sh redis-server "$$conf" --sentinel
+  depends_on:
+    map-redis:
+      condition: service_healthy
+    monster-raid-redis:
+      condition: service_healthy
+    notification-redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+  deploy:
+    resources:
+      limits:
+        memory: 64M
+
+# The broker's response cache nodes (README, Caching): plain Redis, nothing written to disk, the
+# least recently used key evicted at the memory cap, and no replica, since a lost node costs
+# misses, not data. No password, like the broker's other internal peers: they are reachable on
+# the internal network only.
+x-cache-node: &cache-node
+  logging: *default-logging
+  image: redis:8-alpine
+  restart: unless-stopped
+  networks: [internal]
+  command:
+    - redis-server
+    - --save
+    - ""
+    - --appendonly
+    - "no"
+    - --maxmemory
+    - 64mb
+    - --maxmemory-policy
+    - allkeys-lru
+    - --protected-mode
+    - "no"
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+  deploy:
+    resources:
+      limits:
+        memory: 128M
+
 services:
   etcd-1:
     <<: *etcd
@@ -179,7 +276,7 @@ services:
 
   broker:
     logging: *default-logging
-    image: grdz/broker:5.2.0
+    image: grdz/broker:5.4.0
     pull_policy: always
     deploy:
       resources:
@@ -197,11 +294,21 @@ services:
       - "127.0.0.1:8501:8080"
     environment:
       BROKER_DATABASE_URL: postgresql://${BROKER_DB_USER}:${BROKER_DB_PASSWORD}@broker-db:5432/${BROKER_DB_NAME}
+      # The response cache (README, Caching), spread over the nodes by the broker's hash ring.
+      # A node that is down only costs misses, so the broker waits for the nodes to start, not
+      # to be healthy.
+      BROKER_CACHE_NODES: cache-1:6379,cache-2:6379,cache-3:6379
     depends_on:
       service-discovery:
         condition: service_healthy
       broker-db:
         condition: service_healthy
+      cache-1:
+        condition: service_started
+      cache-2:
+        condition: service_started
+      cache-3:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
       interval: 5s
@@ -376,10 +483,10 @@ services:
       - .env
       - ./secrets/map-service.env
     environment:
-      # Plain Redis until the Sentinels are in this stack (#136); an empty list turns
-      # Sentinel discovery off and uses REDIS_ADDR.
-      MAP_REDIS_SENTINELS: ""
-      REDIS_ADDR: map-redis:6379
+      # Redis is found through the Sentinels (README, Replication and Failover): they name the
+      # current primary of the group map and announce a new one after a failover.
+      MAP_REDIS_SENTINELS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+      MAP_REDIS_MASTER: map
       REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
@@ -391,7 +498,11 @@ services:
         condition: service_healthy
       broker:
         condition: service_healthy
-      map-redis:
+      sentinel-1:
+        condition: service_healthy
+      sentinel-2:
+        condition: service_healthy
+      sentinel-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8080/health"]
@@ -400,11 +511,23 @@ services:
       retries: 5
       start_period: 10s
 
+  # The initial primary of the Sentinel group map; map-redis-replica follows it. Either may be
+  # the primary after a failover, so both take the same password for clients (requirepass) and
+  # for the primary they replicate from (masterauth). Both have a fixed address, which Sentinel
+  # names to clients after a failover. No restart policy: a killed primary stays down until it is
+  # started again, and Sentinel then turns it into a replica of the promoted one.
   map-redis:
     logging: *default-logging
     image: redis:8-alpine
-    networks: [internal]
-    command: ["redis-server", "--requirepass", "${MAP_REDIS_PASSWORD}"]
+    networks:
+      internal:
+        ipv4_address: 10.89.200.11
+    command:
+      - redis-server
+      - --requirepass
+      - ${MAP_REDIS_PASSWORD}
+      - --masterauth
+      - ${MAP_REDIS_PASSWORD}
     environment:
       REDISCLI_AUTH: ${MAP_REDIS_PASSWORD}
     volumes:
@@ -414,6 +537,42 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  map-redis-replica:
+    logging: *default-logging
+    image: redis:8-alpine
+    networks:
+      internal:
+        ipv4_address: 10.89.200.12
+    command:
+      - redis-server
+      - --replicaof
+      - 10.89.200.11
+      - "6379"
+      - --requirepass
+      - ${MAP_REDIS_PASSWORD}
+      - --masterauth
+      - ${MAP_REDIS_PASSWORD}
+    environment:
+      REDISCLI_AUTH: ${MAP_REDIS_PASSWORD}
+    volumes:
+      - map-redis-replica-data:/data
+    depends_on:
+      map-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   monster-raid-api:
     logging: *default-logging
@@ -437,9 +596,10 @@ services:
       POSTGRES_DB: ${MONSTER_RAID_DB_NAME}
       POSTGRES_USER: ${MONSTER_RAID_DB_USER}
       POSTGRES_PASSWORD: ${MONSTER_RAID_DB_PASSWORD}
-      # Plain Redis until the Sentinels are in this stack (#136); 5.0.0 defaults to sentinel.
-      REDIS_MODE: standalone
-      REDIS_ADDR: monster-raid-redis:6379
+      # Redis is found through the Sentinels under the group name monster-raid.
+      REDIS_MODE: sentinel
+      REDIS_SENTINEL_ADDRS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+      REDIS_MASTER_NAME: monster-raid
       REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
       # Below the gateway's 5 second upstream timeout, so a slow request ends
       # with this service's own REQUEST_TIMEOUT rather than the gateway's.
@@ -455,7 +615,11 @@ services:
         condition: service_healthy
       monster-raid-db:
         condition: service_healthy
-      monster-raid-redis:
+      sentinel-1:
+        condition: service_healthy
+      sentinel-2:
+        condition: service_healthy
+      sentinel-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8080/health"]
@@ -493,11 +657,19 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: monster-raid-db-2:5432
     volumes: [monster-raid-db-2-data:/var/lib/postgresql/data]
 
+  # The initial primary of the Sentinel group monster-raid, set up like map-redis.
   monster-raid-redis:
     logging: *default-logging
     image: redis:8-alpine
-    networks: [internal]
-    command: ["redis-server", "--requirepass", "${MONSTER_RAID_REDIS_PASSWORD}"]
+    networks:
+      internal:
+        ipv4_address: 10.89.200.21
+    command:
+      - redis-server
+      - --requirepass
+      - ${MONSTER_RAID_REDIS_PASSWORD}
+      - --masterauth
+      - ${MONSTER_RAID_REDIS_PASSWORD}
     environment:
       REDISCLI_AUTH: ${MONSTER_RAID_REDIS_PASSWORD}
     volumes:
@@ -507,6 +679,42 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  monster-raid-redis-replica:
+    logging: *default-logging
+    image: redis:8-alpine
+    networks:
+      internal:
+        ipv4_address: 10.89.200.22
+    command:
+      - redis-server
+      - --replicaof
+      - 10.89.200.21
+      - "6379"
+      - --requirepass
+      - ${MONSTER_RAID_REDIS_PASSWORD}
+      - --masterauth
+      - ${MONSTER_RAID_REDIS_PASSWORD}
+    environment:
+      REDISCLI_AUTH: ${MONSTER_RAID_REDIS_PASSWORD}
+    volumes:
+      - monster-raid-redis-replica-data:/data
+    depends_on:
+      monster-raid-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   guild-api-1:
     logging: *default-logging
@@ -737,6 +945,12 @@ services:
       POSTGRES_DB: ${NOTIFICATION_DB_NAME}
       POSTGRES_USER: ${NOTIFICATION_DB_USER}
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      # Redis is found through the Sentinels under the group name notification, with the same
+      # settings as Monster Raid (#130). REDIS_ADDR stays for releases that do not read them yet:
+      # they keep working against the initial primary until its first failover.
+      REDIS_MODE: sentinel
+      REDIS_SENTINEL_ADDRS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+      REDIS_MASTER_NAME: notification
       REDIS_ADDR: notification-redis:6379
       REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
       REQUEST_TIMEOUT_SECONDS: 4
@@ -745,7 +959,11 @@ services:
         condition: service_healthy
       notification-db:
         condition: service_healthy
-      notification-redis:
+      sentinel-1:
+        condition: service_healthy
+      sentinel-2:
+        condition: service_healthy
+      sentinel-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
@@ -783,11 +1001,22 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: notification-db-2:5432
     volumes: [notification-db-2-data:/var/lib/postgresql/data]
 
+  # The initial primary of the Sentinel group notification, set up like map-redis, with the
+  # append-only file it always had.
   notification-redis:
     logging: *default-logging
     image: redis:8-alpine
-    networks: [internal]
-    command: ["redis-server", "--requirepass", "${NOTIFICATION_REDIS_PASSWORD}", "--appendonly", "yes"]
+    networks:
+      internal:
+        ipv4_address: 10.89.200.31
+    command:
+      - redis-server
+      - --requirepass
+      - ${NOTIFICATION_REDIS_PASSWORD}
+      - --masterauth
+      - ${NOTIFICATION_REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
     environment:
       REDISCLI_AUTH: ${NOTIFICATION_REDIS_PASSWORD}
     volumes:
@@ -797,6 +1026,81 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  notification-redis-replica:
+    logging: *default-logging
+    image: redis:8-alpine
+    networks:
+      internal:
+        ipv4_address: 10.89.200.32
+    command:
+      - redis-server
+      - --replicaof
+      - 10.89.200.31
+      - "6379"
+      - --requirepass
+      - ${NOTIFICATION_REDIS_PASSWORD}
+      - --masterauth
+      - ${NOTIFICATION_REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+    environment:
+      REDISCLI_AUTH: ${NOTIFICATION_REDIS_PASSWORD}
+    volumes:
+      - notification-redis-replica-data:/data
+    depends_on:
+      notification-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  sentinel-1:
+    <<: *sentinel
+    hostname: sentinel-1
+    networks:
+      internal:
+        ipv4_address: 10.89.200.41
+
+  sentinel-2:
+    <<: *sentinel
+    hostname: sentinel-2
+    networks:
+      internal:
+        ipv4_address: 10.89.200.42
+
+  sentinel-3:
+    <<: *sentinel
+    hostname: sentinel-3
+    networks:
+      internal:
+        ipv4_address: 10.89.200.43
+
+  cache-1:
+    <<: *cache-node
+
+  cache-2:
+    <<: *cache-node
+
+  cache-3:
+    <<: *cache-node
+
+  # A fourth node for the sharding demo, started only on request:
+  #   docker compose --profile cache-demo up -d cache-4
+  # and then added to the broker's ring through its admin listener (POST /cache/nodes).
+  cache-4:
+    <<: *cache-node
+    profiles: [cache-demo]
 
   # Observability (observability/): the OpenTelemetry Collector receives traces and metrics
   # over OTLP and reads every container's log file, and hands them to Tempo, Prometheus and
@@ -809,6 +1113,11 @@ services:
     user: "0:0"
     networks: [internal]
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    # Its Redis receivers read INFO from every Redis node and Sentinel.
+    environment:
+      MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD}
+      MONSTER_RAID_REDIS_PASSWORD: ${MONSTER_RAID_REDIS_PASSWORD}
+      NOTIFICATION_REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
     volumes:
       - ./observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
       # From Git Bash on Windows, run compose with MSYS_NO_PATHCONV=1 so this path is kept.
@@ -934,15 +1243,29 @@ networks:
   # Published listeners: the gateway, both Guild sockets, and loopback-only Discovery,
   # broker admin and Grafana.
   edge:
-  # Every container. No route to the internet, and nothing on it is published.
+  # Every container. No route to the internet, and nothing on it is published. The subnet is
+  # fixed, outside Docker's default address pools, so the Redis nodes and Sentinels keep the same
+  # address across restarts (10.89.200.0/24); every other container gets one from ip_range.
   internal:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.89.0.0/16
+          ip_range: 10.89.0.0/17
 
 volumes:
   service-discovery-data:
   map-redis-data:
+  map-redis-replica-data:
+  monster-raid-data:
   monster-raid-redis-data:
+  monster-raid-redis-replica-data:
+  guild-data:
+  package-registry-data:
+  tamagotchi-data:
+  notification-data:
   notification-redis-data:
+  notification-redis-replica-data:
   otel-collector-data:
   prometheus-data:
   loki-data:

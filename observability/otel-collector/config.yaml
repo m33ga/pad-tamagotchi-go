@@ -1,6 +1,6 @@
 # The OpenTelemetry Collector of the platform. Services send traces and metrics over OTLP;
-# container logs are read from Docker's json-file logs. Everything leaves to one backend each:
-# traces to Tempo, metrics to Prometheus, logs to Loki.
+# container logs are read from Docker's json-file logs, and Redis metrics from each node's INFO.
+# Everything leaves to one backend each: traces to Tempo, metrics to Prometheus, logs to Loki.
 
 receivers:
   otlp:
@@ -108,6 +108,98 @@ receivers:
           static_configs:
             - targets: [etcd-1:2379, etcd-2:2379, etcd-3:2379]
 
+  # Redis INFO from every node, every 15 s (README, Replication and Failover; Caching). The data
+  # nodes report their role, so the current primary of each Sentinel group shows as the node
+  # with role primary; the cache nodes report memory, keys and evictions; the Sentinels report
+  # how many primaries they watch and whether they are in TILT. cache-4 runs only under the
+  # cache-demo profile and is not scraped: a receiver for an absent node would log an error on
+  # every scrape. Each node becomes service.instance.id, see transform/redis.
+  redis/map-redis:
+    endpoint: map-redis:6379
+    password: ${env:MAP_REDIS_PASSWORD}
+    collection_interval: 15s
+    resource_attributes: &redis-resource-attributes
+      server.address: {enabled: true}
+      server.port: {enabled: true}
+    metrics: &redis-data-metrics
+      redis.role: {enabled: true}
+      redis.maxmemory: {enabled: true}
+
+  redis/map-redis-replica:
+    endpoint: map-redis-replica:6379
+    password: ${env:MAP_REDIS_PASSWORD}
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/monster-raid-redis:
+    endpoint: monster-raid-redis:6379
+    password: ${env:MONSTER_RAID_REDIS_PASSWORD}
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/monster-raid-redis-replica:
+    endpoint: monster-raid-redis-replica:6379
+    password: ${env:MONSTER_RAID_REDIS_PASSWORD}
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/notification-redis:
+    endpoint: notification-redis:6379
+    password: ${env:NOTIFICATION_REDIS_PASSWORD}
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/notification-redis-replica:
+    endpoint: notification-redis-replica:6379
+    password: ${env:NOTIFICATION_REDIS_PASSWORD}
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/cache-1:
+    endpoint: cache-1:6379
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/cache-2:
+    endpoint: cache-2:6379
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/cache-3:
+    endpoint: cache-3:6379
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-data-metrics
+
+  redis/sentinel-1:
+    endpoint: sentinel-1:26379
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: &redis-sentinel-metrics
+      redis.mode: {enabled: true}
+      redis.sentinel.masters: {enabled: true}
+      redis.sentinel.tilt_since_seconds: {enabled: true}
+      redis.sentinel.total_tilt: {enabled: true}
+
+  redis/sentinel-2:
+    endpoint: sentinel-2:26379
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-sentinel-metrics
+
+  redis/sentinel-3:
+    endpoint: sentinel-3:26379
+    collection_interval: 15s
+    resource_attributes: *redis-resource-attributes
+    metrics: *redis-sentinel-metrics
+
 processors:
   memory_limiter:
     check_interval: 1s
@@ -182,6 +274,16 @@ processors:
       - name: keep-everything-else
         type: always_sample
 
+  # A Redis node or Sentinel reports under one job, redis, with the node's host name as its
+  # instance: redis_role{job="redis", instance="map-redis", role="primary"}.
+  transform/redis:
+    error_mode: ignore
+    metric_statements:
+      - context: resource
+        statements:
+          - set(attributes["service.name"], "redis")
+          - set(attributes["service.instance.id"], attributes["server.address"])
+
   batch:
     timeout: 2s
     send_batch_size: 1024
@@ -226,6 +328,22 @@ service:
     metrics:
       receivers: [otlp, prometheus/postgresql]
       processors: [memory_limiter, batch]
+      exporters: [otlp_http/prometheus]
+    metrics/redis:
+      receivers:
+        - redis/map-redis
+        - redis/map-redis-replica
+        - redis/monster-raid-redis
+        - redis/monster-raid-redis-replica
+        - redis/notification-redis
+        - redis/notification-redis-replica
+        - redis/cache-1
+        - redis/cache-2
+        - redis/cache-3
+        - redis/sentinel-1
+        - redis/sentinel-2
+        - redis/sentinel-3
+      processors: [memory_limiter, transform/redis, batch]
       exporters: [otlp_http/prometheus]
     logs:
       receivers: [file_log/docker]

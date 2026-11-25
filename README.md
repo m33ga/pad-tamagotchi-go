@@ -2405,7 +2405,7 @@ See the [gateway specification](gateway/docs/spec.md) for routing, token claims,
 
 ## Deployment
 
-Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:5.0.0`, `grdz/service-discovery:5.0.0` and `grdz/broker:5.2.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
+Docker Compose runs the gateway, Service Discovery, the message broker and all eight services from a single [`compose.yaml`](compose.yaml), using prebuilt images. The gateway, registry and broker images are pinned to `grdz/gateway:5.0.0`, `grdz/service-discovery:5.0.0` and `grdz/broker:5.4.0` directly in Compose, alongside the service images. The broker keeps its durable event store in its own PostgreSQL database, `broker-db`. Every container joins `internal`, a network declared `internal: true` with no route to the internet; only the gateway, Guild, Service Discovery and the broker also join `edge`, because they publish a port. Service Discovery also needs `edge` to reach the Discord webhook. Configuration and credential setup are described in [Configuration](docs/configuration.md).
 
 | Entry point | Image | Address |
 |---|---|---|
@@ -2506,6 +2506,43 @@ The collector scrapes the 16 Patroni nodes and the three etcd members. In Promet
 
 The 16 PostgreSQL nodes are limited to 192 MiB each with `shared_buffers=16MB`. Databases and caches publish no host ports. Service Discovery, Redis and observability keep their named volumes. The Redis passwords are `MAP_REDIS_PASSWORD`, `MONSTER_RAID_REDIS_PASSWORD` and `NOTIFICATION_REDIS_PASSWORD`. Application images apply their migrations on startup.
 
+### Redis Replication and Cache Nodes
+
+The Redis instances that hold state run as a primary and a replica each, watched by three Sentinels, as described in [Replication and Failover](#replication-and-failover). The broker's response cache runs on three plain Redis nodes of its own, described in [Caching](#caching). All of them use `redis:8-alpine`, join only `internal` and publish no port.
+
+| Container | Role | Persistence | Memory limit |
+|---|---|---|---:|
+| `map-redis`, `monster-raid-redis`, `notification-redis` | initial primary of the Sentinel group `map`, `monster-raid`, `notification` | as before: RDB snapshots, plus the append-only file for `notification-redis`; one volume each | 256 MiB |
+| `map-redis-replica`, `monster-raid-redis-replica`, `notification-redis-replica` | replica of the group's primary (`replicaof`), promoted on failover | the same as its primary, on its own volume | 256 MiB |
+| `sentinel-1`, `sentinel-2`, `sentinel-3` | Sentinel on port `26379`, watching the three groups with quorum 2, `down-after-milliseconds 3000`, `failover-timeout 10000` | its own config file, which it rewrites with the current topology | 64 MiB |
+| `cache-1`, `cache-2`, `cache-3` | the broker's cache nodes, `maxmemory 64mb` with `allkeys-lru`, no replica | none (`save ""`, `appendonly no`) | 128 MiB |
+| `cache-4` | a fourth cache node for the sharding demo, only with the `cache-demo` profile | none | 128 MiB |
+
+Both nodes of a group take the group's password for clients (`requirepass`) and for replicating (`masterauth`), so either can be the primary. Nodes and Sentinels find each other by fixed address, never by host name: the `internal` network has the fixed subnet `10.89.0.0/16`, and the six Redis nodes and three Sentinels keep the same address across restarts and recreation: `map-redis` `10.89.200.11` and its replica `.12`, `monster-raid-redis` `.21` and `.22`, `notification-redis` `.31` and `.32`, and `sentinel-1` to `sentinel-3` `.41` to `.43`. Docker removes a stopped container's name from its DNS, and a Sentinel that cannot resolve the primary it watches stalls on every attempt and stays in TILT, the mode in which it never fails over; with addresses there is nothing to resolve. Clients get the current primary's address from the Sentinels. Each Sentinel writes its config file on its first start, with the passwords from `.env`; a restarted Sentinel keeps what it learned, and a recreated one starts from the initial primaries and is corrected by the other two. Recreating all three at once after a failover (for example after changing their settings) would point them at the old primaries: recreate them together with the data nodes, `docker compose up -d --force-recreate` on the six nodes and the Sentinels, which restores the initial roles. The data nodes have no restart policy, so a killed primary stays down until it is started again.
+
+**Clients.** Map 5.0.0 and Monster Raid 5.0.0 ask the Sentinels (`sentinel-1:26379,sentinel-2:26379,sentinel-3:26379`) for the primary of their group, `map` and `monster-raid`, and follow the `+switch-master` announcement, so a failover needs no restart and no proxy: the request in flight when the primary dies may fail, the next one reaches the promoted replica. Notification gets the same settings (`REDIS_MODE=sentinel`, `REDIS_SENTINEL_ADDRS`, `REDIS_MASTER_NAME=notification`), but the pinned v4.2.0 still connects to `notification-redis:6379` directly. Until its Sentinel-aware release (#130), a failover keeps Notification's data but not the service: its Redis calls fail while `notification-redis` is down, and once that node is back as a replica its writes fail with `READONLY` until the primary role returns to it (`SENTINEL failover notification`). A full `docker compose down` and `up` also restores the initial roles: each `<name>-redis` starts as the primary again and its replica resynchronizes from it, dropping what was written to the replica while it was the primary.
+
+**Failover drill.** Kill a primary and watch a Sentinel promote its replica within about 5 seconds:
+
+```bash
+docker compose exec sentinel-1 redis-cli -p 26379 SENTINEL get-master-addr-by-name map
+# 1) "10.89.200.11"  2) "6379"   (map-redis)
+docker compose kill map-redis
+docker compose logs -f sentinel-1    # +sdown, +odown, +switch-master map 10.89.200.11 6379 10.89.200.12 6379
+docker compose exec sentinel-1 redis-cli -p 26379 SENTINEL get-master-addr-by-name map
+# 1) "10.89.200.12"  2) "6379"   (map-redis-replica)
+docker compose start map-redis       # Sentinel logs +convert-to-slave: map-redis rejoins as a replica
+docker compose exec map-redis redis-cli INFO replication    # role:slave, master_host:10.89.200.12
+```
+
+`SENTINEL replicas map` lists the replicas, and `SENTINEL ckquorum map` confirms that the three Sentinels can still authorize a failover. Every Sentinel must report the same primary; ask `sentinel-2` and `sentinel-3` the same question. Run `SENTINEL failover map` on a Sentinel to hand the primary role back without killing anything.
+
+**TILT on Docker Desktop.** Sentinel refuses to fail over while it is in TILT, which it enters whenever its clock jumps backwards or by more than 2 seconds. Docker Desktop on Windows runs the containers in a WSL 2 VM whose clock Hyper-V corrects in steps, and after a long uptime or a sleep of the host this can keep the Sentinels in TILT: `INFO sentinel` then shows a growing `sentinel_total_tilt`, and a killed primary is never replaced. Run `wsl --shutdown`, start Docker Desktop again and bring the stack up; a Linux host is not affected.
+
+**Cache nodes.** Start the fourth node for the sharding demo with `docker compose --profile cache-demo up -d cache-4`, and stop it with `docker compose stop cache-4`. A plain `docker compose up` never starts it.
+
+**Metrics.** The collector's Redis receivers read `INFO` from every data node, cache node and Sentinel every 15 seconds and send it to Prometheus under the job `redis`, one `instance` per container (`cache-4` is not scraped). The `Databases` dashboard shows the role of each node over time, the primaries every Sentinel watches, connected replicas, replication offsets and memory, and per cache node memory, keys and evictions.
+
 ### Observability
 
 The deployment watches itself with OpenTelemetry. All configuration lives under [`observability/`](observability) and starts with the rest of the stack in the same `docker compose up -d --wait`.
@@ -2564,12 +2601,12 @@ pinned service releases also use the broker for peer calls and event delivery:
 
 - **User Management 4.1.0** calls Package Registry over gRPC, serves six RPCs, publishes friend requests and consumes raid rewards.
 - **Battle 4.0.2** calls User Management, Tamagotchi and Package Registry over gRPC and publishes durable request/completion events.
-- **Map 5.0.0** reads User Management relationships over gRPC and publishes proximity events. It can follow its Redis through Sentinel; until the Sentinels are in this stack, `MAP_REDIS_SENTINELS` is empty and it uses `map-redis` directly.
-- **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and runs with `REDIS_MODE=standalone` until the Sentinels are in this stack.
+- **Map 5.0.0** reads User Management relationships over gRPC and publishes proximity events. It finds its Redis primary through the Sentinels (`MAP_REDIS_SENTINELS`, group `map`).
+- **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and finds its Redis primary through the Sentinels (`REDIS_MODE=sentinel`, group `monster-raid`).
 - **Guild 5.0.0** calls its peers as REST operations over `Broker.Send` and publishes invitation events. It adds cache metadata and invalidation for membership reads and exposes both Guild analytics views.
 - **Package Registry 5.0.0** serves REST, gRPC and the package join participant. It uses the broker for cache invalidation and transaction recovery. Administrator access comes from `ADMIN_USER_IDS`.
 - **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
-- **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked.
+- **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked. Compose already passes it the Sentinel settings Monster Raid uses (`REDIS_MODE=sentinel`, `REDIS_SENTINEL_ADDRS`, `REDIS_MASTER_NAME=notification`); until a release reads them (#130), it uses `notification-redis` directly and does not follow a failover.
 
 ### Postman Collections
 
