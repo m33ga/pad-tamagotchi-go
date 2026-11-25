@@ -7,7 +7,12 @@ bootstrap:
   dcs:
     ttl: 20
     loop_wait: 2
-    retry_timeout: 5
+    # The etcd client times out a request after retry_timeout / 3. On a slow disk at a cold
+    # start etcd can take longer than 1.7 s to answer, and a write it did commit then looks
+    # failed: a lost reply to taking the initialize key leaves the key with no node bootstrapping,
+    # and the cluster never starts. 9 gives 3 s, the most ttl 20 allows (loop_wait + 2 x
+    # retry_timeout <= ttl).
+    retry_timeout: 9
     primary_start_timeout: 0
     maximum_lag_on_failover: 1048576
     check_timeline: true
