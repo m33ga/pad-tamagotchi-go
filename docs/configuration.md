@@ -27,7 +27,7 @@ Copy `.env.example` to `.env` if it does not exist, then replace the database an
 cache placeholders. Preserve passwords belonging to existing volumes.
 The gateway, Service Discovery and message broker images, `grdz/gateway:5.0.0`,
 `grdz/service-discovery:5.0.0` and `grdz/broker:5.4.0`, are pinned directly in
-Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v5.1.0`
+Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v5.2.0`
 and `johnnyc05/pad-notification-service:v4.2.0`. All five export traces and metrics to
 the [observability stack](../README.md#observability).
 `SERVICE_PLATFORM` selects the Tamagotchi and Notification container architecture.
@@ -60,6 +60,16 @@ validates health statistics through Package Registry's gRPC API via the broker.
 Like User Management it follows `USE_MOCK_PACKAGE_REGISTRY`: `false`,
 the default, uses the real Package Registry as the `tamagotchi-service` client; `true` keeps
 Tamagotchi's built-in registry mock.
+
+## Object Store
+
+`object-store` runs RustFS with the keys `OBJECT_STORE_ACCESS_KEY` and
+`OBJECT_STORE_SECRET_KEY` (the secret at least 8 characters); Compose refuses to start
+without them. Tamagotchi uses the same keys to write sprites to the `sprites` bucket,
+which it creates on the first upload and makes readable, object by object, by anyone.
+Clients load sprites from `SPRITES_PUBLIC_BASE_URL`, `http://localhost:9400/sprites` by
+default; set it in `.env` when clients run on another machine, and `OBJECT_STORE_PORT`
+when port 9400 is taken.
 
 ## Message Broker
 

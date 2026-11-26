@@ -42,6 +42,7 @@ services:
   tamagotchi:
     authenticated:
       - GET /api/v1/tamagotchi-combat-types
+      - POST /api/v1/tamagotchi-sprites
       - POST /api/v1/tamagotchis
       - GET /api/v1/tamagotchis/{tamagotchiId}
       - PATCH /api/v1/tamagotchis/{tamagotchiId}

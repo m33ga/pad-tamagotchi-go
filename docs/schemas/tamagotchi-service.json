@@ -100,6 +100,115 @@
         "x-allowed-callers": ["any"]
       }
     },
+    "/tamagotchi-sprites": {
+      "post": {
+        "operationId": "uploadSprite",
+        "summary": "Upload a sprite",
+        "description": "The body is the image itself, a PNG or WebP of at most 512 KiB, with the matching Content-Type; the type is checked from the bytes. The image is stored in the platform's object store under the SHA-256 of its content, so the same image always gets the same URL and the object never changes. The answer's spriteUrl is the value for spriteUrl on create and update, and clients load the image from it without a token (Cache-Control: public, max-age=31536000, immutable). Allowed callers: any signed-in user; no service.",
+        "tags": ["Tamagotchis"],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CallerKind"
+          },
+          {
+            "$ref": "#/components/parameters/CallerUserId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerSessionId"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/png",
+                "maxLength": 524288
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "image/webp",
+                "maxLength": 524288
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Sprite stored",
+            "headers": {
+              "Location": {
+                "description": "The sprite URL, as in the body",
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpriteUploadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "CALLER_NOT_ALLOWED: a service called it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "SPRITE_TOO_LARGE: the image is larger than 512 KiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_SPRITE_TYPE: the body is not a PNG or WebP image, or does not match its Content-Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "SPRITE_STORE_UNAVAILABLE: the object store refused the write or did not answer within 3 seconds, and the upload can be retried; or CONCURRENCY_LIMIT_REACHED (sent with Retry-After: 1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "$ref": "#/components/responses/RequestTimeout"
+          }
+        },
+        "x-allowed-callers": ["user"]
+      }
+    },
     "/tamagotchis": {
       "post": {
         "operationId": "createTamagotchi",
@@ -1050,7 +1159,7 @@
           "spriteUrl": {
             "type": "string",
             "format": "uri",
-            "description": "Sprite reference"
+            "description": "A URL returned by POST /tamagotchi-sprites, under the deployment's sprite base URL; otherwise 400 VALIDATION_FAILED"
           },
           "healthStats": {
             "type": "object",
@@ -1071,7 +1180,7 @@
           "spriteUrl": {
             "type": "string",
             "format": "uri",
-            "description": "Updated sprite reference"
+            "description": "Updated sprite. A URL returned by POST /tamagotchi-sprites, under the deployment's sprite base URL; otherwise 400 VALIDATION_FAILED"
           }
         }
       },
@@ -1121,7 +1230,7 @@
           "spriteUrl": {
             "type": "string",
             "format": "uri",
-            "description": "Sprite reference"
+            "description": "Where clients load the sprite"
           },
           "healthStats": {
             "type": "object",
@@ -1137,6 +1246,27 @@
             "type": "string",
             "format": "date-time",
             "description": "Last update time"
+          }
+        }
+      },
+      "SpriteUploadResponse": {
+        "type": "object",
+        "required": ["spriteUrl", "contentType", "sizeBytes"],
+        "properties": {
+          "spriteUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "Where clients load the sprite; the value for spriteUrl"
+          },
+          "contentType": {
+            "type": "string",
+            "enum": ["image/png", "image/webp"],
+            "description": "The type read from the image"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Size of the stored image in bytes"
           }
         }
       },
