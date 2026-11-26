@@ -909,7 +909,7 @@ services:
     restart: unless-stopped
     networks: [edge, internal]
     ports:
-      - "${OBJECT_STORE_PORT:-9000}:9000"
+      - "${OBJECT_STORE_PORT:-9400}:9000"
     environment:
       RUSTFS_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:?}
       RUSTFS_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:?}
@@ -954,7 +954,7 @@ services:
       SPRITES_ENDPOINT: http://object-store:9000
       SPRITES_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:?}
       SPRITES_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:?}
-      SPRITES_PUBLIC_BASE_URL: ${SPRITES_PUBLIC_BASE_URL:-http://localhost:${OBJECT_STORE_PORT:-9000}/sprites}
+      SPRITES_PUBLIC_BASE_URL: ${SPRITES_PUBLIC_BASE_URL:-http://localhost:${OBJECT_STORE_PORT:-9400}/sprites}
     depends_on:
       service-discovery:
         condition: service_healthy

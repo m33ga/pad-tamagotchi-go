@@ -67,9 +67,9 @@ Tamagotchi's built-in registry mock.
 `OBJECT_STORE_SECRET_KEY` (the secret at least 8 characters); Compose refuses to start
 without them. Tamagotchi uses the same keys to write sprites to the `sprites` bucket,
 which it creates on the first upload and makes readable, object by object, by anyone.
-Clients load sprites from `SPRITES_PUBLIC_BASE_URL`, `http://localhost:9000/sprites` by
+Clients load sprites from `SPRITES_PUBLIC_BASE_URL`, `http://localhost:9400/sprites` by
 default; set it in `.env` when clients run on another machine, and `OBJECT_STORE_PORT`
-when port 9000 is taken.
+when port 9400 is taken.
 
 ## Message Broker
 

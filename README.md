@@ -2442,7 +2442,7 @@ Docker Compose runs the gateway, Service Discovery, the message broker and all e
 | Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
 | Message broker admin endpoints, from the host only | [`grdz/broker`](https://hub.docker.com/r/grdz/broker) | `http://127.0.0.1:8501` |
 | Grafana, from the host only | [`grafana/grafana`](https://hub.docker.com/r/grafana/grafana) | `http://127.0.0.1:3000` |
-| Object store (sprites), S3 API | [`rustfs/rustfs`](https://hub.docker.com/r/rustfs/rustfs) | `http://localhost:9000` |
+| Object store (sprites), S3 API | [`rustfs/rustfs`](https://hub.docker.com/r/rustfs/rustfs) | `http://localhost:9400` |
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
@@ -2460,7 +2460,7 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | Service Discovery, loopback only | 8500 |
 | Message broker admin endpoints, loopback only | 8501 |
 | Grafana, loopback only | 3000 |
-| Object store (sprites) | 9000 |
+| Object store (sprites) | 9400 |
 
 `GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2`, `GRAFANA_PORT` and `OBJECT_STORE_PORT` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
 
@@ -2814,7 +2814,7 @@ Redis is used for high-speed, frequently changing or temporary state. It is appr
 
 An S3-compatible object store (e.g. [RustFS](https://github.com/rustfs/rustfs)) holds blobs such as sprite images. Assets must be viewable across packages, so they live in one shared store as immutable objects; service databases keep only object keys or URLs and clients fetch assets directly by URL.
 
-The deployment runs [RustFS](https://hub.docker.com/r/rustfs/rustfs) as `object-store`, its S3 API published on port 9000 and its data in the `object-store-data` volume. Tamagotchi Service owns the `sprites` bucket and writes to it with `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY` from `.env`. It creates the bucket on the first upload and grants anonymous callers `s3:GetObject` and nothing else, so anyone can load a sprite by its URL but nobody can list the bucket or write to it without the keys. Objects are keyed by the SHA-256 of their content and never overwritten. `SPRITES_PUBLIC_BASE_URL` (default `http://localhost:9000/sprites`) is where clients load them, and the only prefix `spriteUrl` accepts.
+The deployment runs [RustFS](https://hub.docker.com/r/rustfs/rustfs) as `object-store`, its S3 API published on host port 9400 (9000 is ClickHouse's native port, often taken) and its data in the `object-store-data` volume. Tamagotchi Service owns the `sprites` bucket and writes to it with `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY` from `.env`. It creates the bucket on the first upload and grants anonymous callers `s3:GetObject` and nothing else, so anyone can load a sprite by its URL but nobody can list the bucket or write to it without the keys. Objects are keyed by the SHA-256 of their content and never overwritten. `SPRITES_PUBLIC_BASE_URL` (default `http://localhost:9400/sprites`) is where clients load them, and the only prefix `spriteUrl` accepts.
 
 ### Database-per-Service
 
