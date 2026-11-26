@@ -11,7 +11,7 @@ x-logging: &default-logging
 # PostgreSQL pairs share the etcd quorum but have separate scopes and data volumes.
 x-patroni: &patroni
   logging: *default-logging
-  image: grdz/patroni:5.0.0
+  image: grdz/patroni:5.0.1
   build:
     context: ./infra/patroni
   networks: [internal]
@@ -37,7 +37,10 @@ x-patroni: &patroni
     interval: 3s
     timeout: 3s
     retries: 30
-    start_period: 15s
+    # A replica is not ready until it has cloned the primary, which on a cold start of all
+    # sixteen nodes can take minutes. Failed checks in this window do not count, and the node is
+    # healthy as soon as one passes.
+    start_period: 300s
 
 x-database-proxy: &database-proxy
   logging: *default-logging
@@ -72,6 +75,11 @@ x-etcd: &etcd
     - --initial-cluster-state=new
     - --auto-compaction-retention=1h
     - --quota-backend-bytes=134217728
+    # The defaults (100 ms, 1 s) assume a fast disk. At a cold start the sixteen PostgreSQL nodes
+    # saturate it, etcd's fsyncs stall, its leader misses heartbeats and the members re-elect,
+    # failing Patroni's requests in between. The etcd tuning guide's values for slow disks.
+    - --heartbeat-interval=250
+    - --election-timeout=2500
   healthcheck:
     test: ["CMD", "/usr/local/bin/etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
     interval: 3s

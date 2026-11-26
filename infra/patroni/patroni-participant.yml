@@ -7,7 +7,9 @@ bootstrap:
   dcs:
     ttl: 20
     loop_wait: 2
-    retry_timeout: 5
+    # Same as patroni.yml: the etcd client times out after retry_timeout / 3, and 9 (3 s) is the
+    # most ttl 20 allows.
+    retry_timeout: 9
     primary_start_timeout: 0
     maximum_lag_on_failover: 1048576
     check_timeline: true
