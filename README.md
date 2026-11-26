@@ -1642,12 +1642,11 @@ is optional. Service callers supply `X-Service-Name` and optional `X-Scopes`, bu
 cannot perform player operations. Missing or malformed identity yields
 `401 INVALID_IDENTITY`; a disallowed caller yields `403`.
 
-Battle calls User Management, Tamagotchi and Package Registry through `Broker.Send` on one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS` (in-code default `broker:9090`, not an environment-file requirement). `USER_MANAGEMENT_PROTOCOL`, `TAMAGOTCHI_PROTOCOL` and `PACKAGE_REGISTRY_PROTOCOL` select `rest` or `grpc` per peer. The images retain REST transport switches for compatibility; this Compose release selects `grpc` for all three peers and uses generated protobuf types. Battle serves no gRPC API and subscribes to no topics; only REST port 8080 listens. Its `battle-service` client sends OAuth credentials in the
+Battle calls User Management, Tamagotchi and Package Registry through `Broker.Send` on one long-lived gRPC connection to `MESSAGE_BROKER_ADDRESS` (in-code default `broker:9090`, not an environment-file requirement). `USER_MANAGEMENT_PROTOCOL`, `TAMAGOTCHI_PROTOCOL` and `PACKAGE_REGISTRY_PROTOCOL` select `rest` or `grpc` per peer. The images retain REST transport switches for compatibility; this Compose release selects `grpc` for all three peers and uses generated protobuf types. Battle serves player REST on port 8080 and broker settlement callbacks on gRPC port 9090. Its `battle-service` client sends OAuth credentials in the
 token request's form body, caches the token and refreshes below 30 seconds remaining. A collaborator
 `401` / UNAUTHENTICATED causes one refresh and one retry. The OAuth form request itself uses Send to user-management without a service token. Every outbound request retains the
 inbound `X-Correlation-ID`; an identifier is generated only when absent.
-Commands retain contract-defined idempotency keys and use the battle ID as the
-business reference so settlement can resume after a deadline. Each message has a fresh UUID, propagated traceparent and the remaining deadline, also set on the gRPC call. Independent peer breakers count transport/UNKNOWN/INTERNAL/UNAVAILABLE/DEADLINE_EXCEEDED failures, excluding client errors and PEER_CIRCUIT_OPEN.
+Saga steps use stable UUID idempotency keys and the battle ID as the business reference. Each message has a fresh UUID, propagated traceparent and the remaining deadline, also set on the gRPC call. Independent peer breakers count transport/UNKNOWN/INTERNAL/UNAVAILABLE/DEADLINE_EXCEEDED failures, excluding client errors and PEER_CIRCUIT_OPEN.
 
 All handlers have a configurable deadline and concurrency budget, defaulting to
 4 seconds and 64 requests. Deadline expiry yields `504 REQUEST_TIMEOUT`.
@@ -1667,7 +1666,7 @@ Both use the shared error envelope. The Battle API publishes no host port;
 | `POST /api/v1/battle-requests/{battleRequestId}/responses` | Opponent | `RespondToBattleRequest` | `200 BattleRequestDecisionResponse` | `400`, `403`, `404`, `409 REQUEST_ALREADY_RESOLVED`, `422 INVALID_SELECTION`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/battles/{battleId}` | Participant | None | `200 BattleResponse` | `403`, `404 BATTLE_NOT_FOUND` |
 | `GET /api/v1/users/{userId}/battles?status={status}&cursor={cursor}&limit={limit}` | Account owner | Query parameters | `200 BattlePageResponse` | `400`, `403` |
-| `POST /api/v1/battles/{battleId}/actions` | Current-turn participant | `CreateBattleActionRequest` | `200 BattleActionResponse`; `202 BattleActionResponse` with the battle `SETTLING` when the action ends the fight | `400`, `403`, `404`, `409 NOT_CURRENT_TURN`, `422 INVALID_ACTION`, `503 PEER_CIRCUIT_OPEN` |
+| `POST /api/v1/battles/{battleId}/actions` | Current-turn participant | `CreateBattleActionRequest` | `200 BattleActionResponse`; `202 BattleActionResponse` with the battle `SETTLING` when the action ends the fight | `400`, `403`, `404`, `409 NOT_CURRENT_TURN / BATTLE_NOT_ACTIVE`, `422 INVALID_ACTION`, `503 PEER_CIRCUIT_OPEN` |
 | `POST /api/v1/battles/{battleId}/forfeitures` | Participant | None | `202 BattleResponse` with the battle `SETTLING` | `403`, `404`, `409 BATTLE_NOT_ACTIVE`, `503 PEER_CIRCUIT_OPEN` |
 
 ##### Battle Request Schemas
@@ -1772,7 +1771,7 @@ Both use the shared error envelope. The Battle API publishes no host port;
     "loserGlobalCurrencyLoss": "Non-negative integer; required. Currency debited from the loser",
     "xpAwards": "Array of BattleXpAward; required. XP distributed to all selected Tamagotchis",
     "transferredTamagotchiId": "UUID string; required. Loser's former primary Tamagotchi transferred to the winner",
-    "settledAt": "UTC timestamp; required. Time at which all rewards and transfers completed"
+    "settledAt": "UTC timestamp or null; required. Null while SETTLING"
   },
   "BattleXpAward": {
     "userId": "UUID string; required. Owner at the time XP is awarded",
@@ -1790,11 +1789,15 @@ Settlement is a [saga](#sagas) run by the broker's coordinator. When an action k
 
 | Status | Reached when |
 |---|---|
-| `SETTLING` | the fight ended; rewards, XP and the transfer are being applied |
+| `SETTLING` | the fight ended; the planned result has `settledAt: null` while currency, XP and the transfer are being applied |
 | `COMPLETED`, or `FORFEITED` after a forfeiture | the broker called `CompleteSettlement`: every step succeeded; `battle.completed.v1` is published |
 | `VOIDED` | the broker called `VoidSettlement`: a step was refused (for example the loser's `INSUFFICIENT_BALANCE`) or kept failing, and every applied step was undone; `voidReason` says why and `battle.voided.v1` is published |
 
-While a battle is `SETTLING`, further actions answer `409 BATTLE_NOT_ACTIVE`, and its Tamagotchis cannot be used in a new challenge. Battle serves `tamagotchigo.battle.v1.Battle` (`CompleteSettlement`, `VoidSettlement`) on gRPC port 9090 and registers its `grpcAddress`; both callbacks accept only `x-service-name: broker` and are idempotent. Retries, durability and resumption after a crash belong to the coordinator, so Battle keeps no settlement worker or step records of its own. The original trace context travels with the saga, so every step and callback stays in the initiating request's trace.
+While a battle is `SETTLING`, further actions answer `409 BATTLE_NOT_ACTIVE`, and its Tamagotchis cannot be used in a new challenge. Battle serves `tamagotchigo.battle.v1.Battle` (`CompleteSettlement`, `VoidSettlement`) on gRPC port 9090 and registers its `grpcAddress`; both callbacks accept only `x-service-name: broker` and are idempotent. Battle commits the saga submission with the SETTLING state. Its outbox relays that submission to the coordinator, which owns step retries, compensation, and callback delivery. The original trace context travels with the saga, so every step and callback stays in the initiating request's trace.
+
+The saga debits a fixed 20 global coins and credits 50 to the winner. The loser’s insufficient balance voids settlement and the coordinator reverses the winner's credit. Before deploying this version, allow the previous release to finish any battles it still has in SETTLING.
+
+Battle publishes `battle.settlements` and `battle.settlement.duration` by outcome. The Transactions dashboard compares Battle settlements with the coordinator’s view. The [Analytics](#analytics) views publish battle state, timestamps and combatants, with applied XP recorded only after successful settlement. Readiness reports cgroup v2 CPU and memory shares under `load`.
 
 ##### Published Queue Events
 

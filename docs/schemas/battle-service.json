@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Battle Service API",
-    "version": "4.0.2",
-    "description": "Owns battle requests, active turn-based battles, actions, and final results. It reads authoritative user, Tamagotchi, and package configuration through service APIs and stores battle requests, sides, turns, and results in PostgreSQL.\n\nThe service publishes the `battle.request.created.v1` and `battle.completed.v1` queue events. Event payload schemas are included under components for reference; events are delivered through the message queue using the common event envelope, not over HTTP.\n\nExternal requests use bearer tokens through the gateway. The internal container trusts only gateway-generated identity headers and does not parse or verify tokens. X-Caller-Kind is required internally; user routes require X-User-ID. A valid service caller is authenticated but cannot perform player operations. Sessions and scopes are optional. Missing or malformed identity returns 401 INVALID_IDENTITY. Handlers have a configurable deadline (default 4 seconds) and concurrency budget (default 64), yielding 504 REQUEST_TIMEOUT or immediate 503 CONCURRENCY_LIMIT_REACHED with Retry-After: 1. Battle runs as two instances. Every response carries X-Instance-Id, the container hostname.\n\nPeer calls use Broker.Send with generated protobuf requests when each peer is released; per-peer REST operations over Send remain available during migration. Events use Broker.Publish from the durable outbox with camelCase payload fields, including pending legacy rows. Battle serves no gRPC API or event subscription. Request tracing is exported over OTLP/gRPC and included in JSON request logs.",
+    "version": "5.0.0",
+    "description": "Battle owns PvP combat and starts a broker-coordinated settlement saga. Public REST is served through the gateway. The private gRPC listener receives broker settlement callbacks. Requests and the completed and voided events use the transactional outbox.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -502,7 +502,8 @@
                 "ACTIVE",
                 "SETTLING",
                 "COMPLETED",
-                "FORFEITED"
+                "FORFEITED",
+                "VOIDED"
               ]
             }
           },
@@ -585,7 +586,7 @@
       "post": {
         "operationId": "createBattleAction",
         "summary": "Perform a battle action",
-        "description": "Callable only by the participant whose turn it is. Deduplicated by the client-generated actionId. Peer commands use a durable settlement idempotency key across replica failover; incomplete settlement remains SETTLING and is retried safely.",
+        "description": "A knockout is accepted for settlement and replies with the persisted SETTLING snapshot. A repeated action returns the same response.",
         "tags": [
           "Battles"
         ],
@@ -627,7 +628,17 @@
         },
         "responses": {
           "200": {
-            "description": "Action processed",
+            "description": "Non-final action processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleActionResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Settlement accepted. Follow the battle with GET or wait for a completion or void event.",
             "content": {
               "application/json": {
                 "schema": {
@@ -646,7 +657,7 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Conflict: NOT_CURRENT_TURN",
+            "description": "BATTLE_NOT_ACTIVE, NOT_CURRENT_TURN or an action/idempotency conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -696,7 +707,7 @@
       "post": {
         "operationId": "forfeitBattle",
         "summary": "Forfeit an active battle",
-        "description": "Callable only by battle participants. The forfeiting participant loses the battle. Peer commands use a durable settlement idempotency key across replica failover; incomplete settlement remains SETTLING and is retried safely.",
+        "description": "The forfeiting participant loses. The first request returns SETTLING. A repeat by the forfeiting participant returns the current battle.",
         "tags": [
           "Battles"
         ],
@@ -725,7 +736,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Battle forfeited",
+            "description": "Replay after settlement reached its terminal state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BattleResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Settlement accepted. Follow the battle with GET or wait for a completion or void event.",
             "content": {
               "application/json": {
                 "schema": {
@@ -741,7 +762,7 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Conflict: BATTLE_NOT_ACTIVE",
+            "description": "BATTLE_NOT_ACTIVE",
             "content": {
               "application/json": {
                 "schema": {
@@ -1298,7 +1319,8 @@
           "loserUserId",
           "result",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "voidReason"
         ],
         "properties": {
           "battleId": {
@@ -1317,9 +1339,10 @@
               "ACTIVE",
               "SETTLING",
               "COMPLETED",
-              "FORFEITED"
+              "FORFEITED",
+              "VOIDED"
             ],
-            "description": "Battle lifecycle state. When combat ends the battle enters SETTLING and performs idempotent settlement commands keyed by battleId: currency credit and debit through User Management Service, XP grants and the ownership transfer through Tamagotchi Service. The battle becomes COMPLETED only after every required command succeeds; if a dependency is unavailable it remains SETTLING and failed commands are retried without applying a reward twice"
+            "description": "The broker completes or voids the settlement through Battle’s internal gRPC callbacks."
           },
           "participants": {
             "type": "array",
@@ -1379,6 +1402,13 @@
             "type": "string",
             "format": "date-time",
             "description": "Last state-change time"
+          },
+          "voidReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Saga failure reason when VOIDED."
           }
         }
       },
@@ -1591,9 +1621,12 @@
             "description": "Loser's former primary Tamagotchi transferred to the winner"
           },
           "settledAt": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time",
-            "description": "Time at which all rewards and transfers completed"
+            "description": "Time when all settlement steps completed. Null while SETTLING."
           }
         }
       },
@@ -1675,6 +1708,9 @@
               },
               {
                 "$ref": "#/components/schemas/BattleCompletedEventV1"
+              },
+              {
+                "$ref": "#/components/schemas/BattleVoidedEventV1"
               }
             ]
           }
@@ -1850,7 +1886,9 @@
             "required": [
               "inFlight",
               "limit",
-              "utilization"
+              "utilization",
+              "cpu",
+              "memory"
             ],
             "properties": {
               "inFlight": {
@@ -1864,7 +1902,18 @@
               "utilization": {
                 "type": "number",
                 "multipleOf": 0.01,
-                "minimum": 0
+                "minimum": 0,
+                "description": "Maximum of the container CPU and memory shares, rounded to two decimals."
+              },
+              "cpu": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "memory": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
               }
             }
           },
@@ -1878,6 +1927,38 @@
             "type": "string",
             "format": "date-time",
             "description": "ISO 8601 UTC with milliseconds."
+          }
+        }
+      },
+      "BattleVoidedEventV1": {
+        "type": "object",
+        "description": "Payload of battle.voided.v1.",
+        "required": [
+          "battleId",
+          "winnerUserId",
+          "loserUserId",
+          "reason",
+          "voidedAt"
+        ],
+        "properties": {
+          "battleId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "winnerUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "loserUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "voidedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }
