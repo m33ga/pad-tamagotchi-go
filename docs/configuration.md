@@ -27,7 +27,7 @@ Copy `.env.example` to `.env` if it does not exist, then replace the database an
 cache placeholders. Preserve passwords belonging to existing volumes.
 The gateway, Service Discovery and message broker images, `grdz/gateway:5.0.0`,
 `grdz/service-discovery:5.0.0` and `grdz/broker:5.4.0`, are pinned directly in
-Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v4.2.0`
+Compose, as are Tamagotchi and Notification, `johnnyc05/pad-tamagotchi-service:v5.1.0`
 and `johnnyc05/pad-notification-service:v4.2.0`. All five export traces and metrics to
 the [observability stack](../README.md#observability).
 `SERVICE_PLATFORM` selects the Tamagotchi and Notification container architecture.
@@ -55,7 +55,7 @@ allowlist.
 Every service uses a 4 second request deadline, below the gateway's 5 second
 upstream timeout, so a slow request ends with the service's own
 `504 REQUEST_TIMEOUT`. The per-service overrides `TAMAGOTCHI_REQUEST_TIMEOUT_SECONDS`
-and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi 4.2.0
+and `NOTIFICATION_REQUEST_TIMEOUT_SECONDS` are no longer read from `.env`. Tamagotchi
 validates health statistics through Package Registry's gRPC API via the broker.
 Like User Management it follows `USE_MOCK_PACKAGE_REGISTRY`: `false`,
 the default, uses the real Package Registry as the `tamagotchi-service` client; `true` keeps

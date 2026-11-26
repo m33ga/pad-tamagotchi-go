@@ -1462,11 +1462,29 @@ Tamagotchi Service owns every Tamagotchi and its current owner, role, combat typ
 
 Tamagotchi Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Package Registry down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. Package Registry is never probed: its `/status` entry comes from the instance's circuit breaker and carries `"circuit": "CLOSED"` or `"OPEN"`; it is `DOWN` while the circuit refuses calls or for 14 seconds after a failed call, and a half-open circuit waiting for its trial reports `CLOSED`, so a quarantined instance can still be readmitted. A call to Package Registry gets 3 of the 4 seconds, so a registry that does not answer gives `503 PACKAGE_REGISTRY_UNAVAILABLE`, which the broker does not hold against the instance. After three Package Registry failures within 14 seconds, creating a Tamagotchi and updating its health statistics answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, until a trial call succeeds. The service runs no scheduled or background work such as statistic decay: statistics change only through requests, so two instances never apply the same change twice.
 
-Tamagotchi serves REST on internal port 8080 and `tamagotchigo.tamagotchi.v1.Tamagotchi` on internal gRPC port 9090. Its six RPCs are GetTamagotchi, ListUserTamagotchis, GetPrimaryTamagotchi and GetCombatProfile for Battle and Monster Raid, and GrantXp and TransferOwnership for Battle only. The broker supplies verified service metadata; handlers reuse the REST application layer and return `google.rpc.ErrorInfo` with the REST error code as `reason` and `tamagotchi` as `domain` (`ALREADY_EXISTS` for `XP_ALREADY_GRANTED` and `OWNERSHIP_ALREADY_TRANSFERRED`, `ABORTED` for `TAMAGOTCHI_NOT_OWNED`, `FAILED_PRECONDITION` for `INVALID_TRANSFER`). The former combat-profile, XP-grant and ownership-transfer REST routes are removed.
+Tamagotchi serves REST on internal port 8080 and `tamagotchigo.tamagotchi.v1.Tamagotchi` on internal gRPC port 9090. Its eight RPCs are GetTamagotchi, ListUserTamagotchis, GetPrimaryTamagotchi and GetCombatProfile for Battle and Monster Raid, and GrantXp, TransferOwnership and their saga compensations RevokeXp and RevertTransfer for Battle only. The broker supplies verified service metadata; handlers reuse the REST application layer and return `google.rpc.ErrorInfo` with the REST error code as `reason` and `tamagotchi` as `domain` (`ALREADY_EXISTS` for `XP_ALREADY_GRANTED` and `OWNERSHIP_ALREADY_TRANSFERRED`, `ABORTED` for `TAMAGOTCHI_NOT_OWNED`, `FAILED_PRECONDITION` for `INVALID_TRANSFER`). The former combat-profile, XP-grant and ownership-transfer REST routes are removed.
 
 Discovery registration adds `grpcAddress: <hostname>:9090` and `topics: [raid.completed.v1]`. Every outbound call is a `Broker.Send` to `MESSAGE_BROKER_ADDRESS` (`broker:9090` in code): the OAuth client-credentials request to User Management stays a REST operation, the one `Send` without a token, and Package Registry's `ListStatDefinitions` is a gRPC operation with the generated protobuf messages. Each `Send` carries the cached `tamagotchi-service` token, the incoming correlation ID, `traceparent` and three quarters of the request deadline; the peer circuit breaker sits around it unchanged. `GATEWAY_URL` is gone.
 
 The final 4.2.0 image includes the .NET zero-code instrumentation; OTLP/gRPC goes to `http://otel-collector:4317`, with `service.name=tamagotchi`, the hostname as `service.instance.id`, and `traceId`/`spanId` on every log line written inside a request. Release this contract only after broker deployment (#100), discovery topics/gRPC support, Package Registry gRPC (#97 stage 1), Battle on gRPC (#93 stage 3), Monster Raid on gRPC and event settlement (#99), and observability (#101). Publish the service image before pinning 4.2.0 in a separate compose release PR.
+
+##### Lab 5
+
+Release 5.1.0 adds two parts of the Lab 5 contract (#129 stages 1 and 3):
+
+- **Analytics views.** `analytics.tamagotchis`, `analytics.xp_grants` and `analytics.ownership_transfers` carry the columns in [Analytics](#analytics). The ETL reads them as `analytics_reader` on the database proxy's replica port.
+  - Enum ids are spelled as on the wire (`FLAME`, `PRIMARY`, `BATTLE`, `BATTLE_REWARD`).
+  - An XP grant records its owner at grant time, so a later transfer does not move past XP to the new owner.
+  - A grant's or transfer's `updated_at` follows its `revoked_at` / `reverted_at`.
+- **Saga compensations** for Battle's settlement saga ([Sagas](#sagas)), both called by Battle only:
+  - **`RevokeXp`** removes exactly the XP a grant added and recomputes the level.
+  - **`RevertTransfer`** gives the Tamagotchi back to the loser with its previous role. A former primary returns as a secondary when the loser has a new primary by then.
+- **How the compensations behave:**
+  - Each is recorded once per reference, and a repeat answers like the first.
+  - A compensation that arrives before its action succeeds having changed nothing, and the late action is then refused with `FAILED_PRECONDITION` `XP_GRANT_REVOKED` or `TRANSFER_REVERTED`.
+  - A transfer the Tamagotchi has moved on from is refused with `FAILED_PRECONDITION` `TRANSFER_SUPERSEDED`.
+  - The grant or transfer stays recorded with its revocation time, so voided battles remain visible in the warehouse.
+- **Not in this release** (#129 stage 2): cacheable replies with cache tags, and the container's CPU and memory shares in `/status`.
 
 ##### Endpoint Catalog
 
@@ -2605,7 +2623,7 @@ pinned service releases also use the broker for peer calls and event delivery:
 - **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and finds its Redis primary through the Sentinels (`REDIS_MODE=sentinel`, group `monster-raid`).
 - **Guild 5.0.0** calls its peers as REST operations over `Broker.Send` and publishes invitation events. It adds cache metadata and invalidation for membership reads and exposes both Guild analytics views.
 - **Package Registry 5.0.0** serves REST, gRPC and the package join participant. It uses the broker for cache invalidation and transaction recovery. Administrator access comes from `ADMIN_USER_IDS`.
-- **Tamagotchi v4.2.0** serves gRPC and validates package statistics against the real Package Registry through the broker; `USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock.
+- **Tamagotchi v5.1.0** serves gRPC, validates package statistics against the real Package Registry through the broker (`USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock), publishes its three analytics views and serves the saga compensations `RevokeXp` and `RevertTransfer`.
 - **Notification v4.2.0** consumes broker topics. Firebase delivery remains mocked. Compose already passes it the Sentinel settings Monster Raid uses (`REDIS_MODE=sentinel`, `REDIS_SENTINEL_ADDRS`, `REDIS_MASTER_NAME=notification`); until a release reads them (#130), it uses `notification-redis` directly and does not follow a failover.
 
 ### Postman Collections
