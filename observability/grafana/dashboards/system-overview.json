@@ -528,6 +528,125 @@
           ]
         }
       }
+    },
+    {
+      "type": "row",
+      "title": "Container load",
+      "id": 12,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "CPU share per instance",
+      "description": "Container CPU use relative to its quota. The line marks the default DEGRADED threshold.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "container_cpu_utilization_ratio or on (job, instance) container_cpu_utilization",
+          "legendFormat": "{{job}} / {{instance}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Memory share per instance",
+      "description": "Container memory working set relative to its limit. The line marks the default DEGRADED threshold.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "container_memory_utilization_ratio or on (job, instance) container_memory_utilization",
+          "legendFormat": "{{job}} / {{instance}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
     }
   ]
 }

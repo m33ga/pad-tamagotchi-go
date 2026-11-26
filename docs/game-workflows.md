@@ -1,6 +1,40 @@
 # Game Workflows
 
-[`collections/game-workflows.postman_collection.json`](../collections/game-workflows.postman_collection.json) plays Tamagotchi Go end to end through the API Gateway. It has four game workflows that together reach all eight services, plus a set of resilience drills. This page describes what each flow does, which service calls happen behind every step, and what each check proves. The service-to-service calls listed below are taken from the gateway logs of live runs against the Compose deployment. Setup and run notes are in the collection's own description.
+[`collections/game-workflows.postman_collection.json`](../collections/game-workflows.postman_collection.json) plays Tamagotchi Go end to end through the API Gateway. It has four game workflows that together reach all eight services, plus a set of resilience drills. This page describes what each flow does, which service calls happen behind every step, and what each check proves. The descriptions below follow the Lab 5 service contracts.
+
+## Run locally
+
+Start the Compose deployment on a disposable local stack and configure service auth with
+`scripts/configure_services_auth.py`. Use a private Postman environment with `gatewayUrl`, `adminEmail`
+and `adminPassword`. Register and log in to the raid administrator once through folder 3, then
+allow-list that user's ID in `PACKAGE_REGISTRY_ADMIN_USER_IDS` and recreate Package Registry.
+
+Run onboarding from the repository root so Newman can read the PNG fixture. In the Postman desktop
+app, select `collections/fixtures/workflow-sprite.png` in **Upload the demo sprite** if the file
+reference needs to be resolved locally. Run the folders with the same private environment. Folder 2
+needs the PvP fixture between onboarding and the battle. Folder 3 can also run directly after
+onboarding.
+
+With Newman installed, run these commands from the CPR root. Replace the environment path with your
+private Postman export containing the gateway and raid-admin settings.
+
+```sh
+workflow_state=$(mktemp -d)
+newman run collections/game-workflows.postman_collection.json \
+  --environment /path/to/private.postman_environment.json \
+  --folder '1. Onboarding: players, package and pets' \
+  --export-environment "$workflow_state/onboarded.json" --bail
+python3 scripts/prepare_workflow_pvp.py "$workflow_state/onboarded.json"
+newman run collections/game-workflows.postman_collection.json \
+  --environment "$workflow_state/onboarded.json" \
+  --folder '2. Social life and a PvP battle' \
+  --folder '3. Guild life and a Monster Raid' --bail
+```
+
+The onboarding export contains the new players' access tokens and expires when their tokens do. Keep
+it outside the repository and run the remaining steps before the tokens expire. For the Postman app,
+export the private environment after onboarding to run the same fixture helper, then continue with
+folders 2 and 3 using that environment.
 
 ## Overview
 
@@ -31,27 +65,13 @@ Players get a unique suffix per run, for example `alice-mg2x7k1a`. The package i
 
 ## How a call travels
 
-Clients and services never talk to a service directly. Each REST call goes to the gateway with a bearer token. The gateway verifies the token against the User Management JWKS and removes `Authorization` and any identity headers the caller sent. It then forwards the call with the verified identity: `X-Caller-Kind` plus `X-User-ID` for a user, or `X-Service-Name` for a service. A service that needs another service calls back through the gateway with its own OAuth2 client-credentials token. The `X-Correlation-ID` stays the same along the whole chain.
+Postman sends public REST requests through the API Gateway. The gateway verifies bearer tokens using
+User Management's JWKS and passes the verified caller identity to the broker. The broker dispatches
+the request to a service instance. Peer calls use the broker with service credentials. Each hop
+propagates `X-Correlation-ID`.
 
-`Alice joins the package` from workflow 1 shows the pattern. Every arrow from User Management goes through the gateway, and so does every response:
-
-```mermaid
-sequenceDiagram
-    participant P as Postman (Alice)
-    participant G as API Gateway
-    participant U as User Management
-    participant R as Package Registry
-    P->>G: PUT /user-management/api/v1/users/{alice}/packages/{package}<br/>Bearer token of Alice
-    Note over G: Verify the JWT with the JWKS<br/>Drop Authorization and caller identity headers
-    G->>U: PUT /api/v1/users/{alice}/packages/{package}<br/>X-Caller-Kind user, X-User-ID alice
-    U->>G: GET /package-registry/api/v1/packages/{package}<br/>Bearer token of user-management-service
-    G->>R: GET /api/v1/packages/{package}<br/>X-Caller-Kind service, X-Service-Name user-management-service
-    R-->>U: 200 package is ACTIVE
-    U->>G: POST /package-registry/api/v1/packages/{package}/registrations
-    G->>R: POST /api/v1/packages/{package}/registrations
-    R-->>U: 201 registration stored
-    U-->>P: 201 Alice is registered with the package
-```
+When Alice joins a package, User Management asks the broker to coordinate a two-phase commit with
+Package Registry. The registration becomes visible in both services after they commit.
 
 ## 0. Gateway entry and authorization
 
@@ -59,7 +79,7 @@ These checks run before any game data exists. They show that the gateway alone d
 
 | Check | Response | What it shows |
 |---|---|---|
-| Gateway readiness (`/readyz`) | `200` | The gateway has loaded its routes and fetched the signing keys |
+| Gateway status (`/status`) | `200` | The gateway reports readiness and lists JWKS and broker dependencies |
 | Public signing keys | `200`, RS256 keys with a `kid`, no private members | Anyone can verify tokens, only User Management can issue them |
 | Unknown service prefix | `404 ROUTE_NOT_FOUND` | Answered by the gateway; no service owns the path |
 | Protected call without a token | `401 MISSING_TOKEN`, `WWW-Authenticate: Bearer` | The call never reaches Battle |
@@ -68,11 +88,7 @@ These checks run before any game data exists. They show that the gateway alone d
 | Token with the subject swapped and the signature kept | `401 INVALID_TOKEN` | A forged identity fails signature verification |
 | Genuine token on the probe's own roster | `200 []` | The same request passes with an untouched token |
 | Probe's token plus spoofed `X-User-ID`, `X-Caller-Kind: service`, `X-Service-Name: battle-service` | `403` | The gateway replaced the spoofed headers, so Tamagotchi saw the probe, not Battle |
-| Client credentials with a wrong secret | `401 invalid_client` | User Management only issues service tokens to known clients |
-| Client credentials for `battle-service` | `200`, `kind: service`, 300 s lifetime, configured scopes | How every service obtains its identity |
-| Battle service token used to challenge a player | `403` | A service cannot act as a player |
-| User token on the Battle-only combat profile | `403` | Service-only operations refuse users |
-| Battle service token on the same operation | `404 TAMAGOTCHI_NOT_FOUND` | Battle is authorized; the random Tamagotchi simply does not exist |
+| User token on the internal combat profile | `404 ROUTE_NOT_FOUND` | The gateway routes only the public API |
 
 ## 1. Onboarding: players, package and pets
 
@@ -87,6 +103,7 @@ Alice, Bob and Carol create accounts and a game world to play in.
 | Alice defines the battle boosts | `power_snack` (ATTACK +10) and `iron_shell` (DEFENSE +5), each usable once per battle | — |
 | Alice activates the package | The package becomes ACTIVE, so players can join it | — |
 | Alice, Bob and Carol join it | Package Registry becomes the authority for the membership, and User Management opens a local wallet for the package next to the global one | User Management → Package Registry: read the package, store the registration |
+| Upload a sprite | The gateway sends the PNG to Tamagotchi and returns its object-store URL | Tamagotchi → object store |
 | Combat types | The six types and their cycle: FLAME → NATURE → EARTH → ELECTRIC → WATER → SHADOW → FLAME | — |
 | Each player hatches a Tamagotchi | Ember (Alice, FLAME), Ripple (Bob, WATER) and Sprout (Carol, NATURE) start as PRIMARY at level 1 | Tamagotchi → Package Registry: read the statistic definitions |
 | Bob sets an undefined `mana` statistic | Rejected with `422 INVALID_LOCAL_STATS` | Tamagotchi → Package Registry: the definitions have no `mana` |
@@ -102,15 +119,18 @@ Alice sends Bob a friend request, Bob accepts, and User Management reports them 
 
 - **Alice's map** shows Bob as FRIEND even though he is far away, and Carol as NONE because she is within the 6 m proximity radius.
 - **Bob's map** shows Alice but not Carol, a stranger 45 m away.
-- **Carol stepping within 6 m of Alice** makes Map publish `map.proximity.detected.v1`. The collection delivers that event to Notification, which pushes it to Alice's and Carol's devices.
+- **Carol stepping within 6 m of Alice** makes Map publish `map.proximity.detected.v1`. The broker delivers the event to Notification, which looks up Alice's and Carol's devices.
 
 ### Starter pets and purses
 
-A battle needs each player to bring one PRIMARY and one SECONDARY Tamagotchi. A player only gets a secondary by capturing it in a battle, so the collection stands in for earlier battles. Using the `battle-service` token, it transfers Carol's Sprout to Alice. Carol then hatches Pebble (EARTH), which goes to Bob. Each transfer keeps the same Tamagotchi and only changes its owner and role. Both players are also credited 100 coins, so the loser can pay the battle loss.
+Each player needs one PRIMARY and one SECONDARY Tamagotchi and enough coins to pay a battle loss.
+The fixture helper uses the demo `battle-service` client and the broker's gRPC contracts to transfer
+Carol's Sprout to Alice and Pebble to Bob, then credits each player 100 coins. Carol hatches Pebble
+through the gateway. The battle folder reads both rosters and wallets before sending the challenge.
 
 ### The challenge
 
-Alice challenges Bob with Ember as her primary, Sprout as her secondary, and `power_snack`. Before storing the PENDING challenge, Battle makes eleven calls through the gateway:
+Alice challenges Bob with Ember as her primary, Sprout as her secondary, and `power_snack`. Before storing the PENDING challenge, Battle reads the inputs through the broker:
 
 | Purpose | Calls |
 |---|---|
@@ -127,30 +147,16 @@ The battle names whose turn it is. Each player opens with their boost, then atta
 
 ### Settlement
 
-The knockout blow settles the battle within the same call:
+The finishing action returns `202` with the battle in `SETTLING`. The broker runs Battle's settlement saga,
+which updates currency, XP and ownership. The collection polls `GET /battle/api/v1/battles/{battleId}`
+until settlement completes. A successful match ends in `COMPLETED` or `FORFEITED`. A compensated
+settlement ends in `VOIDED` and fails the gameplay check.
 
-```mermaid
-sequenceDiagram
-    participant P as Postman (current player)
-    participant G as API Gateway
-    participant B as Battle
-    participant U as User Management
-    participant T as Tamagotchi
-    P->>G: POST /battle/api/v1/battles/{battle}/actions (knockout)
-    G->>B: Forward with the player's identity
-    B->>U: Read the player and the balance again
-    B->>U: Credit the winner (BATTLE_REWARD)
-    B->>U: Debit the loser (BATTLE_LOSS)
-    B->>T: Grant XP to all four Tamagotchis
-    B->>T: Transfer the loser's primary to the winner
-    B-->>P: 200, battle COMPLETED
-```
+After settlement the collection checks:
 
-All of Battle's calls go through the gateway as `battle-service`, and each command uses the battle ID as its idempotency reference, so a retried settlement never pays twice. The collection then checks:
-
-- The settled battle names a winner and loser and has a result (for example +50 coins for the winner).
-- The captured Tamagotchi is in the winner's roster as SECONDARY, and the winner's primary has gained XP.
-- The winner's balance is the previous balance plus the reward, and the loser's is the previous balance minus the loss.
+- The result identifies the winner, loser, captured Tamagotchi and XP awards.
+- The captured Tamagotchi is in the winner's roster as SECONDARY.
+- The winner's balance increased by the reward, and the loser's balance decreased by the loss.
 
 The loser no longer has a primary Tamagotchi, so they promote their remaining secondary. Finally `battle.completed.v1` reaches both players' phones.
 
@@ -225,13 +231,13 @@ sequenceDiagram
     M->>T: Grant raid XP to each participant's Tamagotchi
 ```
 
-Every arrow passes through the gateway; Monster Raid calls as `monster-raid-service`.
+Players call Monster Raid through the gateway. Monster Raid calls its peers through the broker.
 
 - **Start.** The raid snapshots the monster when it starts, so later changes to the configuration cannot affect it. `raid.started.v1` goes to both players' phones.
-- **Who can join.** A `monster-raid-service` token trying to join is refused with `403 USER_CALLER_REQUIRED`, because joining needs a player. Alice and Bob join with their current primaries; Battle may have changed these.
+- **Who can join.** Alice and Bob join with their current primary Tamagotchis. Battle may have changed these.
 - **Damage.** Each attack deals `floor(baseDamage × (1 + (level − 1) / 10) × typeMultiplier)`. The base damage is the monster's attack of 12, and the multiplier is 1.5 against a weakness. In the live runs each level-1 hit did 18 damage, and seven hits brought the Hydra from 120 to 0. If a player is rate limited (`429 ATTACK_RATE_LIMITED`), the other player swings next.
-- **Settlement.** The final blow settles the raid within the same call. Each participant is credited 75 coins and their Tamagotchi gets 120 XP, and the raid is COMPLETED.
-- **Checks.** The result lists rewards for both players, Alice's balance grew by exactly 75 and her Tamagotchi's XP by exactly 120. `raid.completed.v1` reaches both phones.
+- **Settlement.** The final blow marks the raid COMPLETED and publishes `raid.completed.v1`. Subscribers apply the 75-coin reward and 120-XP grant.
+- **Checks.** The result lists rewards for both players. The collection polls Alice's balance and her Tamagotchi's XP, then checks for exactly 75 coins and 120 XP. `raid.completed.v1` reaches both phones.
 - **Cleanup.** The admin deactivates the raid window, so the next run can schedule its own.
 
 ## 4. Resilience drills
@@ -254,7 +260,9 @@ Concurrency limits fail fast instead of queueing:
 
 ## Events delivered to Notification
 
-No message broker is deployed. Map and Monster Raid log the events they would publish, Guild keeps them in its outbox, and Battle's publishing is mocked. The collection delivers the same event envelopes to Notification's producer endpoint, each with the producing service's own token. Notification then runs its normal path: deduplication, preferences, device lookup and the mocked Firebase push.
+The services publish gameplay events to the broker. Notification subscribes and handles deduplication,
+preferences, device lookup and push delivery. Use the broker's `/topics` view to inspect deliveries.
+The collection registers test devices and checks preferences. Actual device pushes require Firebase configuration.
 
 | Event | Delivered as | Workflow | Recipients | Category |
 |---|---|---|---|---|

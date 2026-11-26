@@ -223,13 +223,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (!pm.collectionVariables.get('ownerUserId')) {",
+                  "if (!pm.variables.get('ownerUserId')) {",
                   "    pm.collectionVariables.set('ownerUserId', pm.variables.replaceIn('{{$guid}}'));",
                   "}",
-                  "if (!pm.collectionVariables.get('packageId')) {",
+                  "if (!pm.variables.get('packageId')) {",
                   "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
                   "}",
-                  "if (!pm.collectionVariables.get('deviceId')) {",
+                  "if (!pm.variables.get('deviceId')) {",
                   "    pm.collectionVariables.set('deviceId', pm.variables.replaceIn('{{$guid}}'));",
                   "}",
                   "pm.collectionVariables.set('fcmToken', 'confidential-fcm-' + pm.variables.replaceIn('{{$guid}}'));"
@@ -245,7 +245,7 @@
                   "const body = pm.response.json();",
                   "pm.test(\"Registration is enabled\", () => pm.expect(body.enabled).to.be.true);",
                   "pm.test(\"Device keeps the identifier the client chose\", () =>",
-                  "    pm.expect(body.deviceId).to.eql(pm.collectionVariables.get(\"deviceId\")));",
+                  "    pm.expect(body.deviceId).to.eql(pm.variables.get(\"deviceId\")));",
                   "pm.test(\"Firebase token is never returned\", () =>",
                   "    pm.expect(pm.response.text()).to.not.include(\"confidential-fcm-\"));"
                 ]
@@ -293,7 +293,7 @@
                 "exec": [
                   "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"Re-registering updates rather than duplicating\", () =>",
-                  "    pm.expect(pm.response.json().deviceId).to.eql(pm.collectionVariables.get(\"deviceId\")));"
+                  "    pm.expect(pm.response.json().deviceId).to.eql(pm.variables.get(\"deviceId\")));"
                 ]
               }
             }

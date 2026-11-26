@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tamagotchi Go - Tamagotchi Service",
-    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Battle and Monster Raid call the service-only operations over gRPC through the message broker; they are no longer REST routes, so the collection holds client requests only. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. The Access Rules folder checks who may call each operation: no token and a second user's token are refused.",
+    "description": "Requests use the gateway. Run Authentication first with existing UMS account credentials saved locally. Login stores real access tokens and subjects for later requests. Battle and Monster Raid call the service-only operations over gRPC through the message broker; they are no longer REST routes, so the collection holds client requests only. Business scenarios still require existing packages, pets and other referenced resources. Never export passwords, secrets or populated tokens. The Access Rules folder checks who may call each operation: no token and a second user's token are refused. Use a fresh owner without a primary Tamagotchi and an active package that defines hunger and tiredness. Run Newman from the CPR root to load the PNG fixture.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -80,6 +80,10 @@
       "value": "",
       "type": "string",
       "description": "Populated by the login request; never export an access token."
+    },
+    {
+      "key": "spriteUrl",
+      "value": ""
     }
   ],
   "item": [
@@ -223,6 +227,52 @@
       "name": "2. Tamagotchis",
       "item": [
         {
+          "name": "Upload the demo sprite",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/png"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchi-sprites",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": "collections/fixtures/workflow-sprite.png"
+              }
+            },
+            "description": "From Postman, select collections/fixtures/workflow-sprite.png if the file reference needs to be resolved locally.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"The sprite upload returns the URL\", () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    const url = pm.response.json().spriteUrl;",
+                  "    pm.expect(url).to.be.a('string').and.not.be.empty;",
+                  "    pm.collectionVariables.set('spriteUrl', url);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Create tamagotchi",
           "request": {
             "method": "POST",
@@ -245,7 +295,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ownerUserId\": \"{{ownerUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Blaze\",\n  \"combatType\": \"FLAME\",\n  \"spriteUrl\": \"https://cdn.example.com/sprites/blaze.png\",\n  \"healthStats\": {\n    \"hunger\": 20,\n    \"tiredness\": 10,\n    \"happiness\": 80\n  }\n}",
+              "raw": "{\n  \"ownerUserId\": \"{{ownerUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Blaze\",\n  \"combatType\": \"FLAME\",\n  \"spriteUrl\": \"{{spriteUrl}}\",\n  \"healthStats\": {\n    \"hunger\": 20,\n    \"tiredness\": 10,\n    \"happiness\": 80\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -260,11 +310,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "if (!pm.collectionVariables.get('ownerUserId')) {",
-                  "    pm.collectionVariables.set('ownerUserId', pm.variables.replaceIn('{{$guid}}'));",
-                  "}",
-                  "if (!pm.collectionVariables.get('packageId')) {",
-                  "    pm.collectionVariables.set('packageId', pm.variables.replaceIn('{{$guid}}'));",
+                  "if (!pm.variables.get('packageId')) {",
+                  "    throw new Error('Set packageId to a package with hunger and tiredness statistics.');",
                   "}"
                 ]
               }
@@ -342,7 +389,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Blaze the Brave\",\n  \"spriteUrl\": \"https://cdn.example.com/sprites/blaze-v2.png\"\n}",
+              "raw": "{\n  \"name\": \"Blaze the Brave\",\n  \"spriteUrl\": \"{{spriteUrl}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -769,7 +816,7 @@
             "url": "{{baseUrl}}/tamagotchis",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ownerUserId\": \"{{ownerUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Impostor\",\n  \"combatType\": \"SHADOW\",\n  \"spriteUrl\": \"https://cdn.example.com/sprites/impostor.png\",\n  \"healthStats\": {}\n}",
+              "raw": "{\n  \"ownerUserId\": \"{{ownerUserId}}\",\n  \"packageId\": \"{{packageId}}\",\n  \"name\": \"Impostor\",\n  \"combatType\": \"SHADOW\",\n  \"spriteUrl\": \"{{spriteUrl}}\",\n  \"healthStats\": {}\n}",
               "options": {
                 "raw": {
                   "language": "json"

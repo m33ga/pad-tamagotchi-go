@@ -416,7 +416,7 @@
       },
       "targets": [
         {
-          "expr": "(sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" | status >= 500 [5m])) or sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" [5m])) * 0) / sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" [5m]))",
+          "expr": "(sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" | status=~\"5[0-9][0-9]\" [5m])) or sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" | status=~\"[1-5][0-9][0-9]\" [5m])) * 0) / sum by (service_name) (count_over_time({service_name=~\"$log_service\"} | event=\"request\" | status=~\"[1-5][0-9][0-9]\" [5m]))",
           "legendFormat": "{{service_name}}",
           "queryType": "range",
           "refId": "A",

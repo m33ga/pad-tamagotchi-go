@@ -467,6 +467,155 @@
           ]
         }
       }
+    },
+    {
+      "type": "row",
+      "title": "PostgreSQL and etcd",
+      "id": 11,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "PostgreSQL primary by node",
+      "description": "Patroni reports 1 while the node is primary and 0 for the replicas.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "patroni_primary{job=\"patroni\"}",
+          "legendFormat": "{{cluster}} / {{instance}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Replica replay lag",
+      "description": "Bytes the replica has received and has yet to replay.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "clamp_min(patroni_xlog_received_location_total{job=\"patroni\"} - patroni_xlog_replayed_location_total{job=\"patroni\"}, 0) and on (instance, cluster) (patroni_replica{job=\"patroni\"} == 1)",
+          "legendFormat": "{{cluster}} / {{instance}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "PostgreSQL timeline",
+      "description": "The timeline increments after promotion. Compare the two members of each cluster after failover.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "patroni_postgres_timeline{job=\"patroni\"}",
+          "legendFormat": "{{cluster}} / {{instance}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "etcd leader visibility",
+      "description": "An etcd member reports 1 when it can see a Raft leader. A missing series means the member cannot be scraped.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "etcd_server_has_leader{job=\"etcd\"}",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
     }
   ]
 }

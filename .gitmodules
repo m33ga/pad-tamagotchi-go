@@ -31,3 +31,6 @@
 [submodule "broker"]
 	path = broker
 	url = https://github.com/m33ga/broker.git
+[submodule "etl"]
+	path = etl
+	url = https://github.com/m33ga/etl.git
