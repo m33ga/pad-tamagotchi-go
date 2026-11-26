@@ -96,7 +96,7 @@ x-airflow: &airflow
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD:?}@airflow-db:5432/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
     # Shared by every component: the API server signs the tokens the tasks present.
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?}
@@ -107,7 +107,7 @@ x-airflow: &airflow
     AIRFLOW__METRICS__OTEL_PORT: "4318"
     AIRFLOW__METRICS__OTEL_SERVICE: airflow
     AIRFLOW__METRICS__OTEL_INTERVAL_MILLISECONDS: "15000"
-    AIRFLOW_CONN_CLICKHOUSE: clickhouse://etl:${CLICKHOUSE_PASSWORD:?}@clickhouse:8123
+    AIRFLOW_CONN_CLICKHOUSE: clickhouse://etl:${CLICKHOUSE_PASSWORD}@clickhouse:8123
     AIRFLOW_CONN_USER_MANAGEMENT_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@user-management-db:5433/${USER_MANAGEMENT_DB_NAME}
     AIRFLOW_CONN_BATTLE_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@battle-db:5433/${BATTLE_DB_NAME}
     AIRFLOW_CONN_TAMAGOTCHI_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@tamagotchi-db:5433/${TAMAGOTCHI_DB_NAME}
