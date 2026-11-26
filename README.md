@@ -2602,9 +2602,9 @@ The data warehouse and its ETL ([Analytics](#analytics)) run under the `analytic
 |---|---|---|---|
 | `clickhouse` | `clickhouse/clickhouse-server:25.8.33.6` | the warehouse: `meta`, `staging` and `dw`; metrics on `:9363` for the collector | `127.0.0.1:8123` (HTTP) |
 | `airflow-db` | `postgres:17.6-alpine` | Airflow's metadata: tooling, not product data, one node | none |
-| `airflow-init` | `grdz/etl:5.0.0` | once per start: Airflow's database migration, the warehouse migrations (`python -m etl migrate`), the admin user | none |
-| `airflow-apiserver` | `grdz/etl:5.0.0` | the Airflow UI and the Execution API the tasks report to | `127.0.0.1:8088` |
-| `airflow-scheduler`, `airflow-dag-processor` | `grdz/etl:5.0.0` | run the DAGs (LocalExecutor) and parse them | none |
+| `airflow-init` | `grdz/etl:5.3.0` | once per start: Airflow's database migration, the warehouse migrations (`python -m etl migrate`), the admin user | none |
+| `airflow-apiserver` | `grdz/etl:5.3.0` | the Airflow UI and the Execution API the tasks report to | `127.0.0.1:8088` |
+| `airflow-scheduler`, `airflow-dag-processor` | `grdz/etl:5.3.0` | run the DAGs (LocalExecutor) and parse them | none |
 
 Together their memory limits add about 3.8 GiB to the stack.
 
