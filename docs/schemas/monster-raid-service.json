@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Monster Raid Service API",
-    "version": "4.0.0",
+    "version": "5.0.0",
     "description": "Owns each guild's active cooperative raid, its participants, attacks, timer, monster health, and settlement result. An active raid uses a snapshot of the selected Package Registry configuration so that later configuration changes cannot alter a raid already in progress.\n\nThe service publishes the `raid.started.v1`, `raid.completed.v1`, and `raid.failed.v1` events to message broker topics through a transactional outbox. Event payload schemas are included under components for reference; events travel as the common event envelope in a broker `Publish`, not over HTTP. Raid rewards are settled by User Management (currency) and Tamagotchi (XP) from `raid.completed.v1`.\n\nThe service runs as three interchangeable instances behind the message broker. Every response carries `X-Instance-Id`, and each instance registers itself with Service Discovery, which polls `/status`. Every peer call goes through a circuit breaker: three failures within 14 seconds open it for 14 seconds, then one trial call decides. Each peer has its own breaker, so Guild being down never stops calls to Tamagotchi. Reading a raid or its result never needs a peer.",
     "license": {
       "name": "MIT",
@@ -771,7 +771,7 @@
       "get": {
         "operationId": "getStatus",
         "summary": "Readiness and telemetry",
-        "description": "Polled directly by Service Discovery every 4 seconds to decide whether this instance receives traffic. The status is the first rule that matches: PostgreSQL or Redis unreachable gives `DOWN` with `503`; utilization at or above 0.8, or a peer `DOWN` or its circuit open, gives `DEGRADED` with `200`; otherwise `UP` with `200`. Neither load nor a failing peer ever produces `DOWN`. Each datastore probe has its own one second deadline, the probes run concurrently and the result is reused for one second. Peers are never probed: their entries come from this instance's circuit breakers, `DOWN` while the circuit is open. It needs no identity, bypasses the concurrency limit and answers while every permit is taken.",
+        "description": "Polled directly by Service Discovery every 4 seconds to decide whether this instance receives traffic. The status is the first rule that matches: PostgreSQL or Redis (the current primary, found through the Sentinels) unreachable gives `DOWN` with `503`; utilization (the larger of the container's CPU and memory shares) at or above 0.8, or a peer `DOWN` or its circuit open, gives `DEGRADED` with `200`; otherwise `UP` with `200`. Neither load nor a failing peer ever produces `DOWN`. Each datastore probe has its own one second deadline, the probes run concurrently and the result is reused for one second. Peers are never probed: their entries come from this instance's circuit breakers, `DOWN` while the circuit is open. It needs no identity, bypasses the concurrency limit and answers while every permit is taken.",
         "tags": [
           "Operations"
         ],
@@ -801,9 +801,11 @@
                       "instanceId": "3f9a1c2e8b11",
                       "uptimeSeconds": 1423,
                       "load": {
+                        "cpu": 0.31,
+                        "memory": 0.42,
+                        "utilization": 0.42,
                         "inFlight": 12,
-                        "limit": 64,
-                        "utilization": 0.19
+                        "limit": 64
                       },
                       "dependencies": [
                         {
@@ -848,9 +850,11 @@
                       "instanceId": "3f9a1c2e8b11",
                       "uptimeSeconds": 1423,
                       "load": {
+                        "cpu": 0.31,
+                        "memory": 0.42,
+                        "utilization": 0.42,
                         "inFlight": 12,
-                        "limit": 64,
-                        "utilization": 0.19
+                        "limit": 64
                       },
                       "dependencies": [
                         {
@@ -915,9 +919,11 @@
                       "instanceId": "3f9a1c2e8b11",
                       "uptimeSeconds": 1423,
                       "load": {
+                        "cpu": 0.31,
+                        "memory": 0.42,
+                        "utilization": 0.42,
                         "inFlight": 0,
-                        "limit": 64,
-                        "utilization": 0.0
+                        "limit": 64
                       },
                       "dependencies": [
                         {
@@ -1791,25 +1797,39 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "cpu",
+          "memory",
+          "utilization",
           "inFlight",
-          "limit",
-          "utilization"
+          "limit"
         ],
         "properties": {
-          "inFlight": {
-            "type": "integer",
+          "cpu": {
+            "type": "number",
             "minimum": 0,
-            "description": "Requests currently held by the concurrency limiter"
+            "maximum": 1,
+            "description": "CPU used by the container as a share of its CPU limit, averaged over about 10 seconds; 0.0 outside a container"
           },
-          "limit": {
-            "type": "integer",
+          "memory": {
+            "type": "number",
             "minimum": 0,
-            "description": "MAX_CONCURRENCY"
+            "maximum": 1,
+            "description": "Memory working set (memory.current minus inactive_file) as a share of the container's memory limit; 0.0 outside a container"
           },
           "utilization": {
             "type": "number",
             "minimum": 0,
-            "description": "inFlight / limit rounded to two decimals, 0.0 when the limit is 0"
+            "description": "The larger of cpu and memory, two decimals: the instance's load. At 0.8 or above the instance reports DEGRADED"
+          },
+          "inFlight": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Requests currently held by the concurrency limiter, for information"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "MAX_CONCURRENCY, for information"
           }
         }
       },
