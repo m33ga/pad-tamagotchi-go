@@ -1,0 +1,17 @@
+<!-- The warehouse of the Analytics section (README): logs to stdout like every container, so the
+     collector ships them to Loki, and metrics on :9363 for the collector to scrape. -->
+<clickhouse>
+    <logger>
+        <level>warning</level>
+        <console>1</console>
+        <log remove="remove"/>
+        <errorlog remove="remove"/>
+    </logger>
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+    </prometheus>
+</clickhouse>

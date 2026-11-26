@@ -1,0 +1,27 @@
+<!-- Grafana reads the warehouse with this user: read-only, and only the databases the dashboards
+     need. Grafana's anonymous viewers may edit queries in Explore, so they must not be able to
+     write or drop anything. readonly 2, not 1: still no writes or DDL, but the ClickHouse plugin
+     may set query settings (max_execution_time) as it does on every query. The ETL writes as the
+     user the image creates (CLICKHOUSE_USER). -->
+<clickhouse>
+    <profiles>
+        <grafana>
+            <readonly>2</readonly>
+        </grafana>
+    </profiles>
+    <users>
+        <grafana>
+            <password from_env="CLICKHOUSE_GRAFANA_PASSWORD"/>
+            <profile>grafana</profile>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <allow_databases>
+                <database>dw</database>
+                <database>meta</database>
+                <database>staging</database>
+                <database>system</database>
+            </allow_databases>
+        </grafana>
+    </users>
+</clickhouse>

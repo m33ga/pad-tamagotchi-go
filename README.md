@@ -2612,6 +2612,65 @@ Lab 5 adds these dashboards and panels as the features land:
 
 A panel stays empty until its source reports: the system overview's health and utilization need Service Discovery's metrics, and the message broker dashboard the broker's.
 
+### Analytics: Warehouse and ETL
+
+The data warehouse and its ETL ([Analytics](#analytics)) run under the `analytics` compose profile. The stack is large, so they start only on request.
+
+| Container | Image | Role | Published |
+|---|---|---|---|
+| `clickhouse` | `clickhouse/clickhouse-server:25.8.33.6` | the warehouse: `meta`, `staging` and `dw`; metrics on `:9363` for the collector | `127.0.0.1:8123` (HTTP) |
+| `airflow-db` | `postgres:17.6-alpine` | Airflow's metadata: tooling, not product data, one node | none |
+| `airflow-init` | `grdz/etl:5.3.0` | once per start: Airflow's database migration, the warehouse migrations (`python -m etl migrate`), the admin user | none |
+| `airflow-apiserver` | `grdz/etl:5.3.0` | the Airflow UI and the Execution API the tasks report to | `127.0.0.1:8088` |
+| `airflow-scheduler`, `airflow-dag-processor` | `grdz/etl:5.3.0` | run the DAGs (LocalExecutor) and parse them | none |
+
+Together their memory limits add about 3.8 GiB to the stack.
+
+**Credentials and connections.**
+- **Credentials** come from `.env`: `CLICKHOUSE_PASSWORD` (the ETL's `etl` user), `CLICKHOUSE_GRAFANA_PASSWORD` (Grafana's read-only `grafana` user), `AIRFLOW_DB_PASSWORD`, `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_JWT_SECRET` and `AIRFLOW_SECRET_KEY`. Compose reads them on every start, also without the profile.
+- **Connections** are environment variables of the Airflow containers (`AIRFLOW_CONN_*`): the warehouse, and every source's replica, `<service>-db:5433`, as `analytics_reader` with `ANALYTICS_READER_PASSWORD`.
+
+**Starting it** with the rest of the stack, or later on its own:
+
+```bash
+docker compose --profile analytics up -d --wait
+```
+
+`airflow-init` must end with exit code 0 before the other Airflow containers start. On a later start it changes nothing: migrations already applied are skipped and the admin user already exists.
+
+**Opening Airflow.** <http://127.0.0.1:8088>, logged in as `admin` with `AIRFLOW_ADMIN_PASSWORD`. The DAGs are on and run without being switched on:
+
+| DAG | Runs | Does |
+|---|---|---|
+| `extract_<source>` | every 5 minutes | the warehouse migrations, then one task per view: rows changed since the last load, from the replica into `staging`. A task with nothing new ends **skipped**. |
+| `transform` | when an extract loaded rows | `staging` into the `dw` dimensions and facts |
+| `backfill` | manually | extracts a source again from a date: **Trigger DAG** with `source`, `start` and an optional `entity` |
+| `migrate` | manually | the warehouse migrations, as `airflow-init` runs them |
+
+To see a cycle at once, play a game, then **Trigger** `extract_tamagotchi`: its tasks load the new rows, and `transform` starts by itself when they finish.
+
+**Reading the dashboard.** Grafana's **Analytics** dashboard reads ClickHouse as the read-only `grafana` user, through the ClickHouse plugin Grafana installs on start.
+
+| Row | Shows |
+|---|---|
+| ETL | the last extract per source (state, duration, rows) and freshness per source, red past 15 minutes. Every source appears in it by itself. |
+| Tamagotchis | XP per day by source (revoked XP apart), transfers per day, Tamagotchis per level band and per combat type |
+| Players and battles | battles per day and win rate by combat type, completed and voided settlements and their duration, coins in and out by reason and package, active players per day |
+| Guilds and packages, Raids | filled by their sources' ETL (#144, #145) |
+| Warehouse | ClickHouse uptime, rows and bytes per `staging` and `dw` table, queries per minute |
+
+Without the profile its panels show the warehouse as unreachable.
+
+**Metrics.**
+- **Airflow** sends its metrics (DAG runs, task states and durations) and the ETL's `etl.rows_loaded` and `etl.freshness_seconds` to the collector over OTLP.
+- **ClickHouse:** the collector scrapes its Prometheus endpoint, found by DNS, so without the profile there is no target and no scrape error.
+
+**Querying the warehouse directly**, on loopback:
+
+```bash
+curl -u "etl:$CLICKHOUSE_PASSWORD" "http://127.0.0.1:8123/?query=SELECT+count()+FROM+dw.fact_xp+FINAL"
+```
+
 ### Mocked Dependencies
 
 The gateway forwards allowed client requests through the message broker. The

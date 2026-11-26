@@ -200,6 +200,19 @@ receivers:
     resource_attributes: *redis-resource-attributes
     metrics: *redis-sentinel-metrics
 
+  # The warehouse runs under the analytics profile only: found through DNS, so without it there
+  # is simply no target, and no scrape error every interval.
+  prometheus/clickhouse:
+    config:
+      scrape_configs:
+        - job_name: clickhouse
+          scrape_interval: 15s
+          dns_sd_configs:
+            - names: [clickhouse]
+              type: A
+              port: 9363
+              refresh_interval: 30s
+
 processors:
   memory_limiter:
     check_interval: 1s
@@ -326,7 +339,7 @@ service:
       processors: [memory_limiter, tail_sampling/drop-probes, batch]
       exporters: [otlp_grpc/tempo]
     metrics:
-      receivers: [otlp, prometheus/postgresql]
+      receivers: [otlp, prometheus/postgresql, prometheus/clickhouse]
       processors: [memory_limiter, batch]
       exporters: [otlp_http/prometheus]
     metrics/redis:
