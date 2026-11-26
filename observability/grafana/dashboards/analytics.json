@@ -735,19 +735,221 @@
       "panels": []
     },
     {
-      "type": "text",
-      "title": "",
+      "type": "timeseries",
+      "title": "Raids per day by status",
+      "description": "Raids by the day they started, stacked by status: ACTIVE, COMPLETED, FAILED.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
       "gridPos": {
-        "h": 3,
-        "w": 24,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 56
       },
-      "options": {
-        "mode": "markdown",
-        "content": "The Monster Raid panels are added with its ETL source ([#145](https://github.com/m33ga/pad-tamagotchi-go/issues/145)), following `docs/adding-a-source.md` in the etl repository."
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
       },
-      "id": 16
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(starts_at) AS time, countIf(status = 'ACTIVE') AS active, countIf(status = 'COMPLETED') AS completed, countIf(status = 'FAILED') AS failed FROM dw.fact_raid FINAL WHERE $__timeFilter(starts_at) GROUP BY time ORDER BY time"
+        }
+      ],
+      "id": 61
+    },
+    {
+      "type": "bargauge",
+      "title": "Raid success rate per guild",
+      "description": "COMPLETED raids over finished (COMPLETED or FAILED) raids, per guild id, for raids started in the range.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT toString(guild_id) AS guild, countIf(status = 'COMPLETED') / count() AS success_rate FROM dw.fact_raid FINAL WHERE status IN ('COMPLETED', 'FAILED') AND $__timeFilter(starts_at) GROUP BY guild_id ORDER BY success_rate DESC"
+        }
+      ],
+      "id": 62
+    },
+    {
+      "type": "timeseries",
+      "title": "Raid duration p50 / p95",
+      "description": "finished_at - starts_at of the finished raids, by the day they started.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(starts_at) AS time, quantile(0.5)(duration_seconds) AS p50, quantile(0.95)(duration_seconds) AS p95 FROM dw.fact_raid FINAL WHERE finished_at IS NOT NULL AND $__timeFilter(starts_at) GROUP BY time ORDER BY time"
+        }
+      ],
+      "id": 63
+    },
+    {
+      "type": "histogram",
+      "title": "Damage per participant",
+      "description": "Distribution of the damage each participant dealt in a raid, for participations that joined in the range.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT damage_dealt FROM dw.fact_raid_participation FINAL WHERE $__timeFilter(joined_at)"
+        }
+      ],
+      "id": 64
+    },
+    {
+      "type": "barchart",
+      "title": "Participants per raid",
+      "description": "How many raids had each number of participants, for raids started in the range.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "participants",
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT toString(participant_count) AS participants, count() AS raids FROM dw.fact_raid FINAL WHERE $__timeFilter(starts_at) GROUP BY participant_count ORDER BY participant_count"
+        }
+      ],
+      "id": 65
     },
     {
       "type": "row",
@@ -758,7 +960,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 59
+        "y": 72
       },
       "panels": []
     },
@@ -774,7 +976,7 @@
         "h": 5,
         "w": 6,
         "x": 0,
-        "y": 60
+        "y": 73
       },
       "fieldConfig": {
         "defaults": {
@@ -831,7 +1033,7 @@
         "h": 10,
         "w": 18,
         "x": 6,
-        "y": 60
+        "y": 73
       },
       "fieldConfig": {
         "defaults": {
@@ -871,7 +1073,7 @@
         "h": 5,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 78
       },
       "fieldConfig": {
         "defaults": {
