@@ -1001,14 +1001,19 @@ services:
   notification-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-notification-service:v4.2.0
+    image: johnnyc05/pad-notification-service:v5.1.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
     # replicas. Each one registers itself with Service Discovery at startup.
-    # The client credentials come from this service's own secrets file.
+    # The client credentials come from this service's own secrets file. /status measures
+    # load against these limits (C# services: 1 CPU, 512M).
     deploy:
       replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
     networks: [internal]
     env_file:
       - .env
@@ -1019,12 +1024,10 @@ services:
       POSTGRES_USER: ${NOTIFICATION_DB_USER}
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
       # Redis is found through the Sentinels under the group name notification, with the same
-      # settings as Monster Raid (#130). REDIS_ADDR stays for releases that do not read them yet:
-      # they keep working against the initial primary until its first failover.
+      # settings as Monster Raid: the service writes only to the primary the Sentinels name.
       REDIS_MODE: sentinel
       REDIS_SENTINEL_ADDRS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
       REDIS_MASTER_NAME: notification
-      REDIS_ADDR: notification-redis:6379
       REDIS_PASSWORD: ${NOTIFICATION_REDIS_PASSWORD}
       REQUEST_TIMEOUT_SECONDS: 4
     depends_on:
