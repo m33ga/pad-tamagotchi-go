@@ -861,7 +861,7 @@ services:
   tamagotchi-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v4.2.0
+    image: johnnyc05/pad-tamagotchi-service:v5.1.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
