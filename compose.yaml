@@ -897,10 +897,35 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: package-registry-db-2:5432
     volumes: [package-registry-db-2-data:/var/lib/postgresql/data]
 
+  # The platform's S3-compatible object store (#66): sprites and other blobs, kept as
+  # immutable objects. Clients read them straight from it by URL, so its S3 port is
+  # published like the gateway's. Each bucket's owner decides what anonymous callers
+  # may do; Tamagotchi lets anyone read one object at a time and nothing else. The web
+  # console (9001) is not published.
+  object-store:
+    logging: *default-logging
+    image: rustfs/rustfs:1.0.5
+    pull_policy: always
+    restart: unless-stopped
+    networks: [edge, internal]
+    ports:
+      - "${OBJECT_STORE_PORT:-9000}:9000"
+    environment:
+      RUSTFS_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:?}
+      RUSTFS_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:?}
+    volumes:
+      - object-store-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   tamagotchi-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v5.1.0
+    image: johnnyc05/pad-tamagotchi-service:v5.2.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
@@ -923,10 +948,19 @@ services:
       # false, the default: health statistics are validated with Package Registry's
       # ListStatDefinitions over gRPC through the broker; true keeps the built-in mock.
       PackageRegistry__UseMock: ${USE_MOCK_PACKAGE_REGISTRY:-false}
+      # Sprite uploads (POST /api/v1/tamagotchi-sprites) go to the object store with its
+      # keys; spriteUrl then accepts only URLs under SPRITES_PUBLIC_BASE_URL, where clients
+      # load the images. Set SPRITES_PUBLIC_BASE_URL in .env for clients on other machines.
+      SPRITES_ENDPOINT: http://object-store:9000
+      SPRITES_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:?}
+      SPRITES_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:?}
+      SPRITES_PUBLIC_BASE_URL: ${SPRITES_PUBLIC_BASE_URL:-http://localhost:${OBJECT_STORE_PORT:-9000}/sprites}
     depends_on:
       service-discovery:
         condition: service_healthy
       tamagotchi-db:
+        condition: service_healthy
+      object-store:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
@@ -1411,7 +1445,7 @@ services:
           memory: 768M
 
 networks:
-  # Published listeners: the gateway, both Guild sockets, and loopback-only Discovery,
+  # Published listeners: the gateway, both Guild sockets, the object store, and loopback-only Discovery,
   # broker admin and Grafana.
   edge:
   # Every container. No route to the internet, and nothing on it is published. The subnet is
@@ -1434,6 +1468,7 @@ volumes:
   guild-data:
   package-registry-data:
   tamagotchi-data:
+  object-store-data:
   notification-data:
   notification-redis-data:
   notification-redis-replica-data:

@@ -118,7 +118,7 @@ Each service owns its datastore. Events are published to broker topics and persi
 
 ![Architecture Diagram](docs/architecture.png)
 
-The diagram shows the Lab 5 target: every PostgreSQL database as a Patroni pair behind its HAProxy, the Redis replicas with their Sentinels, the broker's response cache and transaction coordinator, and the analytics path from the replicas through Airflow and ClickHouse to Grafana. Replication, the Redis failover and the warehouse are being added to the deployment in #135, #136 and #137. Object storage is tracked in #66.
+The diagram shows the Lab 5 target: every PostgreSQL database as a Patroni pair behind its HAProxy, the Redis replicas with their Sentinels, the broker's response cache and transaction coordinator, and the analytics path from the replicas through Airflow and ClickHouse to Grafana. Replication, the Redis failover and the warehouse are being added to the deployment in #135, #136 and #137. The object store holds Tamagotchi sprites (#66).
 
 [Back to top](#table-of-contents)
 
@@ -1484,7 +1484,12 @@ Release 5.1.0 adds two parts of the Lab 5 contract (#129 stages 1 and 3):
   - A compensation that arrives before its action succeeds having changed nothing, and the late action is then refused with `FAILED_PRECONDITION` `XP_GRANT_REVOKED` or `TRANSFER_REVERTED`.
   - A transfer the Tamagotchi has moved on from is refused with `FAILED_PRECONDITION` `TRANSFER_SUPERSEDED`.
   - The grant or transfer stays recorded with its revocation time, so voided battles remain visible in the warehouse.
-- **Not in this release** (#129 stage 2): cacheable replies with cache tags, and the container's CPU and memory shares in `/status`.
+- **Sprite uploads** (release 5.2.0, #66). `POST /api/v1/tamagotchi-sprites` takes the image itself, a PNG or WebP of at most 512 KiB with the matching `Content-Type`, and answers `201 SpriteUploadResponse` with the URL to put in `spriteUrl`.
+  - The image goes to the [object store](#object-storage) under `tamagotchi/<sha256>.<png|webp>`: immutable, readable by anyone, served with `Cache-Control: public, max-age=31536000, immutable`. Clients load it straight from there.
+  - `spriteUrl` on create and update accepts only those URLs; any other is `400 VALIDATION_FAILED`.
+  - Errors: `415 UNSUPPORTED_SPRITE_TYPE` (not PNG/WebP, or not matching the `Content-Type`), `413 SPRITE_TOO_LARGE`, `503 SPRITE_STORE_UNAVAILABLE` (the store refused or did not answer within 3 seconds).
+  - Package Registry's raid-configuration sprites still take an external URL; they can move to the same store later.
+- **Not in these releases** (#129 stage 2): cacheable replies with cache tags, and the container's CPU and memory shares in `/status`.
 
 ##### Endpoint Catalog
 
@@ -1493,6 +1498,7 @@ Release 5.1.0 adds two parts of the Lab 5 contract (#129 stages 1 and 3):
 | `GET /health` | Docker healthcheck, internal network only | None | `200 {"status":"UP"}` | None |
 | `GET /status` | Service Discovery, internal network only | None | `200` readiness document, `UP` or `DEGRADED` | `503 DOWN` when PostgreSQL is unreachable |
 | `GET /api/v1/tamagotchi-combat-types` | Any authenticated caller | None | `200 CombatTypeResponse[]` | None |
+| `POST /api/v1/tamagotchi-sprites` | Any signed-in user | The PNG or WebP image, `Content-Type: image/png` or `image/webp` | `201 SpriteUploadResponse` | `401`, `403 CALLER_NOT_ALLOWED`, `413 SPRITE_TOO_LARGE`, `415 UNSUPPORTED_SPRITE_TYPE`, `503 SPRITE_STORE_UNAVAILABLE` |
 | `POST /api/v1/tamagotchis` | The user named in `ownerUserId` | `CreateTamagotchiRequest` | `201 TamagotchiResponse` | `400`, `403`, `404 PACKAGE_NOT_FOUND`, `409 PRIMARY_TAMAGOTCHI_EXISTS`, `422 INVALID_LOCAL_STATS`, `503 PACKAGE_REGISTRY_UNAVAILABLE`, `503 PEER_CIRCUIT_OPEN` |
 | `GET /api/v1/tamagotchis/{tamagotchiId}` | Account owner, Battle, or Monster Raid Service | None | `200 TamagotchiResponse` | `403`, `404 TAMAGOTCHI_NOT_FOUND` |
 | `PATCH /api/v1/tamagotchis/{tamagotchiId}` | Account owner | `UpdateTamagotchiRequest` | `200 TamagotchiResponse` | `400`, `403`, `404` |
@@ -1510,12 +1516,12 @@ Release 5.1.0 adds two parts of the Lab 5 contract (#129 stages 1 and 3):
     "packageId": "UUID string; required. Package that defines the Tamagotchi's local statistics",
     "name": "String, 1-80 characters; required. Tamagotchi display name",
     "combatType": "FLAME, NATURE, EARTH, ELECTRIC, WATER, or SHADOW; required. Predefined combat type",
-    "spriteUrl": "URL string; required. Sprite reference",
+    "spriteUrl": "URL string; required. A URL returned by POST /api/v1/tamagotchi-sprites",
     "healthStats": "JSON object; required. Package-local statistics validated against Package Registry definitions"
   },
   "UpdateTamagotchiRequest": {
     "name": "String, 1-80 characters; optional. Updated display name",
-    "spriteUrl": "URL string; optional. Updated sprite reference"
+    "spriteUrl": "URL string; optional. Updated sprite, a URL returned by POST /api/v1/tamagotchi-sprites"
   },
   "TamagotchiResponse": {
     "tamagotchiId": "UUID string; required. Global Tamagotchi identifier",
@@ -1530,6 +1536,11 @@ Release 5.1.0 adds two parts of the Lab 5 contract (#129 stages 1 and 3):
     "healthStats": "JSON object; required. Non-normalized package-local statistics",
     "createdAt": "UTC timestamp; required. Creation time",
     "updatedAt": "UTC timestamp; required. Last update time"
+  },
+  "SpriteUploadResponse": {
+    "spriteUrl": "URL string; required. Where clients load the sprite; the value for spriteUrl",
+    "contentType": "image/png or image/webp; required. The type read from the image",
+    "sizeBytes": "Positive integer; required. Size of the stored image"
   },
   "SetPrimaryTamagotchiRequest": {
     "tamagotchiId": "UUID string; required. Owned Tamagotchi that becomes primary"
@@ -2431,6 +2442,7 @@ Docker Compose runs the gateway, Service Discovery, the message broker and all e
 | Service Discovery, from the host only | [`grdz/service-discovery`](https://hub.docker.com/r/grdz/service-discovery) | `http://127.0.0.1:8500` |
 | Message broker admin endpoints, from the host only | [`grdz/broker`](https://hub.docker.com/r/grdz/broker) | `http://127.0.0.1:8501` |
 | Grafana, from the host only | [`grafana/grafana`](https://hub.docker.com/r/grafana/grafana) | `http://127.0.0.1:3000` |
+| Object store (sprites), S3 API | [`rustfs/rustfs`](https://hub.docker.com/r/rustfs/rustfs) | `http://localhost:9000` |
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
@@ -2448,8 +2460,9 @@ All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat c
 | Service Discovery, loopback only | 8500 |
 | Message broker admin endpoints, loopback only | 8501 |
 | Grafana, loopback only | 3000 |
+| Object store (sprites) | 9000 |
 
-`GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2` and `GRAFANA_PORT` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
+`GATEWAY_PORT`, `GUILD_CHAT_PORT_1`, `GUILD_CHAT_PORT_2`, `GRAFANA_PORT` and `OBJECT_STORE_PORT` in `.env` can override these ports. Databases, caches, service REST APIs and the broker's gRPC API publish no host ports. Service Discovery binds `127.0.0.1:8500`, so its catalogue can be read from the host, for example `curl http://127.0.0.1:8500/api/v1/services`, and from no other machine. The broker binds its HTTP listener to `127.0.0.1:8501` in the same way: `/status`, `/topics` (every topic with its producers, subscribers and queue depths) and `/dead-letters` (the dead letter channel) answer from the host only, need no token and are unreachable through the gateway. Each Guild socket listener uses container port 8082, separately from its REST listener on 8081. By default its advertised URL uses localhost and that instance's published chat port; set `GUILD_PUBLIC_WS_URL_1` and `GUILD_PUBLIC_WS_URL_2` for remote clients. Clients must use the URL returned by negotiation.
 
 ### Run the Services
 
@@ -2800,6 +2813,8 @@ Redis is used for high-speed, frequently changing or temporary state. It is appr
 ### Object Storage
 
 An S3-compatible object store (e.g. [RustFS](https://github.com/rustfs/rustfs)) holds blobs such as sprite images. Assets must be viewable across packages, so they live in one shared store as immutable objects; service databases keep only object keys or URLs and clients fetch assets directly by URL.
+
+The deployment runs [RustFS](https://hub.docker.com/r/rustfs/rustfs) as `object-store`, its S3 API published on port 9000 and its data in the `object-store-data` volume. Tamagotchi Service owns the `sprites` bucket and writes to it with `OBJECT_STORE_ACCESS_KEY` and `OBJECT_STORE_SECRET_KEY` from `.env`. It creates the bucket on the first upload and grants anonymous callers `s3:GetObject` and nothing else, so anyone can load a sprite by its URL but nobody can list the bucket or write to it without the keys. Objects are keyed by the SHA-256 of their content and never overwritten. `SPRITES_PUBLIC_BASE_URL` (default `http://localhost:9000/sprites`) is where clients load them, and the only prefix `spriteUrl` accepts.
 
 ### Database-per-Service
 
