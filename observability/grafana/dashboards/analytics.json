@@ -1,0 +1,911 @@
+{
+  "uid": "analytics",
+  "title": "Analytics",
+  "description": "The data warehouse (README, Analytics): the ETL's runs and freshness, each source's history, and ClickHouse itself. Needs the analytics profile.",
+  "tags": [
+    "tamagotchi-go",
+    "analytics"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "tamagotchi-go"
+      ],
+      "asDropdown": true,
+      "title": "Dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "ETL",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Last extract per source",
+      "description": "The latest scheduled extract of each source: failed if any of its views failed (after the task's retries), its duration, the rows it loaded and when it ended.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "success": {
+                  "color": "green",
+                  "index": 0
+                },
+                "failed": {
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT source, if(countIf(state = 'failed') > 0, 'failed', 'success') AS state, max(finished) AS ended, dateDiff('millisecond', min(started), max(finished)) / 1000 AS duration_seconds, sum(rows) AS rows FROM (SELECT source, target, argMax(state, finished_at) AS state, min(started_at) AS started, max(finished_at) AS finished, argMax(rows, finished_at) AS rows FROM meta.runs WHERE kind = 'extract' AND (source, run_id) IN (SELECT source, argMax(run_id, finished_at) FROM meta.runs WHERE kind = 'extract' GROUP BY source) GROUP BY source, target) GROUP BY source ORDER BY source"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "bargauge",
+      "title": "Freshness per source",
+      "description": "Now minus the newest change loaded from the source (the highest watermark of its views). Red past 15 minutes: the extracts run every 5, so the source has not been read for at least two cycles, or nothing in it has changed.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT source, dateDiff('second', max(watermark), now64(3)) AS freshness_seconds FROM meta.watermarks FINAL GROUP BY source ORDER BY source"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "timeseries",
+      "title": "Extract duration per source",
+      "description": "Each scheduled extract run of a source, from its first view's start to its last view's end.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 5
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT max(finished_at) AS time, source, dateDiff('millisecond', min(started_at), max(finished_at)) / 1000 AS duration_seconds FROM meta.runs WHERE kind = 'extract' AND $__timeFilter(finished_at) GROUP BY source, run_id ORDER BY time"
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows loaded per run",
+      "description": "Rows each extract run loaded into staging, per source, including the rows the 5-minute overlap reads again.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT max(finished_at) AS time, source, sum(rows) AS rows FROM meta.runs WHERE kind = 'extract' AND state = 'success' AND $__timeFilter(finished_at) GROUP BY source, run_id ORDER BY time"
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "row",
+      "title": "Tamagotchis",
+      "collapsed": false,
+      "id": 6,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "XP granted per day by source",
+      "description": "XP granted per day from battles and raids. XP whose grant was revoked (its battle's settlement was compensated) is its own series, not counted in the others.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(created_at) AS time, sumIf(amount, source = 'BATTLE' AND revoked_at IS NULL) AS battle, sumIf(amount, source = 'RAID' AND revoked_at IS NULL) AS raid, sumIf(amount, revoked_at IS NOT NULL) AS revoked FROM dw.fact_xp FINAL WHERE $__timeFilter(created_at) GROUP BY time ORDER BY time"
+        }
+      ],
+      "id": 7
+    },
+    {
+      "type": "timeseries",
+      "title": "Transfers per day",
+      "description": "Ownership transfers per day (a battle's winner takes the loser's primary), and those later reverted because the battle was voided.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(transferred_at) AS time, countIf(reverted_at IS NULL) AS kept, countIf(reverted_at IS NOT NULL) AS reverted FROM dw.fact_transfer FINAL WHERE $__timeFilter(transferred_at) GROUP BY time ORDER BY time"
+        }
+      ],
+      "id": 8
+    },
+    {
+      "type": "barchart",
+      "title": "Tamagotchis per level band",
+      "description": "How many Tamagotchis are at each level band now.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "band",
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT multiIf(level < 5, '1-4', level < 10, '5-9', level < 20, '10-19', level < 50, '20-49', '50+') AS band, count() AS tamagotchis FROM dw.dim_tamagotchi FINAL GROUP BY band ORDER BY min(level)"
+        }
+      ],
+      "id": 9
+    },
+    {
+      "type": "piechart",
+      "title": "Tamagotchis per combat type",
+      "description": "How many Tamagotchis there are of each combat type.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "right"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT combat_type, count() AS tamagotchis FROM dw.dim_tamagotchi FINAL GROUP BY combat_type ORDER BY combat_type"
+        }
+      ],
+      "id": 10
+    },
+    {
+      "id": 11,
+      "title": "Players and battles",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Battles per day and win rate by combat type",
+      "description": "Counts battle creation. Win rate is the share of combatant appearances on the winning side for each combat type, for completed and forfeited battles.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/win_rate$/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(created_at) AS time, count() AS battles\nFROM dw.fact_battle FINAL\nWHERE $__timeFilter(created_at)\nGROUP BY time ORDER BY time"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(b.settled_at) AS time, t.combat_type,\n       avg(toUInt8(p.user_id = b.winner_user_id)) AS win_rate\nFROM (\n    SELECT battle_id, winner_user_id, settled_at\n    FROM dw.fact_battle FINAL\n    WHERE status IN ('COMPLETED', 'FORFEITED') AND $__timeFilter(settled_at)\n) AS b\nINNER JOIN (\n    SELECT battle_id, user_id, tamagotchi_id FROM dw.fact_battle_combatant FINAL\n) AS p ON p.battle_id = b.battle_id\nINNER JOIN (\n    SELECT tamagotchi_id, combat_type FROM dw.dim_tamagotchi FINAL\n) AS t ON t.tamagotchi_id = p.tamagotchi_id\nGROUP BY time, t.combat_type ORDER BY time, t.combat_type"
+        }
+      ],
+      "id": 91
+    },
+    {
+      "type": "timeseries",
+      "title": "Completed and voided settlements and duration",
+      "description": "Counts callback outcomes and measures elapsed time from combat end to settlement. Historical rows without both timestamps are excluded from percentiles.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/p50_ms$/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/p95_ms$/"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(settled_at) AS time, status, count() AS settlements\nFROM dw.fact_battle FINAL\nWHERE status IN ('COMPLETED', 'VOIDED') AND $__timeFilter(settled_at)\nGROUP BY time, status ORDER BY time, status"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(settled_at) AS time,\n       quantile(0.50)(settlement_duration_ms) AS p50_ms,\n       quantile(0.95)(settlement_duration_ms) AS p95_ms\nFROM dw.fact_battle FINAL\nWHERE status IN ('COMPLETED', 'FORFEITED', 'VOIDED') AND $__timeFilter(settled_at)\n  AND settlement_duration_ms IS NOT NULL\nGROUP BY time ORDER BY time"
+        }
+      ],
+      "id": 92
+    },
+    {
+      "type": "timeseries",
+      "title": "Coins in and out by reason and package",
+      "description": "Incoming and outgoing coins are shown as positive magnitudes, with a separate series for each reason and package. Global currency has no package.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfDay(created_at) AS time,\n       concat(reason, ' / ', coalesce(toString(package_id), 'GLOBAL')) AS series,\n       sumIf(amount, amount > 0) AS coins_in,\n       -sumIf(amount, amount < 0) AS coins_out\nFROM dw.fact_ledger FINAL\nWHERE $__timeFilter(created_at)\nGROUP BY time, series ORDER BY time, series"
+        }
+      ],
+      "id": 93
+    },
+    {
+      "type": "timeseries",
+      "title": "Active players per day",
+      "description": "Counts each user once per UTC day if they took part in a battle created that day or had a ledger entry.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT time, uniqExact(user_id) AS active_players\nFROM (\n    SELECT toStartOfDay(created_at) AS time,\n           arrayJoin([challenger_user_id, opponent_user_id]) AS user_id\n    FROM dw.fact_battle FINAL WHERE $__timeFilter(created_at)\n    UNION ALL\n    SELECT toStartOfDay(created_at) AS time, user_id\n    FROM dw.fact_ledger FINAL WHERE $__timeFilter(created_at)\n)\nGROUP BY time ORDER BY time"
+        }
+      ],
+      "id": 94
+    },
+    {
+      "type": "row",
+      "title": "Guilds and packages",
+      "collapsed": false,
+      "id": 13,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "panels": []
+    },
+    {
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "The Guild and Package Registry panels are added with its ETL source ([#144](https://github.com/m33ga/pad-tamagotchi-go/issues/144)), following `docs/adding-a-source.md` in the etl repository."
+      },
+      "id": 14
+    },
+    {
+      "type": "row",
+      "title": "Raids",
+      "collapsed": false,
+      "id": 15,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "panels": []
+    },
+    {
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "The Monster Raid panels are added with its ETL source ([#145](https://github.com/m33ga/pad-tamagotchi-go/issues/145)), following `docs/adding-a-source.md` in the etl repository."
+      },
+      "id": 16
+    },
+    {
+      "type": "row",
+      "title": "Warehouse",
+      "collapsed": false,
+      "id": 17,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 59
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "ClickHouse uptime",
+      "description": "How long the warehouse has been up. No data: ClickHouse is not running (start the stack with the analytics profile).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 60
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT uptime() AS uptime"
+        }
+      ],
+      "id": 18
+    },
+    {
+      "type": "table",
+      "title": "Rows and bytes per table",
+      "description": "Every staging and warehouse table: rows and compressed bytes on disk, from the active parts.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 18,
+        "x": 6,
+        "y": 60
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT concat(database, '.', table) AS table, sum(rows) AS rows, sum(bytes_on_disk) AS bytes FROM system.parts WHERE active AND database IN ('staging', 'dw') GROUP BY database, table ORDER BY database, table"
+        }
+      ],
+      "id": 19
+    },
+    {
+      "type": "timeseries",
+      "title": "Queries per minute",
+      "description": "Queries the warehouse finished per minute (the ETL's loads and transforms, and these dashboards), and those that failed.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 65
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT toStartOfMinute(event_time) AS time, countIf(type = 'QueryFinish') AS finished, countIf(type IN ('ExceptionBeforeStart', 'ExceptionWhileProcessing')) AS failed FROM system.query_log WHERE $__timeFilter(event_time) GROUP BY time ORDER BY time"
+        }
+      ],
+      "id": 20
+    }
+  ]
+}

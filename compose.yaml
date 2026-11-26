@@ -176,6 +176,45 @@ x-cache-node: &cache-node
       limits:
         memory: 128M
 
+# The ETL runtime (Analytics in the README): Airflow 3 from the ETL image, LocalExecutor, under
+# the analytics profile with the warehouse. Every component shares this configuration. The
+# connections are environment variables: the warehouse, and each source's replica on port 5433
+# as the read-only analytics_reader.
+x-airflow: &airflow
+  logging: *default-logging
+  image: grdz/etl:5.0.0
+  profiles: [analytics]
+  networks: [internal]
+  restart: unless-stopped
+  environment: &airflow-environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # The ETL's DAGs run as soon as they are loaded: there is nothing to switch on in the UI.
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
+    # Shared by every component: the API server signs the tokens the tasks present.
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?}
+    # Airflow's metrics, and the ETL's own (etl.rows_loaded, etl.freshness_seconds), to the
+    # collector over OTLP/HTTP.
+    AIRFLOW__METRICS__OTEL_ON: "true"
+    AIRFLOW__METRICS__OTEL_HOST: otel-collector
+    AIRFLOW__METRICS__OTEL_PORT: "4318"
+    AIRFLOW__METRICS__OTEL_SERVICE: airflow
+    AIRFLOW__METRICS__OTEL_INTERVAL_MILLISECONDS: "15000"
+    AIRFLOW_CONN_CLICKHOUSE: clickhouse://etl:${CLICKHOUSE_PASSWORD}@clickhouse:8123
+    AIRFLOW_CONN_USER_MANAGEMENT_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@user-management-db:5433/${USER_MANAGEMENT_DB_NAME}
+    AIRFLOW_CONN_BATTLE_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@battle-db:5433/${BATTLE_DB_NAME}
+    AIRFLOW_CONN_TAMAGOTCHI_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@tamagotchi-db:5433/${TAMAGOTCHI_DB_NAME}
+    AIRFLOW_CONN_GUILD_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@guild-db:5433/${GUILD_DB_NAME}
+    AIRFLOW_CONN_PACKAGE_REGISTRY_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@package-registry-db:5433/${PACKAGE_REGISTRY_DB_NAME}
+    AIRFLOW_CONN_MONSTER_RAID_REPLICA: postgresql://analytics_reader:${ANALYTICS_READER_PASSWORD}@monster-raid-db:5433/${MONSTER_RAID_DB_NAME}
+  depends_on: &airflow-depends-on
+    airflow-init:
+      condition: service_completed_successfully
+
 services:
   etcd-1:
     <<: *etcd
@@ -1105,6 +1144,134 @@ services:
   # Observability (observability/): the OpenTelemetry Collector receives traces and metrics
   # over OTLP and reads every container's log file, and hands them to Tempo, Prometheus and
   # Loki; Grafana shows all three. Only Grafana is published, on loopback.
+  # The warehouse (Analytics in the README). HTTP on loopback for the demo; the ETL writes as
+  # etl, Grafana reads as the read-only grafana user of infra/clickhouse/users.d.
+  clickhouse:
+    logging: *default-logging
+    image: clickhouse/clickhouse-server:25.8.33.6
+    profiles: [analytics]
+    restart: unless-stopped
+    networks: [edge, internal]
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+    environment:
+      CLICKHOUSE_USER: etl
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CLICKHOUSE_GRAFANA_PASSWORD: ${CLICKHOUSE_GRAFANA_PASSWORD:?}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./infra/clickhouse/config.d/platform.xml:/etc/clickhouse-server/config.d/platform.xml:ro
+      - ./infra/clickhouse/users.d/grafana.xml:/etc/clickhouse-server/users.d/grafana.xml:ro
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # Airflow's own metadata: tooling, not product data, so one node without a replica.
+  airflow-db:
+    logging: *default-logging
+    image: postgres:17.6-alpine
+    profiles: [analytics]
+    restart: unless-stopped
+    networks: [internal]
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:?}
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U airflow -d airflow"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # Once per start: Airflow's database migration, the warehouse migrations, the admin user.
+  airflow-init:
+    <<: *airflow
+    restart: "no"
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        airflow db migrate
+        python -m etl migrate
+        airflow users list | grep -qw "$${AIRFLOW_ADMIN_USER}" || airflow users create \
+          --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+          --role Admin --firstname Airflow --lastname Admin --email admin@tamagotchi.local
+    environment:
+      <<: *airflow-environment
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?}
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+  # The UI on loopback, and the Execution API the tasks report to.
+  airflow-apiserver:
+    <<: *airflow
+    command: ["api-server"]
+    networks: [edge, internal]
+    ports:
+      - "127.0.0.1:${AIRFLOW_PORT:-8088}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/v2/monitor/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  airflow-scheduler:
+    <<: *airflow
+    command: ["scheduler"]
+    depends_on:
+      <<: *airflow-depends-on
+      airflow-apiserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --local"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  airflow-dag-processor:
+    <<: *airflow
+    command: ["dag-processor"]
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob --local"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
   otel-collector:
     logging: *default-logging
     restart: unless-stopped
@@ -1215,6 +1382,10 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # The Analytics dashboard reads the warehouse through this plugin, installed before
+      # Grafana serves, pinned like every image.
+      GF_PLUGINS_PREINSTALL_SYNC: grafana-clickhouse-datasource@4.23.5
+      CLICKHOUSE_GRAFANA_PASSWORD: ${CLICKHOUSE_GRAFANA_PASSWORD:?}
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -1271,6 +1442,8 @@ volumes:
   loki-data:
   tempo-data:
   grafana-data:
+  clickhouse-data:
+  airflow-db-data:
   # Lab 5: independent data directories; legacy volumes above are retained.
   etcd-1-data:
   etcd-2-data:

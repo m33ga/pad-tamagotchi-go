@@ -73,3 +73,17 @@ datasources:
       streamingEnabled:
         search: true
         metrics: true
+
+  # The warehouse (Analytics), read-only: the grafana user of infra/clickhouse/users.d. Present
+  # also without the analytics profile; its panels then show the warehouse as unreachable.
+  - name: ClickHouse
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    jsonData:
+      host: clickhouse
+      port: 8123
+      protocol: http
+      username: grafana
+      defaultDatabase: dw
+    secureJsonData:
+      password: $CLICKHOUSE_GRAFANA_PASSWORD
