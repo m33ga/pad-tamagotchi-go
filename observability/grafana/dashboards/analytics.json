@@ -707,19 +707,191 @@
       "panels": []
     },
     {
-      "type": "text",
-      "title": "",
+      "type": "timeseries",
+      "title": "Members per guild over time",
+      "description": "Daily closing membership by guild in UTC, including members who joined before the selected range.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
       "gridPos": {
-        "h": 3,
-        "w": 24,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 52
       },
-      "options": {
-        "mode": "markdown",
-        "content": "The Guild and Package Registry panels are added with its ETL source ([#144](https://github.com/m33ga/pad-tamagotchi-go/issues/144)), following `docs/adding-a-source.md` in the etl repository."
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
       },
-      "id": 14
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "WITH toDate($__fromTime) AS first_day\nSELECT\n    greatest(toDateTime(calendar.date, 'UTC'), $__fromTime) AS time,\n    concat(guilds.name, ' (', toString(guilds.guild_id), ')') AS guild,\n    sum(deltas.change) OVER (\n        PARTITION BY guilds.guild_id ORDER BY calendar.date ROWS UNBOUNDED PRECEDING\n    ) AS members\nFROM (SELECT date FROM dw.dim_date FINAL\n      WHERE date BETWEEN first_day AND toDate($__toTime)) AS calendar\nCROSS JOIN (SELECT guild_id, name, created_at, deleted_at FROM dw.dim_guild FINAL) AS guilds\nLEFT JOIN (\n    SELECT guild_id, greatest(toDate(occurred_at), first_day) AS day, sum(delta) AS change\n    FROM (\n        SELECT guild_id, joined_at AS occurred_at, toInt64(1) AS delta\n        FROM dw.fact_membership FINAL WHERE joined_at <= $__toTime\n        UNION ALL\n        SELECT guild_id, assumeNotNull(left_at) AS occurred_at, toInt64(-1) AS delta\n        FROM dw.fact_membership FINAL WHERE left_at <= $__toTime\n    )\n    GROUP BY guild_id, day\n) AS deltas ON deltas.guild_id = guilds.guild_id AND deltas.day = calendar.date\nWHERE calendar.date >= greatest(first_day, toDate(guilds.created_at))\n  AND (guilds.deleted_at IS NULL OR calendar.date <= toDate(guilds.deleted_at))\nORDER BY time, guild"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 41
+    },
+    {
+      "type": "timeseries",
+      "title": "Joins and leaves per day",
+      "description": "Membership starts and ends inside the selected range, grouped by UTC day.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT greatest(toDateTime(day, 'UTC'), $__fromTime) AS time,\n       countIf(joined) AS joins, countIf(NOT joined) AS leaves\nFROM (\n    SELECT toDate(joined_at) AS day, true AS joined\n    FROM dw.fact_membership FINAL WHERE $__timeFilter(joined_at)\n    UNION ALL\n    SELECT toDate(assumeNotNull(left_at)) AS day, false AS joined\n    FROM dw.fact_membership FINAL WHERE $__timeFilter(left_at)\n)\nGROUP BY day\nORDER BY time"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 42
+    },
+    {
+      "type": "table",
+      "title": "Users per package",
+      "description": "Distinct registered users per package, including packages without users.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 60
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT p.name AS package, p.version, p.package_id, ifNull(u.users, 0) AS users\nFROM (SELECT package_id, name, version FROM dw.dim_package FINAL) AS p\nLEFT JOIN (\n    SELECT package_id, uniqExact(user_id) AS users\n    FROM dw.fact_user_package FINAL\n    GROUP BY package_id\n) AS u ON p.package_id = u.package_id\nORDER BY users DESC, package, version, package_id"
+        }
+      ],
+      "id": 43
+    },
+    {
+      "type": "table",
+      "title": "Guilds per required package",
+      "description": "Current, non-deleted guilds grouped by the package they require, including packages without guilds.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 60
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT p.name AS package, p.version, p.package_id, ifNull(g.guilds, 0) AS guilds\nFROM (SELECT package_id, name, version FROM dw.dim_package FINAL) AS p\nLEFT JOIN (\n    SELECT assumeNotNull(required_package_id) AS package_id, count() AS guilds\n    FROM dw.dim_guild FINAL\n    WHERE deleted_at IS NULL AND required_package_id IS NOT NULL\n    GROUP BY package_id\n) AS g ON p.package_id = g.package_id\nORDER BY guilds DESC, package, version, package_id"
+        }
+      ],
+      "id": 44
+    },
+    {
+      "type": "table",
+      "title": "Packages by status",
+      "description": "Packages counted by their latest lifecycle status.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 60
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT status, count() AS packages\nFROM dw.dim_package FINAL\nGROUP BY status\nORDER BY status"
+        }
+      ],
+      "id": 45
     },
     {
       "type": "row",
@@ -730,7 +902,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 68
       },
       "panels": []
     },
@@ -741,7 +913,7 @@
         "h": 3,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 69
       },
       "options": {
         "mode": "markdown",
@@ -758,7 +930,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 59
+        "y": 72
       },
       "panels": []
     },
@@ -774,7 +946,7 @@
         "h": 5,
         "w": 6,
         "x": 0,
-        "y": 60
+        "y": 73
       },
       "fieldConfig": {
         "defaults": {
@@ -831,7 +1003,7 @@
         "h": 10,
         "w": 18,
         "x": 6,
-        "y": 60
+        "y": 73
       },
       "fieldConfig": {
         "defaults": {
@@ -871,7 +1043,7 @@
         "h": 5,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 78
       },
       "fieldConfig": {
         "defaults": {
