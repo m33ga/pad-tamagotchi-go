@@ -1,0 +1,164 @@
+{
+  "info": {
+    "name": "Tamagotchi Go - Broker Administration",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Read-only Lab 5 checks for the broker admin listener published on loopback. Run these requests against the local Compose stack. After a package join, inspect the transaction log. After Battle settles a match, inspect the saga log. A fresh stack can return an empty log until the corresponding workflow runs."
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "brokerUrl",
+      "value": "http://127.0.0.1:8501",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Read response cache",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{brokerUrl}}/cache",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "cache"
+          ]
+        },
+        "description": "Shows the response cache, ring membership and counters since the broker started."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test(\"Response cache is enabled and has nodes\", () => {",
+              "    pm.expect(body.enabled).to.eql(true);",
+              "    pm.expect(body.nodes).to.be.an(\"array\").and.not.be.empty;",
+              "    body.nodes.forEach(node => {",
+              "        pm.expect(node.node).to.be.a(\"string\").and.not.be.empty;",
+              "        pm.expect(node.inRing).to.be.a(\"boolean\");",
+              "    });",
+              "});",
+              "pm.test(\"Cache counters are present\", () => {",
+              "    [\"hits\", \"misses\", \"stores\", \"bypasses\", \"invalidations\", \"invalidationsRefused\"].forEach(key => {",
+              "        pm.expect(body.counts[key], key).to.be.a(\"number\").and.at.least(0);",
+              "    });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List two-phase commits",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{brokerUrl}}/transactions",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "transactions"
+          ]
+        },
+        "description": "Shows the newest two-phase commits. A package join creates an entry in this log. When available, the test also reads the newest record’s detail."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test(\"Page contains items and a nullable next cursor\", () => {",
+              "    pm.expect(body.items).to.be.an(\"array\");",
+              "    pm.expect(body).to.have.property(\"nextCursor\");",
+              "    if (body.nextCursor !== null) pm.expect(body.nextCursor).to.be.a(\"string\");",
+              "});",
+              "pm.test(\"Each entry has an identifier and a documented state\", () => {",
+              "    body.items.forEach(entry => {",
+              "        pm.expect(entry.transactionId).to.be.a(\"string\").and.not.be.empty;",
+              "        pm.expect([\"PREPARING\", \"COMMIT\", \"ABORT\"]).to.include(entry.state);",
+              "    });",
+              "});",
+              "const latest = Array.isArray(body.items) ? body.items[0] : undefined;",
+              "if (latest && latest.transactionId) {",
+              "    const detailUrl = pm.variables.replaceIn(\"{{brokerUrl}}/transactions/\") + encodeURIComponent(latest.transactionId);",
+              "    pm.sendRequest(detailUrl, (error, response) => {",
+              "        pm.test(\"Newest transaction exposes its participants\", () => {",
+              "            pm.expect(error).to.not.exist;",
+              "            pm.expect(response.code).to.eql(200);",
+              "            const detail = response.json();",
+              "            pm.expect(detail.transactionId).to.eql(latest.transactionId);",
+              "            pm.expect(detail.participants).to.be.an(\"array\").and.not.be.empty;",
+              "        });",
+              "    });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List sagas",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{brokerUrl}}/sagas",
+          "host": [
+            "{{brokerUrl}}"
+          ],
+          "path": [
+            "sagas"
+          ]
+        },
+        "description": "Shows the newest sagas. A battle settlement creates an entry in this log. When available, the test also reads the newest record’s detail."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test(\"Page contains items and a nullable next cursor\", () => {",
+              "    pm.expect(body.items).to.be.an(\"array\");",
+              "    pm.expect(body).to.have.property(\"nextCursor\");",
+              "    if (body.nextCursor !== null) pm.expect(body.nextCursor).to.be.a(\"string\");",
+              "});",
+              "pm.test(\"Each entry has an identifier and a documented state\", () => {",
+              "    body.items.forEach(entry => {",
+              "        pm.expect(entry.sagaId).to.be.a(\"string\").and.not.be.empty;",
+              "        pm.expect([\"RUNNING\", \"COMPENSATING\", \"COMPLETED\", \"COMPENSATED\", \"FAILED\"]).to.include(entry.state);",
+              "    });",
+              "});",
+              "const latest = Array.isArray(body.items) ? body.items[0] : undefined;",
+              "if (latest && latest.sagaId) {",
+              "    const detailUrl = pm.variables.replaceIn(\"{{brokerUrl}}/sagas/\") + encodeURIComponent(latest.sagaId);",
+              "    pm.sendRequest(detailUrl, (error, response) => {",
+              "        pm.test(\"Newest saga exposes its steps\", () => {",
+              "            pm.expect(error).to.not.exist;",
+              "            pm.expect(response.code).to.eql(200);",
+              "            const detail = response.json();",
+              "            pm.expect(detail.sagaId).to.eql(latest.sagaId);",
+              "            pm.expect(detail.steps).to.be.an(\"array\").and.not.be.empty;",
+              "        });",
+              "    });",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

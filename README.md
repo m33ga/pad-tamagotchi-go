@@ -12,10 +12,20 @@ Developed for the PAD (Distributed Applications Programming) course at FAF, Tech
 - [Architecture Diagram](#architecture-diagram)
 - [Communication Patterns](#communication-patterns)
 - [Communication Contract](#communication-contract)
+  - [Operational Endpoints](#operational-endpoints)
+  - [Broker Administration](#broker-administration)
+  - [Replication and Failover](#replication-and-failover)
+  - [Caching](#caching)
+  - [Distributed Transactions](#distributed-transactions)
+  - [Analytics](#analytics)
 - [Project Management](#project-management)
 - [Development Guidelines](#development-guidelines)
 - [Gateway](#gateway)
 - [Deployment](#deployment)
+  - [Images and Replicas](#images-and-replicas)
+  - [Observability](#observability)
+  - [Analytics: Warehouse and ETL](#analytics-warehouse-and-etl)
+  - [Postman Collections](#postman-collections)
 - [Service Ownership and Technology Stack](#service-ownership-and-technology-stack)
 - [Technology Stack Rationale](#technology-stack-rationale)
 
@@ -118,7 +128,7 @@ Each service owns its datastore. Events are published to broker topics and persi
 
 ![Architecture Diagram](docs/architecture.png)
 
-The diagram shows the Lab 5 target: every PostgreSQL database as a Patroni pair behind its HAProxy, the Redis replicas with their Sentinels, the broker's response cache and transaction coordinator, and the analytics path from the replicas through Airflow and ClickHouse to Grafana. Replication, the Redis failover and the warehouse are being added to the deployment in #135, #136 and #137. The object store holds Tamagotchi sprites (#66).
+The Lab 5 deployment puts each application PostgreSQL database behind HAProxy with a Patroni primary and replica. Sentinel manages failover for the replicated Redis stores. The broker shards its response cache across separate Redis nodes and coordinates two-phase commits and sagas. With the `analytics` profile, Airflow reads from the PostgreSQL replicas, loads ClickHouse and makes the results available in Grafana. The object store holds Tamagotchi sprites.
 
 [Back to top](#table-of-contents)
 
@@ -602,6 +612,24 @@ MongoDB is not part of the selected architecture. An S3-compatible object store 
 
 Cross-service references use resource identifiers rather than direct database access. APIs and events may include the data snapshot required to complete an operation. Package Registry Service is the authority for package definitions and registrations; User Management Service keeps only the package references needed in a user profile. Tamagotchi Service remains the authority for Tamagotchi ownership, including transfers after battles.
 
+### Broker Administration
+
+The broker serves these endpoints on its loopback listener at `http://127.0.0.1:8501`. The [Broker Administration Postman collection](collections/broker-admin.postman_collection.json) exercises the read endpoints.
+
+| Operation | Inputs | Response |
+|---|---|---|
+| `GET /cache` | No query parameters | `enabled`, `points`, `nodes[]`, `lastChange`, `counts` |
+| `POST /cache/nodes` | JSON `{"node":"cache-4:6379"}` | The updated cache view. The node is flushed before it joins the ring. |
+| `DELETE /cache/nodes/{node}` | The node's `host:port` | The updated cache view. The ring redistributes the removed node's keys. |
+| `GET /transactions` | Optional `state`, `cursor`, `limit` | `items[]`, `nextCursor`. Each item has `transactionId`, `initiator`, `state`, `inDoubt`, decision and failure details, timestamps and phase timings. |
+| `GET /transactions/{id}` | Transaction ID | The transaction plus `participants[]` with each operation, vote, reason, timings and phase 2 acknowledgement. |
+| `GET /sagas` | Optional `type`, `state`, `cursor`, `limit` | `items[]`, `nextCursor`. Each item has `sagaId`, `sagaType`, `initiator`, `state`, step and failure information, and timestamps. |
+| `GET /sagas/{id}` | Saga ID | The saga plus its `callback` and `steps[]` with the action and compensation attempts, statuses, outcomes and timings. |
+
+Cache node fields are `node`, `state`, `inRing`, `keys`, `usedMemory`, `hits` and `misses`. `keys` and byte count `usedMemory` are `null` while a node is unreachable. `lastChange` is `null` until membership changes, then reports `at`, `node`, `action` and `movedShare`. Cache totals are cumulative since broker startup. Membership changes apply at runtime, and a restart uses the nodes configured in `BROKER_CACHE_NODES`.
+
+Transaction filters accept `PREPARING`, `COMMIT`, `ABORT` or `IN_DOUBT`. Saga filters accept `RUNNING`, `COMPENSATING`, `COMPLETED`, `COMPENSATED` or `FAILED`. Both lists are newest first and default to 50 items, with a maximum of 100 per page. See the [broker specification](https://github.com/m33ga/broker/blob/v5.4.0/docs/spec.md#95-get-transactions-get-transactionsid) for complete JSON examples and errors.
+
 ### Replication and Failover
 
 Every database and every Redis instance that holds state has a replica and fails over on its own. Services do not change their connection strings, and every private service already runs at least two instances (User Management 2, Battle 2, Tamagotchi 2, Notification 2, Guild 2, Package Registry 2, Map 3, Monster Raid 3).
@@ -721,6 +749,8 @@ The protocol is [`tamagotchigo.transactions.v1.Participant`](docs/schemas/proto/
 
 Package Registry accepts `RegisterUserPackage` only when `x-transaction-initiator` is `user-management-service`. The endpoints keep their responses and error codes; the earlier sequence (call Package Registry, then write locally) is removed.
 
+The [Participant gRPC contract](docs/schemas/proto/tamagotchigo/transactions/v1/participant.proto) uses `PrepareRequest {transaction_id, operation, content_type, body}` with the serialized operation in `body`. Both package-join operations carry `user_id` and `package_id`. `Prepare`, `Commit` and `Abort` have empty successful replies. `Commit` and `Abort` take only `transaction_id`. A non-OK `Prepare` status is a no vote.
+
 #### Sagas
 
 The initiator sends the whole plan to `Broker.StartSaga`: an id, a type, the ordered steps (each an action and its compensation, ready to deliver), and a completion and a failure callback. The broker stores it and runs it in the background, recording every step's attempts and outcome, so a broker restart resumes the saga where it stood.
@@ -745,6 +775,14 @@ Compensation runs the compensations of the completed steps in reverse order, eac
 | 7 | `transfer-primary` | Tamagotchi `TransferOwnership` of the loser's primary to the winner; may be refused if it changed owner | `RevertTransfer` |
 | | completion | Battle `CompleteSettlement`: `COMPLETED` (or `FORFEITED`), `battle.completed.v1` | |
 | | failure | Battle `VoidSettlement`: `VOIDED`, `battle.voided.v1` | |
+
+| Compensation RPC | Request fields | Reply fields |
+|---|---|---|
+| `ReverseBalanceTransaction` | `user_id`, `reason`, `reference_id` | Optional `transaction_id` and `reversed_transaction_id`, `resulting_balance`, `processed_at` |
+| `RevokeXp` | `tamagotchi_id`, `source`, `reference_id` | `tamagotchi_id`, `revoked_amount`, `previous_level`, `new_level`, `total_xp`, `processed_at` |
+| `RevertTransfer` | `tamagotchi_id`, `reference_id` | Optional `transfer_id`, `tamagotchi_id`, `owner_user_id`, `ownership_role`, `reverted_at` |
+
+See the [User Management protobuf](docs/schemas/proto/tamagotchigo/usermanagement/v1/user_management.proto) and [Tamagotchi protobuf](docs/schemas/proto/tamagotchigo/tamagotchi/v1/tamagotchi.proto) for field types and enums.
 
 The credit comes before the debit on purpose: a loser who cannot pay voids the battle and exercises the compensation path. While the saga runs, other players may already see the winner's credit; that missing isolation is the price of not holding locks across services.
 
@@ -2465,6 +2503,26 @@ Docker Compose runs the gateway, Service Discovery, the message broker and all e
 
 All service APIs use the prefixes in the [Gateway](#gateway) table. Guild chat connects directly to the instance-specific address returned by `POST /guilds/{guildId}/chat-sessions`, normally `ws://localhost:8081` or `ws://localhost:8083`; its REST API uses the gateway.
 
+### Images and Replicas
+
+| Component | Docker Hub image | Lab 5 pin | Compose instances |
+|---|---|---|---:|
+| API Gateway | [grdz/gateway](https://hub.docker.com/r/grdz/gateway) | `5.0.0` | 1 |
+| Service Discovery | [grdz/service-discovery](https://hub.docker.com/r/grdz/service-discovery) | `5.0.0` | 1 |
+| Message Broker | [grdz/broker](https://hub.docker.com/r/grdz/broker) | `5.4.0` | 1 |
+| User Management | [sanda2004/user-management-service](https://hub.docker.com/r/sanda2004/user-management-service) | `5.0.1` | 2 |
+| Battle | [sanda2004/battle-service](https://hub.docker.com/r/sanda2004/battle-service) | `5.0.0` | 2 |
+| Map | [grdz/map-service](https://hub.docker.com/r/grdz/map-service) | `5.0.0` | 3 |
+| Monster Raid | [grdz/monster-raid-service](https://hub.docker.com/r/grdz/monster-raid-service) | `5.0.0` | 3 |
+| Guild | [cosmak47/pad-guild-service](https://hub.docker.com/r/cosmak47/pad-guild-service) | `5.0.0` | 2 |
+| Package Registry | [cosmak47/pad-package-registry-service](https://hub.docker.com/r/cosmak47/pad-package-registry-service) | `5.0.0` | 2 |
+| Tamagotchi | [johnnyc05/pad-tamagotchi-service](https://hub.docker.com/r/johnnyc05/pad-tamagotchi-service) | `v5.2.0` | 2 |
+| Notification | [johnnyc05/pad-notification-service](https://hub.docker.com/r/johnnyc05/pad-notification-service) | `v5.1.0` | 2 |
+| PostgreSQL with Patroni | [grdz/patroni](https://hub.docker.com/r/grdz/patroni) | `5.0.1` | 2 per cluster |
+| Airflow ETL | [grdz/etl](https://hub.docker.com/r/grdz/etl) | `5.3.0` | API server, scheduler and DAG processor, plus one-shot init |
+
+The service owners publish release tags and update `latest`. Compose uses the explicit version pins above. The [`etl` submodule](etl) tracks the source release `v5.3.0`, matching the deployed image.
+
 ### Requirements
 
 - Docker Engine or Docker Desktop with Docker Compose v2
@@ -2601,7 +2659,7 @@ The deployment watches itself with OpenTelemetry. All configuration lives under 
 instrumented services ──OTLP──> otel-collector ──> Prometheus  (metrics, OTLP receiver)
 container stdout (json-file) ──> otel-collector ──> Loki        (logs, the platform JSON parsed into fields)
                                                 ──> Tempo       (traces) ──> Prometheus (span metrics, service graph)
-Grafana: Prometheus, Loki and Tempo datasources, provisioned dashboards, Drilldown for metrics, logs and traces
+Grafana: Prometheus, Loki, Tempo and ClickHouse datasources, provisioned dashboards, Drilldown for metrics, logs and traces
 ```
 
 | Container | Image | Role | Published |
@@ -2624,25 +2682,18 @@ Every container has a memory limit, and no observability port is reachable from 
 
 | Dashboard | Shows |
 |---|---|
-| System overview | every instance's health and utilization from Service Discovery's metrics, instances by health, evictions and recoveries, and every service's request rate and errors, from metrics and from request log lines |
+| System overview | instance health and utilization from Service Discovery, evictions and recoveries, request rate and errors, and CPU and memory shares per instrumented instance with the default `0.8` `DEGRADED` threshold |
 | Requests | latency percentiles and error rates per service and instance from the services' HTTP server metrics, and the same from the `request` log lines (`status`, `durationMs`) for services without metrics |
-| Message broker | request queue depth and wait time per service, the instance each delivery went to, breaker state per instance, failovers, quarantines and readmissions, events published and delivered per topic and subscriber, waiting events and dead letters |
+| Message broker | request queues, delivery by instance, breaker state and failover, events and dead letters, cache hits and misses, stores and invalidations, keys and memory per shard, and the share moved by the last ring membership change |
 | Request explorer | one service at a time, from its traces: request rate, failed share and p95/p99 per operation, its recent and failed requests (a trace id opens the trace, and Related logs on any span shows every log line of that request), its error and request log lines, and the service graph |
 | Logs | every line, filtered by service, instance, level, correlation id, trace id and text, health probes hidden by default; a line's `traceId` opens its trace |
-
-Lab 5 adds these dashboards and panels as the features land:
-
-| Dashboard | Shows |
-|---|---|
-| System overview | CPU and memory share per instance, against the `DEGRADED` threshold |
-| Message broker, Cache row | hit ratio per service, lookups by result, stores and invalidations, refused invalidations, keys and memory per cache node, the share of keys moved by each membership change |
-| Databases | the leader of every PostgreSQL cluster over time, replication lag, timeline, connections, prepared transactions and the oldest one's age, etcd health, Redis primaries and replicas |
-| Transactions | two-phase commits by decision, phase durations, no votes per participant, transactions in doubt; sagas by outcome, running and compensating, duration, retries per step, failed sagas; Battle's settlements by outcome |
-| Analytics | the ETL's runs, rows loaded and freshness per source; the warehouse; players and battles, guilds and packages, raids (read from ClickHouse) |
+| Databases | PostgreSQL primary, replica replay lag and timeline from Patroni, etcd leader visibility, Redis replication and Sentinel status, cache-node memory, keys and evictions |
+| Transactions | two-phase commit decisions, phase latency, votes per participant and transactions in doubt, plus saga outcomes, active states, durations, step attempts and failures, and Battle's settlements |
+| Analytics | ETL runs, row counts and freshness by source, warehouse usage, Tamagotchis, players, battles, guilds, packages and raids from ClickHouse |
 
 **Following a request.** A trace and its logs lead to each other: in a trace, Related logs on a span opens every log line written for that request by any service; on a log line, the `traceId` field opens the trace. A span also links to its service's request rate and p95 latency. Services that log nothing for health probes (Map, Monster Raid) show up in Logs Drilldown and the dashboards only for time ranges in which they served requests.
 
-A panel stays empty until its source reports: the system overview's health and utilization need Service Discovery's metrics, and the message broker dashboard the broker's.
+Pick a time range that includes the demo game. Counters for events such as failovers and dead letters first appear when those events occur. The moved-share panel starts at zero and updates after a cache ring membership change. Analytics needs the `analytics` profile and a completed extract and transform. Participant-local prepared transactions can be inspected in PostgreSQL with `pg_prepared_xacts`.
 
 ### Analytics: Warehouse and ETL
 
@@ -2688,7 +2739,8 @@ To see a cycle at once, play a game, then **Trigger** `extract_tamagotchi`: its 
 | ETL | the last extract per source (state, duration, rows) and freshness per source, red past 15 minutes. Every source appears in it by itself. |
 | Tamagotchis | XP per day by source (revoked XP apart), transfers per day, Tamagotchis per level band and per combat type |
 | Players and battles | battles per day and win rate by combat type, completed and voided settlements and their duration, coins in and out by reason and package, active players per day |
-| Guilds and packages, Raids | filled by their sources' ETL (#144, #145) |
+| Guilds and packages | members per guild, joins and leaves per day, users per package, guilds per required package and packages by status |
+| Raids | raids per day by status, success rate per guild, duration p50/p95, damage per participant and participants per raid |
 | Warehouse | ClickHouse uptime, rows and bytes per `staging` and `dw` table, queries per minute |
 
 Without the profile its panels show the warehouse as unreachable.
@@ -2719,15 +2771,27 @@ pinned service releases also use the broker for peer calls and event delivery:
 
 ### Postman Collections
 
-The [gateway administrator collection](collections/gateway-admin.postman_collection.json) contains `GET /admin/logs`. After gateway #25 is released and pinned, set `ADMIN_USER_IDS` in the local `.env` to your administrator's UMS UUID and restart the gateway. Put that user's bearer token in the collection's private local `adminAccessToken` value. The request defaults to the last hour and checks the NDJSON download headers and body. Use Save Response in Postman to keep the file. The collector preserves each original JSON line in `originalLog` metadata. Downloads of historical logs without that field use reconstructed records.
+The [gateway administrator collection](collections/gateway-admin.postman_collection.json) contains `GET /admin/logs`. Set `ADMIN_USER_IDS` in the local `.env` to your administrator's UMS UUID and recreate the gateway. Start Loki with the collector so the download has logs. Put that user's bearer token in the collection's private local `adminAccessToken` value. The request defaults to the last hour and checks the NDJSON download headers and body. Use Save Response in Postman to keep the file. The collector preserves each original JSON line in `originalLog` metadata. Downloads of historical logs without that field use reconstructed records.
 
-Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. On a clean stack, run the User Management collection's `1. Setup and Authentication`, followed by `1b. Package Bootstrap`: register without a package, log in, create a package, activate it as its developer, and join it. These steps use only API calls; no database inserts or administrator identity are needed. Registration can still select an existing ACTIVE package with `initialPackageId`.
+Import the JSON files from [`collections`](collections). Their `gatewayUrl` defaults to `http://localhost:8000`. Set existing UMS account emails and passwords locally and run the login requests first; the scripts store access tokens and user IDs for later requests. On a clean stack, set the User Management collection's private `password` variable, then run `1. Setup and Authentication` followed by `1b. Package Bootstrap`. This registers users, creates and activates a package, and joins it. These steps use only API calls; no database inserts or administrator identity are needed. Registration can still select an existing ACTIVE package with `initialPackageId`.
 
-Service-only requests use the client-credentials endpoint and the allowed service's private credential. The Map collection needs two accounts that are friends in User Management, and the Monster Raid collection needs an account with a Tamagotchi, an active raid schedule, and the `monster-raid-service` secret in `serviceClientSecret` to read that schedule. The Package Registry collection registers a user's package through User Management, which supplies its own service identity for the nested call. Business requests still require the referenced packages, pets and other resources to exist. Never export or commit credentials, Firebase tokens or populated access tokens.
+Prepare the data each collection expects before running it. Keep credentials, Firebase tokens and access tokens in private local values.
 
-The [game workflow collection](collections/game-workflows.postman_collection.json) plays the whole game through the gateway in four workflows that together involve every service: gateway authorization, onboarding, a PvP battle, and a guild Monster Raid, plus timeout and concurrency drills. [Game Workflows](docs/game-workflows.md) describes each flow and the service calls behind every step; setup and run notes are in the collection's description.
+| Collection | Local setup |
+|---|---|
+| Battle | Two users with primary and secondary Tamagotchis. See the [PvP fixture setup](docs/game-workflows.md#run-locally). |
+| Guild | Two registered users. Run the membership-cache folder after the ownership transfer. It deletes the test guild after checking invalidation. |
+| Map | Two users who are already friends. |
+| Monster Raid | A player with a primary Tamagotchi, an active raid window and a Registry admin account to read the schedule. Use a low-HP monster for the single-player test. |
+| Notification | A fresh test user to verify preference defaults, another user for access checks and a package ID. |
+| Package Registry | A Registry admin, a developer, a moderator and a registered user. User Management handles the package join through 2PC. |
+| Tamagotchi | An owner without a primary Tamagotchi, a second user and an active package with `hunger` and `tiredness` stat definitions. Run Newman from the CPR root so it can open the PNG in `collections/fixtures`. |
 
-The Registry administrator's UMS ID must be in `PACKAGE_REGISTRY_ADMIN_USER_IDS`. The Registry collection uses separate Guild, Tamagotchi, Battle, and Monster Raid client credentials for their allowed operations; set these only in private local values. Guild's `Negotiate chat session` request returns a short-lived, single-use ticket for a direct WebSocket connection. REST collection runs do not themselves send or receive WebSocket frames.
+The [Broker Administration collection](collections/broker-admin.postman_collection.json) checks the response cache, 2PC log and saga log at `http://127.0.0.1:8501`.
+
+The [game workflow collection](collections/game-workflows.postman_collection.json) covers gateway checks, onboarding, a PvP battle and a guild Monster Raid. Follow [Game Workflows](docs/game-workflows.md) to prepare the local PvP data and run the gameplay folders.
+
+The Registry administrator's UMS ID must be in `PACKAGE_REGISTRY_ADMIN_USER_IDS`. Guild's `Negotiate chat session` request returns a short-lived, single-use ticket for a direct WebSocket connection. To exchange frames, open that socket separately.
 
 [Back to top](#table-of-contents)
 

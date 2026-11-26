@@ -129,6 +129,358 @@
         },
         "overrides": []
       }
+    },
+    {
+      "type": "row",
+      "title": "Two-phase commit",
+      "id": 4,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Decisions",
+      "description": "Commit and abort decisions grouped by initiator and outcome.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (initiator, decision) (increase(broker_transactions_decided_total[$__rate_interval]))",
+          "legendFormat": "{{initiator}} / {{decision}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Phase duration p95",
+      "description": "Prepare runs until the decision, finish until the last participant acknowledges it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, phase, decision) (rate(broker_transaction_phase_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{phase}} / {{decision}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Votes by participant",
+      "description": "YES and NO votes by participant, including the gRPC status of each vote.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service, vote, status) (increase(broker_transaction_votes_total[$__rate_interval]))",
+          "legendFormat": "{{service}} / {{vote}} / {{status}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Transactions in doubt",
+      "description": "The coordinator has recorded a decision and is waiting for one or more acknowledgements.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (decision) (broker_transactions_in_doubt)",
+          "legendFormat": "{{decision}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Sagas",
+      "id": 9,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Saga outcomes",
+      "description": "Sagas finished by type and terminal state.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (saga_type, outcome) (increase(broker_sagas_finished_total[$__rate_interval]))",
+          "legendFormat": "{{saga_type}} / {{outcome}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Running and compensating",
+      "description": "Sagas currently executing forward steps or compensations. Once a saga type has started, the idle states show zero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (saga_type, state) (broker_sagas_active) or label_replace(0 * sum by (saga_type) (broker_sagas_started_total), \"state\", \"RUNNING\", \"saga_type\", \".*\") or label_replace(0 * sum by (saga_type) (broker_sagas_started_total), \"state\", \"COMPENSATING\", \"saga_type\", \".*\")",
+          "legendFormat": "{{saga_type}} / {{state}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Saga duration p95",
+      "description": "Time from acceptance until the terminal callback is acknowledged.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, saga_type, outcome) (rate(broker_saga_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "{{saga_type}} / {{outcome}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Attempts, retries and failures per step",
+      "description": "All attempts are counted. Retry and failure lines appear when steps fail or need another attempt.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (saga_type, step, kind) (increase(broker_saga_step_duration_seconds_count[$__rate_interval]))",
+          "legendFormat": "attempt / {{saga_type}} / {{step}} / {{kind}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (saga_type, step, kind) (increase(broker_saga_step_retries_total[$__rate_interval]))",
+          "legendFormat": "retry / {{saga_type}} / {{step}} / {{kind}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (saga_type, step, kind) (increase(broker_saga_step_failures_total[$__rate_interval]))",
+          "legendFormat": "failure / {{saga_type}} / {{step}} / {{kind}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Failed sagas awaiting repair",
+      "description": "Number of failed sagas the broker reports. The zero baseline requires the live 2PC coordinator gauge from the same broker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count by (instance) (broker_sagas_failed_seconds) or 0 * count by (instance) (broker_transactions_in_doubt)",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
     }
   ]
 }
