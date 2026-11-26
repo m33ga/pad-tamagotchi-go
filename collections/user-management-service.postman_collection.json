@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "66c663f6-55c3-4f75-aa92-0da82f4cff45",
     "name": "Tamagotchi Go - User Management Service",
-    "description": "Lab 4 client-only gateway collection. Run Setup and Authentication, then Package Bootstrap to register users, create/activate a package and join it through the API. Service tokens are acquired through Broker.Send; balance commands use gRPC over Broker.Send and raid rewards use raid.completed.v1. These operations are tested by the service smoke suite, not this client collection. Never export passwords or populated tokens.",
+    "description": "Lab 5 client collection. Run Setup and Authentication, then Package Bootstrap. Package joins complete through the broker’s two-phase commit. Successful profile, relationship and package reads advertise a 60-second broker cache TTL. Internal saga compensation and prepared-transaction recovery are covered by service smoke tests. Never export passwords or populated tokens.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -53,7 +53,7 @@
               }
             },
             "url": "{{baseUrl}}/users",
-            "description": "Register without a package. An optional initialPackageId may instead select an existing ACTIVE package."
+            "description": "Register without a package. Supplying an active initialPackageId commits account creation, wallets and the package registration together."
           },
           "response": [],
           "event": [
@@ -107,7 +107,7 @@
               }
             },
             "url": "{{baseUrl}}/users",
-            "description": "Register without a package. An optional initialPackageId may instead select an existing ACTIVE package."
+            "description": "Register without a package. Supplying an active initialPackageId commits account creation, wallets and the package registration together."
           },
           "response": [],
           "event": [
@@ -344,7 +344,12 @@
           "name": "Join first package as primary user",
           "request": {
             "method": "PUT",
-            "header": [],
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
             "url": "{{baseUrl}}/users/{{userId}}/packages/{{packageId}}",
             "auth": {
               "type": "bearer",
@@ -355,7 +360,8 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "The broker commits both the registry membership and the local wallet. Use the same UUID to retry this operation after a timeout."
           },
           "response": [],
           "event": [
@@ -374,7 +380,12 @@
           "name": "Join first package as peer user",
           "request": {
             "method": "PUT",
-            "header": [],
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
             "url": "{{baseUrl}}/users/{{peerUserId}}/packages/{{packageId}}",
             "auth": {
               "type": "bearer",
@@ -385,7 +396,8 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "The broker commits both the registry membership and the local wallet. Use the same UUID to retry this operation after a timeout."
           },
           "response": [],
           "event": [
@@ -420,7 +432,8 @@
                 }
               ]
             },
-            "url": "{{baseUrl}}/users/{{userId}}"
+            "url": "{{baseUrl}}/users/{{userId}}",
+            "description": "This lookup opts into the broker cache for 60 seconds per verified caller."
           },
           "response": [],
           "event": [
@@ -499,7 +512,8 @@
                 }
               ]
             },
-            "url": "{{baseUrl}}/users/{{userId}}/relationships/{{peerUserId}}"
+            "url": "{{baseUrl}}/users/{{userId}}/relationships/{{peerUserId}}",
+            "description": "This lookup opts into the broker cache for 60 seconds per verified caller."
           },
           "response": [],
           "event": [
@@ -745,7 +759,8 @@
                 }
               ]
             },
-            "url": "{{baseUrl}}/users/{{userId}}/packages"
+            "url": "{{baseUrl}}/users/{{userId}}/packages",
+            "description": "This lookup opts into the broker cache for 60 seconds per verified caller."
           },
           "response": [],
           "event": [
