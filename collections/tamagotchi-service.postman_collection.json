@@ -849,6 +849,153 @@
           ]
         }
       ]
+    },
+    {
+      "name": "5. Cached Reads",
+      "description": "The message broker caches Tamagotchi reads for 30 seconds per caller and drops them after a write (CPR README, Caching). Run the folder in order, within 30 seconds of its first request.",
+      "item": [
+        {
+          "name": "Read a tamagotchi (stores it)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Cacheable for 30 seconds\", () => pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"max-age=30\"));",
+                  "pm.test(\"The broker looked it up\", () => pm.expect([\"MISS\", \"HIT\"]).to.include(pm.response.headers.get(\"x-cache\")));",
+                  "pm.test(\"Cache tags stay inside the broker\", () => pm.expect(pm.response.headers.has(\"x-cache-tags\")).to.be.false);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read it again (served from the cache)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Served from the cache\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.eql(\"HIT\"));",
+                  "pm.test(\"Carries its age\", () => pm.expect(pm.response.headers.has(\"Age\")).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rename it (invalidates)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Blaze the Cached\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read it after the write (fresh)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/tamagotchis/{{tamagotchiId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{ownerAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"The write dropped the cached reply\", () => pm.expect(pm.response.headers.get(\"x-cache\")).to.eql(\"MISS\"));",
+                  "pm.test(\"Shows the new name\", () => pm.expect(pm.response.json().name).to.eql(\"Blaze the Cached\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

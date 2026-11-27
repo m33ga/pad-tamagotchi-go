@@ -937,14 +937,19 @@ services:
   tamagotchi-api:
     logging: *default-logging
     platform: ${SERVICE_PLATFORM:-linux/amd64}
-    image: johnnyc05/pad-tamagotchi-service:v5.2.0
+    image: johnnyc05/pad-tamagotchi-service:v5.3.0
     pull_policy: always
     # Two interchangeable replicas, reachable only through the gateway: no
     # published port, and no container_name, which Compose rejects alongside
     # replicas. Each one registers itself with Service Discovery at startup.
-    # The client credentials come from this service's own secrets file.
+    # The client credentials come from this service's own secrets file. /status measures
+    # load against these limits (C# services: 1 CPU, 512M).
     deploy:
       replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
     networks: [internal]
     env_file:
       - .env
