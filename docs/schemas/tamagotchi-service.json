@@ -1361,23 +1361,35 @@
       "InstanceLoad": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["inFlight", "limit", "utilization"],
+        "required": ["cpu", "memory", "utilization", "inFlight", "limit"],
         "properties": {
-          "inFlight": {
-            "type": "integer",
+          "cpu": {
+            "type": "number",
             "minimum": 0,
-            "description": "Requests this instance is serving now"
+            "maximum": 1,
+            "description": "CPU used by the container as a share of its CPU limit (cgroup cpu.stat over cpu.max), averaged over about 10 seconds, two decimals; 0 outside a container"
           },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "MAX_CONCURRENCY of this instance"
+          "memory": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "memory.current minus inactive_file over memory.max, two decimals; 0 outside a container"
           },
           "utilization": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "inFlight divided by limit, rounded to two decimals"
+            "description": "max(cpu, memory): the instance's load; DEGRADED at 0.8"
+          },
+          "inFlight": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Requests holding a concurrency permit now, for information"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "MAX_CONCURRENCY of this instance, for information"
           }
         }
       },

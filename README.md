@@ -1502,7 +1502,7 @@ If a message cannot be processed, the sender receives `guild.chat.error.v1` with
 
 Tamagotchi Service owns every Tamagotchi and its current owner, role, combat type, level, XP, sprite reference, and package-local health statistics. A secondary Tamagotchi is a reference to the original entity after an ownership transfer; the service never creates a duplicate of it.
 
-Tamagotchi Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; utilization at or above 0.8, or Package Registry down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. Package Registry is never probed: its `/status` entry comes from the instance's circuit breaker and carries `"circuit": "CLOSED"` or `"OPEN"`; it is `DOWN` while the circuit refuses calls or for 14 seconds after a failed call, and a half-open circuit waiting for its trial reports `CLOSED`, so a quarantined instance can still be readmitted. A call to Package Registry gets 3 of the 4 seconds, so a registry that does not answer gives `503 PACKAGE_REGISTRY_UNAVAILABLE`, which the broker does not hold against the instance. After three Package Registry failures within 14 seconds, creating a Tamagotchi and updating its health statistics answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, until a trial call succeeds. The service runs no scheduled or background work such as statistic decay: statistics change only through requests, so two instances never apply the same change twice.
+Tamagotchi Service runs as two interchangeable instances, and every response carries `X-Instance-Id`, the hostname of the instance that answered. `GET /health` always answers `200 {"status":"UP"}` and checks nothing. `GET /status` reports readiness to Service Discovery: PostgreSQL unreachable gives `503 DOWN`; `load.utilization` (the container's CPU or memory share) at or above 0.8, or Package Registry down or its circuit open, gives `200 DEGRADED`; otherwise `200 UP`. Both sit at the service root, need no identity, bypass admission and are not exposed through the gateway. Package Registry is never probed: its `/status` entry comes from the instance's circuit breaker and carries `"circuit": "CLOSED"` or `"OPEN"`; it is `DOWN` while the circuit refuses calls or for 14 seconds after a failed call, and a half-open circuit waiting for its trial reports `CLOSED`, so a quarantined instance can still be readmitted. A call to Package Registry gets 3 of the 4 seconds, so a registry that does not answer gives `503 PACKAGE_REGISTRY_UNAVAILABLE`, which the broker does not hold against the instance. After three Package Registry failures within 14 seconds, creating a Tamagotchi and updating its health statistics answer `503 PEER_CIRCUIT_OPEN` with `Retry-After: 14` without calling it, until a trial call succeeds. The service runs no scheduled or background work such as statistic decay: statistics change only through requests, so two instances never apply the same change twice.
 
 Tamagotchi serves REST on internal port 8080 and `tamagotchigo.tamagotchi.v1.Tamagotchi` on internal gRPC port 9090. Its eight RPCs are GetTamagotchi, ListUserTamagotchis, GetPrimaryTamagotchi and GetCombatProfile for Battle and Monster Raid, and GrantXp, TransferOwnership and their saga compensations RevokeXp and RevertTransfer for Battle only. The broker supplies verified service metadata; handlers reuse the REST application layer and return `google.rpc.ErrorInfo` with the REST error code as `reason` and `tamagotchi` as `domain` (`ALREADY_EXISTS` for `XP_ALREADY_GRANTED` and `OWNERSHIP_ALREADY_TRANSFERRED`, `ABORTED` for `TAMAGOTCHI_NOT_OWNED`, `FAILED_PRECONDITION` for `INVALID_TRANSFER`). The former combat-profile, XP-grant and ownership-transfer REST routes are removed.
 
@@ -1512,7 +1512,7 @@ The final 4.2.0 image includes the .NET zero-code instrumentation; OTLP/gRPC goe
 
 ##### Lab 5
 
-Release 5.1.0 adds two parts of the Lab 5 contract (#129 stages 1 and 3):
+Releases 5.1.0 (#129 stages 1 and 3), 5.2.0 (sprite uploads) and 5.3.0 (#129 stage 2 and the container load) implement the Lab 5 contract:
 
 - **Analytics views.** `analytics.tamagotchis`, `analytics.xp_grants` and `analytics.ownership_transfers` carry the columns in [Analytics](#analytics). The ETL reads them as `analytics_reader` on the database proxy's replica port.
   - Enum ids are spelled as on the wire (`FLAME`, `PRIMARY`, `BATTLE`, `BATTLE_REWARD`).
@@ -1531,7 +1531,19 @@ Release 5.1.0 adds two parts of the Lab 5 contract (#129 stages 1 and 3):
   - `spriteUrl` on create and update accepts only those URLs; any other is `400 VALIDATION_FAILED`.
   - Errors: `415 UNSUPPORTED_SPRITE_TYPE` (not PNG/WebP, or not matching the `Content-Type`), `413 SPRITE_TOO_LARGE`, `503 SPRITE_STORE_UNAVAILABLE` (the store refused or did not answer within 3 seconds).
   - Package Registry's raid-configuration sprites still take an external URL; they can move to the same store later.
-- **Not in these releases** (#129 stage 2): cacheable replies with cache tags, and the container's CPU and memory shares in `/status`.
+- **Cached reads** (release 5.3.0, #129 stage 2), as the [Caching](#caching) table lists them.
+  - `GetTamagotchi` and `GetCombatProfile` answer with `cache-control: max-age=30` and `x-cache-tags: tamagotchi:<id>`. `ListUserTamagotchis` and `GetPrimaryTamagotchi` get the same max-age, tagged `tamagotchi-owner:<userId>` plus every `tamagotchi:<id>` they show.
+  - Both transports are marked: the REST `GET`s and the RPCs. Entries are keyed by caller, and only successes are marked.
+  - A list of more than 31 Tamagotchis is not marked, since it would exceed the 32 tags the broker stores.
+- **Invalidation.** After a write commits, Tamagotchi publishes `cache.invalidate.v1`:
+  - the Tamagotchi on XP, level, health stats, name and sprite changes;
+  - both Tamagotchis and the owner when the primary changes;
+  - the Tamagotchi and both owners on a transfer or revert;
+  - the owner on create.
+
+  A write that changed nothing publishes nothing. A failed publish is logged as `cache_invalidation_failed` and never fails the write.
+  - The body is `{"tags": [...]}`: the deployed broker reads the tags at the top level of the body, not in the envelope's `data`.
+- **Container load** (5.3.0). `/status` reports `load.cpu` and `load.memory` from the container's cgroup ([Operational Endpoints](#operational-endpoints)), against the 1 CPU and 512M limits in Compose. An idle instance reads about `0.01` CPU and `0.31` memory.
 
 ##### Endpoint Catalog
 
@@ -2766,7 +2778,7 @@ pinned service releases also use the broker for peer calls and event delivery:
 - **Monster Raid 5.0.0** calls Guild, Package Registry and Tamagotchi over gRPC; User Management receives rewards through `raid.completed.v1`. It publishes the `analytics.raids` and `analytics.raid_participants` views, and finds its Redis primary through the Sentinels (`REDIS_MODE=sentinel`, group `monster-raid`).
 - **Guild 5.0.0** calls its peers as REST operations over `Broker.Send` and publishes invitation events. It adds cache metadata and invalidation for membership reads and exposes both Guild analytics views.
 - **Package Registry 5.0.0** serves REST, gRPC and the package join participant. It uses the broker for cache invalidation and transaction recovery. Administrator access comes from `ADMIN_USER_IDS`.
-- **Tamagotchi v5.2.0** serves gRPC, validates package statistics against the real Package Registry through the broker (`USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock), publishes its three analytics views and serves the saga compensations `RevokeXp` and `RevertTransfer`, and accepts sprite uploads into the object store.
+- **Tamagotchi v5.3.0** serves gRPC, validates package statistics against the real Package Registry through the broker (`USE_MOCK_PACKAGE_REGISTRY=true` switches it back to its built-in registry mock), publishes its three analytics views and serves the saga compensations `RevokeXp` and `RevertTransfer`, accepts sprite uploads into the object store, marks its reads cacheable for the broker and invalidates them after writes, and reports the container's CPU and memory load in `/status`.
 - **Notification v5.1.0** consumes broker topics, `battle.voided.v1` included, and follows its Redis primary through the Sentinels (group `notification`). `/status` reports the container's CPU and memory load. Firebase delivery remains mocked.
 
 ### Postman Collections
